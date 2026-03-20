@@ -1,0 +1,347 @@
+<UserControl x:Class="LocalPilot.Options.LocalPilotOptionsControl"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:vsshell="clr-namespace:Microsoft.VisualStudio.Shell;assembly=Microsoft.VisualStudio.Shell.15.0"
+             mc:Ignorable="d"
+             d:DesignHeight="700" d:DesignWidth="700"
+             Background="{DynamicResource {x:Static vsshell:VsBrushes.WindowKey}}"
+             Foreground="{DynamicResource {x:Static vsshell:VsBrushes.WindowTextKey}}"
+             FontFamily="Segoe UI" FontSize="13">
+
+    <UserControl.Resources>
+        <!-- VS Theme-aware brushes as local aliases -->
+        <SolidColorBrush x:Key="LpAccentBrush"  Color="#7C6AF7"/>
+        <SolidColorBrush x:Key="LpGreenBrush"   Color="#4EC9B0"/>
+        <SolidColorBrush x:Key="LpRedBrush"     Color="#F44747"/>
+
+        <!-- TextBox Style — uses VS theme colours -->
+        <Style x:Key="LpInputStyle" TargetType="TextBox">
+            <Setter Property="Background"
+                    Value="{DynamicResource {x:Static vsshell:VsBrushes.ComboBoxBackgroundKey}}"/>
+            <Setter Property="Foreground"
+                    Value="{DynamicResource {x:Static vsshell:VsBrushes.WindowTextKey}}"/>
+            <Setter Property="BorderBrush"
+                    Value="{DynamicResource {x:Static vsshell:VsBrushes.ComboBoxBorderKey}}"/>
+            <Setter Property="BorderThickness"   Value="1"/>
+            <Setter Property="Padding"           Value="8,5"/>
+            <Setter Property="Height"            Value="32"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="CaretBrush"        Value="#7C6AF7"/>
+        </Style>
+
+        <!-- Section Header -->
+        <Style x:Key="LpSectionHeader" TargetType="TextBlock">
+            <Setter Property="Foreground"   Value="#7C6AF7"/>
+            <Setter Property="FontSize"     Value="13"/>
+            <Setter Property="FontWeight"   Value="SemiBold"/>
+            <Setter Property="Margin"       Value="0,16,0,6"/>
+        </Style>
+
+        <!-- Label -->
+        <Style x:Key="LpLabelStyle" TargetType="TextBlock">
+            <Setter Property="Foreground"
+                    Value="{DynamicResource {x:Static vsshell:VsBrushes.WindowTextKey}}"/>
+            <Setter Property="FontSize"     Value="12"/>
+            <Setter Property="Margin"       Value="0,0,0,3"/>
+        </Style>
+
+        <!-- Muted label -->
+        <Style x:Key="LpMutedLabel" TargetType="TextBlock">
+            <Setter Property="Foreground"
+                    Value="{DynamicResource {x:Static vsshell:VsBrushes.GrayTextKey}}"/>
+            <Setter Property="FontSize"     Value="12"/>
+        </Style>
+
+        <!-- CheckBox — inherits VS theme -->
+        <Style x:Key="LpCheckStyle" TargetType="CheckBox">
+            <Setter Property="Foreground"
+                    Value="{DynamicResource {x:Static vsshell:VsBrushes.WindowTextKey}}"/>
+            <Setter Property="Margin"       Value="0,4,0,4"/>
+        </Style>
+
+        <!-- Primary (accent) Button -->
+        <Style x:Key="LpPrimaryBtn" TargetType="Button">
+            <Setter Property="Background"    Value="#7C6AF7"/>
+            <Setter Property="Foreground"    Value="White"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding"       Value="16,7"/>
+            <Setter Property="FontWeight"    Value="SemiBold"/>
+            <Setter Property="Cursor"        Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}"
+                                CornerRadius="5" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#9B8FFB"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter Property="Background" Value="#5E4FDB"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Secondary Button — VS themed -->
+        <Style x:Key="LpSecondaryBtn" TargetType="Button">
+            <Setter Property="Background"
+                    Value="{DynamicResource {x:Static vsshell:VsBrushes.ButtonFaceKey}}"/>
+            <Setter Property="Foreground"
+                    Value="{DynamicResource {x:Static vsshell:VsBrushes.ButtonTextKey}}"/>
+            <Setter Property="BorderBrush"
+                    Value="{DynamicResource {x:Static vsshell:VsBrushes.ComboBoxBorderKey}}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding"         Value="14,7"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+        </Style>
+
+        <!-- Separator -->
+        <Style x:Key="LpSepStyle" TargetType="Separator">
+            <Setter Property="Background"
+                    Value="{DynamicResource {x:Static vsshell:VsBrushes.ActiveBorderKey}}"/>
+            <Setter Property="Margin"       Value="0,4,0,4"/>
+        </Style>
+    </UserControl.Resources>
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                  HorizontalScrollBarVisibility="Disabled"
+                  Background="{DynamicResource {x:Static vsshell:VsBrushes.WindowKey}}">
+        <StackPanel Margin="24,20,24,28">
+
+            <!-- ═══ Header ════════════════════════════════════════════════════ -->
+            <Grid Margin="0,0,0,20">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0">
+                    <TextBlock Text="⚡ LocalPilot"
+                               Foreground="#7C6AF7"
+                               FontSize="22" FontWeight="Bold"/>
+                    <TextBlock Text="AI-powered coding assistant using your local Ollama models"
+                               Style="{StaticResource LpMutedLabel}"
+                               Margin="0,4,0,0"/>
+                </StackPanel>
+
+                <!-- Connection Status Badge -->
+                <Border Grid.Column="1" VerticalAlignment="Center"
+                        Background="{DynamicResource {x:Static vsshell:VsBrushes.ButtonFaceKey}}"
+                        BorderBrush="{DynamicResource {x:Static vsshell:VsBrushes.ComboBoxBorderKey}}"
+                        BorderThickness="1" CornerRadius="20" Padding="12,6">
+                    <StackPanel Orientation="Horizontal">
+                        <Ellipse x:Name="StatusDot" Width="8" Height="8"
+                                 Fill="#4EC9B0" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="StatusText" Text="Ollama Connected"
+                                   Foreground="{DynamicResource {x:Static vsshell:VsBrushes.WindowTextKey}}"
+                                   FontSize="12" Margin="6,0,0,0"
+                                   VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Border>
+            </Grid>
+
+            <Separator Style="{StaticResource LpSepStyle}" Margin="0,0,0,10"/>
+
+            <!-- ═══ Section 1: Connection ════════════════════════════════════ -->
+            <TextBlock Text="🔗  Connection" Style="{StaticResource LpSectionHeader}"/>
+
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="120"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                    <TextBlock Text="Ollama Base URL" Style="{StaticResource LpLabelStyle}"/>
+                    <TextBox x:Name="TxtBaseUrl" Style="{StaticResource LpInputStyle}"
+                             ToolTip="Default: http://localhost:11434"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1" VerticalAlignment="Bottom">
+                    <Button Content="Test Connection" Style="{StaticResource LpSecondaryBtn}"
+                            x:Name="BtnTestConnection" Click="BtnTestConnection_Click"
+                            Height="32"/>
+                </StackPanel>
+            </Grid>
+
+            <TextBlock x:Name="TxtConnectionResult" Foreground="#4EC9B0"
+                       FontSize="11" Margin="0,4,0,0" Visibility="Collapsed"/>
+
+            <!-- ═══ Section 2: Models ═════════════════════════════════════════ -->
+            <TextBlock Text="🤖  Model Configuration" Style="{StaticResource LpSectionHeader}"/>
+
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <StackPanel Grid.Column="0" Grid.Row="0" Margin="0,0,8,10">
+                    <TextBlock Text="Inline Completion Model" Style="{StaticResource LpLabelStyle}"/>
+                    <ComboBox x:Name="CmbCompletionModel" Height="28"
+                              ToolTip="Used for real-time code suggestions"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Grid.Row="0" Margin="8,0,0,10">
+                    <TextBlock Text="Chat Model" Style="{StaticResource LpLabelStyle}"/>
+                    <ComboBox x:Name="CmbChatModel" Height="28"
+                              ToolTip="Used in the chat assistant panel"/>
+                </StackPanel>
+
+                <StackPanel Grid.Column="0" Grid.Row="1" Margin="0,0,8,10">
+                    <TextBlock Text="Explain Code Model" Style="{StaticResource LpLabelStyle}"/>
+                    <ComboBox x:Name="CmbExplainModel" Height="28"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Grid.Row="1" Margin="8,0,0,10">
+                    <TextBlock Text="Refactor Model" Style="{StaticResource LpLabelStyle}"/>
+                    <ComboBox x:Name="CmbRefactorModel" Height="28"/>
+                </StackPanel>
+
+                <StackPanel Grid.Column="0" Grid.Row="2" Margin="0,0,8,10">
+                    <TextBlock Text="Doc Generation Model" Style="{StaticResource LpLabelStyle}"/>
+                    <ComboBox x:Name="CmbDocModel" Height="28"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Grid.Row="2" Margin="8,0,0,10">
+                    <TextBlock Text="Code Review Model" Style="{StaticResource LpLabelStyle}"/>
+                    <ComboBox x:Name="CmbReviewModel" Height="28"/>
+                </StackPanel>
+            </Grid>
+
+            <Button x:Name="BtnRefreshModels" Content="↻  Refresh Model List"
+                    Style="{StaticResource LpSecondaryBtn}" HorizontalAlignment="Left"
+                    Click="BtnRefreshModels_Click" Margin="0,2,0,10"/>
+
+            <!-- ═══ Section 3: Inline Completion ════════════════════════════ -->
+            <TextBlock Text="✨  Inline Completion" Style="{StaticResource LpSectionHeader}"/>
+
+            <CheckBox x:Name="ChkEnableInline" Content="Enable inline code completion (ghost-text)"
+                      Style="{StaticResource LpCheckStyle}"/>
+            <CheckBox x:Name="ChkShowGhost" Content="Show ghost-text preview while typing"
+                      Style="{StaticResource LpCheckStyle}"/>
+
+            <!-- Delay Slider -->
+            <Grid Margin="0,8,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="70"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0">
+                    <TextBlock Text="Completion Trigger Delay (ms)" Style="{StaticResource LpLabelStyle}"/>
+                    <Slider x:Name="SldrDelay" Minimum="200" Maximum="2000"
+                            TickFrequency="100" IsSnapToTickEnabled="True"
+                            Foreground="#7C6AF7"
+                            ValueChanged="SldrDelay_ValueChanged"/>
+                </StackPanel>
+                <TextBlock x:Name="TxtDelay" Grid.Column="1"
+                           VerticalAlignment="Center" HorizontalAlignment="Center"
+                           Foreground="#7C6AF7" FontWeight="SemiBold"/>
+            </Grid>
+
+            <!-- Max Tokens Slider -->
+            <Grid Margin="0,10,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="70"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0">
+                    <TextBlock Text="Max Completion Tokens" Style="{StaticResource LpLabelStyle}"/>
+                    <Slider x:Name="SldrMaxTokens" Minimum="32" Maximum="512"
+                            TickFrequency="32" IsSnapToTickEnabled="True"
+                            Foreground="#7C6AF7"
+                            ValueChanged="SldrMaxTokens_ValueChanged"/>
+                </StackPanel>
+                <TextBlock x:Name="TxtMaxTokens" Grid.Column="1"
+                           VerticalAlignment="Center" HorizontalAlignment="Center"
+                           Foreground="#7C6AF7" FontWeight="SemiBold"/>
+            </Grid>
+
+            <!-- Temperature Slider -->
+            <Grid Margin="0,10,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="70"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0">
+                    <TextBlock Text="Temperature (creativity)" Style="{StaticResource LpLabelStyle}"/>
+                    <Slider x:Name="SldrTemp" Minimum="0" Maximum="1"
+                            TickFrequency="0.05" IsSnapToTickEnabled="True"
+                            Foreground="#7C6AF7"
+                            ValueChanged="SldrTemp_ValueChanged"/>
+                </StackPanel>
+                <TextBlock x:Name="TxtTemp" Grid.Column="1"
+                           VerticalAlignment="Center" HorizontalAlignment="Center"
+                           Foreground="#7C6AF7" FontWeight="SemiBold"/>
+            </Grid>
+
+            <!-- Context Lines -->
+            <Grid Margin="0,10,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="8"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0">
+                    <TextBlock Text="Context Lines Before Cursor" Style="{StaticResource LpLabelStyle}"/>
+                    <TextBox x:Name="TxtContextBefore" Style="{StaticResource LpInputStyle}"/>
+                </StackPanel>
+                <StackPanel Grid.Column="2">
+                    <TextBlock Text="Context Lines After Cursor" Style="{StaticResource LpLabelStyle}"/>
+                    <TextBox x:Name="TxtContextAfter" Style="{StaticResource LpInputStyle}"/>
+                </StackPanel>
+            </Grid>
+
+            <!-- ═══ Section 4: Code Actions ══════════════════════════════════ -->
+            <TextBlock Text="⚙️  Code Actions" Style="{StaticResource LpSectionHeader}"/>
+
+            <UniformGrid Columns="3" Margin="0,4,0,4">
+                <CheckBox x:Name="ChkExplain"  Content="Explain Code"       Style="{StaticResource LpCheckStyle}"/>
+                <CheckBox x:Name="ChkRefactor" Content="Refactor Code"      Style="{StaticResource LpCheckStyle}"/>
+                <CheckBox x:Name="ChkDocGen"   Content="Generate Docs"      Style="{StaticResource LpCheckStyle}"/>
+                <CheckBox x:Name="ChkReview"   Content="Code Review"        Style="{StaticResource LpCheckStyle}"/>
+                <CheckBox x:Name="ChkFix"      Content="Fix Issues"         Style="{StaticResource LpCheckStyle}"/>
+                <CheckBox x:Name="ChkUnitTest" Content="Generate Unit Test" Style="{StaticResource LpCheckStyle}"/>
+            </UniformGrid>
+
+            <!-- ═══ Section 5: Chat Panel ════════════════════════════════════ -->
+            <TextBlock Text="💬  Chat Panel" Style="{StaticResource LpSectionHeader}"/>
+
+            <CheckBox x:Name="ChkEnableChat" Content="Enable LocalPilot Chat Panel"
+                      Style="{StaticResource LpCheckStyle}"/>
+
+            <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                <TextBlock Text="Max Chat History: " Style="{StaticResource LpLabelStyle}"
+                           VerticalAlignment="Center"/>
+                <TextBox x:Name="TxtChatHistory" Style="{StaticResource LpInputStyle}"
+                         Width="80"/>
+                <TextBlock Text=" messages" Style="{StaticResource LpMutedLabel}"
+                           VerticalAlignment="Center" Margin="4,0,0,0"/>
+            </StackPanel>
+
+            <!-- ═══ Section 6: UI ════════════════════════════════════════════ -->
+            <TextBlock Text="🎨  Interface" Style="{StaticResource LpSectionHeader}"/>
+
+            <CheckBox x:Name="ChkStatusBar" Content="Show LocalPilot status in the status bar"
+                      Style="{StaticResource LpCheckStyle}"/>
+
+            <!-- Footer Buttons -->
+            <Separator Style="{StaticResource LpSepStyle}" Margin="0,16,0,10"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="Reset to Defaults" Style="{StaticResource LpSecondaryBtn}"
+                        x:Name="BtnReset" Click="BtnReset_Click" Margin="0,0,10,0"/>
+                <Button Content="💾  Save Settings" Style="{StaticResource LpPrimaryBtn}"
+                        x:Name="BtnSave"  Click="BtnSave_Click"/>
+            </StackPanel>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

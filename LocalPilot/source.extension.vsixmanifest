@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PackageManifest Version="2.0.0"
+  xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011"
+  xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
+  <Metadata>
+    <Identity Id="LocalPilot.457d4812-d3f6-4fea-9649-2a494282e03d"
+              Version="1.0"
+              Language="en-US"
+              Publisher="Jalpesh Vadgama" />
+    <DisplayName>LocalPilot — AI Coding Assistant (Ollama)</DisplayName>
+    <Description>
+      A GitHub Copilot-style AI coding assistant for Visual Studio that runs 100% locally
+      using Ollama. Features inline ghost-text completions, AI Chat panel, code explanation,
+      refactoring, documentation generation, code review, fix suggestions, and unit test
+      generation — all powered by your locally running Ollama models with no data leaving
+      your machine.
+    </Description>
+    <Tags>AI,Ollama,Copilot,Code Completion,LLM,Local AI,Chat</Tags>
+    <ProjectUrl>https://github.com/jalpesh/LocalPilot</ProjectUrl>
+  </Metadata>
+  <Installation>
+    <InstallationTarget Id="Microsoft.VisualStudio.Community" Version="[17.0, )">
+      <ProductArchitecture>amd64</ProductArchitecture>
+    </InstallationTarget>
+    <InstallationTarget Id="Microsoft.VisualStudio.Professional" Version="[17.0, )">
+      <ProductArchitecture>amd64</ProductArchitecture>
+    </InstallationTarget>
+    <InstallationTarget Id="Microsoft.VisualStudio.Enterprise" Version="[17.0, )">
+      <ProductArchitecture>amd64</ProductArchitecture>
+    </InstallationTarget>
+  </Installation>
+  <Dependencies>
+    <Dependency Id="Microsoft.Framework.NDP" DisplayName="Microsoft .NET Framework"
+                d:Source="Manual" Version="[4.7.2,)" />
+  </Dependencies>
+  <Prerequisites>
+    <Prerequisite Id="Microsoft.VisualStudio.Component.CoreEditor"
+                  Version="[17.0, )" DisplayName="Visual Studio core editor" />
+  </Prerequisites>
+  <Assets>
+    <Asset Type="Microsoft.VisualStudio.VsPackage"
+           d:Source="Project" d:ProjectName="%CurrentProject%"
+           Path="|%CurrentProject%;PkgdefProjectOutputGroup|" />
+    <Asset Type="Microsoft.VisualStudio.MefComponent"
+           d:Source="Project" d:ProjectName="%CurrentProject%"
+           Path="|%CurrentProject%|" />
+  </Assets>
+</PackageManifest>

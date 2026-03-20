@@ -1,0 +1,265 @@
+<UserControl x:Class="LocalPilot.Chat.LocalPilotChatControl"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:vsshell="clr-namespace:Microsoft.VisualStudio.Shell;assembly=Microsoft.VisualStudio.Shell.15.0"
+             mc:Ignorable="d"
+             d:DesignHeight="600" d:DesignWidth="400"
+             Background="{DynamicResource {x:Static vsshell:VsBrushes.ToolWindowBackgroundKey}}"
+             Foreground="{DynamicResource {x:Static vsshell:VsBrushes.ToolWindowTextKey}}"
+             FontFamily="Segoe UI" FontSize="13">
+
+    <UserControl.Resources>
+        <!-- Accent colour — stays purple regardless of VS theme -->
+        <SolidColorBrush x:Key="LpAccentBrush"  Color="#7C6AF7"/>
+        <SolidColorBrush x:Key="LpAccentHover"  Color="#9B8FFB"/>
+
+        <!-- Send Button -->
+        <Style x:Key="SendBtn" TargetType="Button">
+            <Setter Property="Background"       Value="#7C6AF7"/>
+            <Setter Property="Foreground"       Value="White"/>
+            <Setter Property="BorderThickness"  Value="0"/>
+            <Setter Property="Width"            Value="42"/>
+            <Setter Property="Height"           Value="42"/>
+            <Setter Property="FontSize"         Value="18"/>
+            <Setter Property="Cursor"           Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}"
+                                CornerRadius="10" Width="{TemplateBinding Width}"
+                                Height="{TemplateBinding Height}">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#9B8FFB"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Background" Value="#555577"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Quick Action Chip -->
+        <Style x:Key="ChipBtn" TargetType="Button">
+            <Setter Property="Background"
+                    Value="{DynamicResource {x:Static vsshell:VsBrushes.ButtonFaceKey}}"/>
+            <Setter Property="Foreground"      Value="#9B8FFB"/>
+            <Setter Property="BorderBrush"
+                    Value="{DynamicResource {x:Static vsshell:VsBrushes.ActiveBorderKey}}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding"         Value="10,4"/>
+            <Setter Property="FontSize"        Value="11"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+            <Setter Property="Margin"          Value="0,0,6,6"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="20"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="BorderBrush" Value="#7C6AF7"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Icon/ghost buttons -->
+        <Style x:Key="IconBtn" TargetType="Button">
+            <Setter Property="Background"      Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Foreground"
+                    Value="{DynamicResource {x:Static vsshell:VsBrushes.GrayTextKey}}"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+            <Setter Property="Padding"         Value="6"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}"
+                                CornerRadius="4" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Foreground"
+                                        Value="{DynamicResource {x:Static vsshell:VsBrushes.ToolWindowTextKey}}"/>
+                                <Setter Property="Background"
+                                        Value="{DynamicResource {x:Static vsshell:VsBrushes.ButtonFaceKey}}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Input TextBox -->
+        <Style x:Key="InputStyle" TargetType="TextBox">
+            <Setter Property="Background"
+                    Value="{DynamicResource {x:Static vsshell:VsBrushes.ComboBoxBackgroundKey}}"/>
+            <Setter Property="Foreground"
+                    Value="{DynamicResource {x:Static vsshell:VsBrushes.ToolWindowTextKey}}"/>
+            <Setter Property="BorderBrush"
+                    Value="{DynamicResource {x:Static vsshell:VsBrushes.ComboBoxBorderKey}}"/>
+            <Setter Property="BorderThickness"  Value="1"/>
+            <Setter Property="Padding"          Value="12,8"/>
+            <Setter Property="AcceptsReturn"    Value="True"/>
+            <Setter Property="TextWrapping"     Value="Wrap"/>
+            <Setter Property="CaretBrush"       Value="#7C6AF7"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="10" Padding="{TemplateBinding Padding}">
+                            <ScrollViewer x:Name="PART_ContentHost"
+                                          VerticalScrollBarVisibility="Auto"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsFocused" Value="True">
+                                <Setter Property="BorderBrush" Value="#7C6AF7"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>  <!-- Header -->
+            <RowDefinition Height="Auto"/>  <!-- Quick actions -->
+            <RowDefinition Height="*"/>     <!-- Chat history (scrollable) -->
+            <RowDefinition Height="Auto"/>  <!-- Stream status bar -->
+            <RowDefinition Height="Auto"/>  <!-- Input area -->
+        </Grid.RowDefinitions>
+
+        <!-- ═══ Header Bar ═══════════════════════════════════════════════════ -->
+        <Border Grid.Row="0"
+                Background="{DynamicResource {x:Static vsshell:VsBrushes.TitleBarActiveGradientBeginKey}}"
+                BorderBrush="{DynamicResource {x:Static vsshell:VsBrushes.ActiveBorderKey}}"
+                BorderThickness="0,0,0,1" Padding="14,10">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0" Orientation="Horizontal">
+                    <TextBlock Text="⚡" FontSize="18" VerticalAlignment="Center"
+                               Foreground="#7C6AF7"/>
+                    <TextBlock Text="LocalPilot Chat" FontSize="14" FontWeight="SemiBold"
+                               Foreground="{DynamicResource {x:Static vsshell:VsBrushes.ToolWindowTextKey}}"
+                               Margin="8,0,0,0" VerticalAlignment="Center"/>
+                </StackPanel>
+
+                <!-- Model selector -->
+                <ComboBox x:Name="CmbModel" Grid.Column="1"
+                          Width="130" Height="28"
+                          Padding="6,0" Margin="0,0,8,0" FontSize="11"
+                          ToolTip="Select AI model"/>
+
+                <!-- Clear button -->
+                <Button x:Name="BtnClear" Grid.Column="2" Style="{StaticResource IconBtn}"
+                        Content="🗑" FontSize="14" ToolTip="Clear chat history"
+                        Click="BtnClear_Click"/>
+            </Grid>
+        </Border>
+
+        <!-- ═══ Quick Action Chips ═══════════════════════════════════════════ -->
+        <Border Grid.Row="1"
+                Background="{DynamicResource {x:Static vsshell:VsBrushes.ToolWindowBackgroundKey}}"
+                Padding="12,8,12,4">
+            <WrapPanel x:Name="QuickActions">
+                <Button Content="✨ Explain"  Style="{StaticResource ChipBtn}"
+                        Tag="explain"   Click="QuickAction_Click"/>
+                <Button Content="🔧 Refactor" Style="{StaticResource ChipBtn}"
+                        Tag="refactor"  Click="QuickAction_Click"/>
+                <Button Content="📝 Document" Style="{StaticResource ChipBtn}"
+                        Tag="document"  Click="QuickAction_Click"/>
+                <Button Content="🔍 Review"   Style="{StaticResource ChipBtn}"
+                        Tag="review"    Click="QuickAction_Click"/>
+                <Button Content="🛠 Fix"      Style="{StaticResource ChipBtn}"
+                        Tag="fix"       Click="QuickAction_Click"/>
+                <Button Content="🧪 Test"     Style="{StaticResource ChipBtn}"
+                        Tag="test"      Click="QuickAction_Click"/>
+            </WrapPanel>
+        </Border>
+
+        <!-- ═══ Messages List (scrollable) ═══════════════════════════════════ -->
+        <!-- MessagesContainer is INSIDE ChatScroll so scrolling works correctly -->
+        <ScrollViewer Grid.Row="2" x:Name="ChatScroll"
+                      VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled"
+                      Background="{DynamicResource {x:Static vsshell:VsBrushes.ToolWindowBackgroundKey}}"
+                      Padding="10,6">
+            <StackPanel x:Name="MessagesContainer"
+                        VerticalAlignment="Top"
+                        Background="Transparent"/>
+        </ScrollViewer>
+
+        <!-- ═══ Streaming Indicator ══════════════════════════════════════════ -->
+        <Border Grid.Row="3" x:Name="StreamingBar"
+                Background="{DynamicResource {x:Static vsshell:VsBrushes.ToolWindowBackgroundKey}}"
+                BorderBrush="{DynamicResource {x:Static vsshell:VsBrushes.ActiveBorderKey}}"
+                BorderThickness="0,1,0,0"
+                Padding="14,6" Visibility="Collapsed">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock x:Name="TxtStreaming" Text="⚡ LocalPilot is thinking…"
+                           Foreground="#7C6AF7" FontSize="11"
+                           VerticalAlignment="Center"/>
+                <Button x:Name="BtnStop" Content="■ Stop" Margin="12,0,0,0"
+                        Style="{StaticResource IconBtn}" FontSize="11"
+                        Foreground="#F44747" Click="BtnStop_Click"/>
+            </StackPanel>
+        </Border>
+
+        <!-- ═══ Input Area ═══════════════════════════════════════════════════ -->
+        <Border Grid.Row="4"
+                Background="{DynamicResource {x:Static vsshell:VsBrushes.ToolWindowBackgroundKey}}"
+                BorderBrush="{DynamicResource {x:Static vsshell:VsBrushes.ActiveBorderKey}}"
+                BorderThickness="0,1,0,0" Padding="10,10">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <TextBox x:Name="TxtInput" Grid.Column="0"
+                         Style="{StaticResource InputStyle}"
+                         MinHeight="42" MaxHeight="120"
+                         Margin="0,0,8,0"
+                         KeyDown="TxtInput_KeyDown">
+                    <TextBox.Resources>
+                        <Style TargetType="ScrollBar">
+                            <Setter Property="Width" Value="4"/>
+                        </Style>
+                    </TextBox.Resources>
+                </TextBox>
+
+                <Button x:Name="BtnSend" Grid.Column="1" Content="➤"
+                        Style="{StaticResource SendBtn}"
+                        VerticalAlignment="Bottom"
+                        Click="BtnSend_Click"/>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>
