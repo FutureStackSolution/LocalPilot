@@ -118,11 +118,6 @@
   <Symbols>
     <GuidSymbol name="guidLocalPilotPackage" value="{5a6b34f5-329a-497a-956a-7f055a948b94}"/>
 
-    <!-- Standard IDs used as literals for compatibility -->
-    <GuidSymbol name="guidSHLMainMenu" value="{d2454a7c-4034-4530-9b36-e8d123d46700}">
-      <IDSymbol name="IDM_VS_CS_WNDWS" value="0x0115" />
-    </GuidSymbol>
-    
     <GuidSymbol name="guidLocalPilotCmdSet" value="{E1F2A3B4-C5D6-47E8-F9A0-B1C2D3E4F5A6}">
       <IDSymbol name="LocalPilotMenuGroup"         value="0x1020"/>
       <IDSymbol name="LocalPilotContextGroup"      value="0x1021"/>

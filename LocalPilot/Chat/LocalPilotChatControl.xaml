@@ -254,15 +254,48 @@
                     </Button>
                 </StackPanel>
                 
-                <!-- Streaming Status -->
-                <Border x:Name="StreamingBar" Visibility="Collapsed" Margin="4,0,4,8"
-                        Background="#107C6AF7" CornerRadius="8" Padding="10,6">
+                <!-- Streaming Status / Thinking Indicator -->
+                <Border x:Name="StreamingBar" Visibility="Collapsed" Margin="4,0,4,12"
+                        BorderThickness="1" BorderBrush="#207C6AF7"
+                        Background="#087C6AF7" CornerRadius="6" Padding="10,6">
                     <Grid>
                         <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="LocalPilot is thinking" Foreground="#7C6AF7"
-                                       FontSize="11" VerticalAlignment="Center"/>
-                            <TextBlock x:Name="ThinkingDots" Foreground="#7C6AF7"
-                                       FontSize="11" VerticalAlignment="Center">
+                            <!-- Pulsing Lightning Bolt -->
+                            <TextBlock Text="&#xEBD2;" FontFamily="Segoe MDL2 Assets" 
+                                       FontSize="12" Foreground="#7C6AF7" 
+                                       VerticalAlignment="Center" Margin="0,0,10,0">
+                                <TextBlock.RenderTransform>
+                                    <ScaleTransform CenterX="6" CenterY="6"/>
+                                </TextBlock.RenderTransform>
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Visibility, ElementName=StreamingBar}" Value="Visible">
+                                                <DataTrigger.EnterActions>
+                                                    <BeginStoryboard>
+                                                        <Storyboard RepeatBehavior="Forever" AutoReverse="True">
+                                                            <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)"
+                                                                             From="0.85" To="1.2" Duration="0:0:0.7"/>
+                                                            <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)"
+                                                                             From="0.85" To="1.2" Duration="0:0:0.7"/>
+                                                            <DoubleAnimation Storyboard.TargetProperty="Opacity"
+                                                                             From="0.4" To="1.0" Duration="0:0:0.7"/>
+                                                        </Storyboard>
+                                                    </BeginStoryboard>
+                                                </DataTrigger.EnterActions>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+
+                            <TextBlock Text="LocalPilot is thinking" 
+                                       Foreground="{DynamicResource {x:Static vsshell:VsBrushes.WindowTextKey}}"
+                                       FontSize="11" VerticalAlignment="Center" Opacity="0.8"/>
+
+                            <TextBlock x:Name="ThinkingDots" 
+                                       Foreground="{DynamicResource {x:Static vsshell:VsBrushes.WindowTextKey}}"
+                                       FontSize="11" VerticalAlignment="Center" Opacity="0.8">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
                                         <Style.Triggers>
@@ -287,9 +320,20 @@
                                 </TextBlock.Style>
                             </TextBlock>
                         </StackPanel>
+
                         <Button x:Name="BtnStop" Content="Stop" HorizontalAlignment="Right"
                                 Foreground="#F44747" Background="Transparent" BorderThickness="0"
-                                Cursor="Hand" FontSize="11" Click="BtnStop_Click"/>
+                                Cursor="Hand" FontSize="11" Click="BtnStop_Click">
+                            <Button.Style>
+                                <Style TargetType="Button">
+                                    <Style.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter Property="Opacity" Value="0.6"/>
+                                        </Trigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Button.Style>
+                        </Button>
                     </Grid>
                 </Border>
 
@@ -309,10 +353,11 @@
 
                     <Button x:Name="BtnSend"
                             Style="{StaticResource IconButtonStyle}"
+                            ToolTip="Send message (Enter)"
                             HorizontalAlignment="Right"
-                            VerticalAlignment="Bottom"
-                            Margin="0,0,8,8"
-                            Width="28" Height="28"
+                            VerticalAlignment="Center"
+                            Margin="0,0,10,0"
+                            Width="32" Height="32"
                             Click="BtnSend_Click">
                         <TextBlock Text="&#xE724;" FontFamily="Segoe MDL2 Assets" FontSize="14"
                                    VerticalAlignment="Center" HorizontalAlignment="Center"/>
