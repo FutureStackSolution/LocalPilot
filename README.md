@@ -1,4 +1,4 @@
-# ⚡ LocalPilot
+# <img src="LocalPilot/Assets/Logo_Concept_Minimalist.png" height="32" vertical-align="middle" /> ⚡ LocalPilot
 
 **LocalPilot** is a powerful, privacy-first Visual Studio extension that brings the power of local LLMs (via [Ollama](https://ollama.com)) directly into your coding environment. No cloud, no subscription, no tracking—just fast, local AI.
 

@@ -132,6 +132,9 @@ namespace LocalPilot.Options
                     TxtConnectionResult.Foreground = new SolidColorBrush(Color.FromRgb(0x4E, 0xC9, 0xB0));
                     SetConnectionStatus(true);
                     await LoadModelsAsync(url);
+                    
+                    MessageBox.Show("Successfully connected to Ollama!", "LocalPilot", 
+                                    MessageBoxButton.OK, MessageBoxImage.Information);
                 }
                 else
                 {

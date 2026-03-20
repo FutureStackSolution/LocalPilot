@@ -15,8 +15,10 @@
       generation — all powered by your locally running Ollama models with no data leaving
       your machine.
     </Description>
+    <MoreInfo>https://github.com/jalpesh/LocalPilot</MoreInfo>
+    <Icon>Assets\Logo_Concept_Minimalist.png</Icon>
+    <PreviewImage>Assets\Logo_Concept_Minimalist.png</PreviewImage>
     <Tags>AI,Ollama,Copilot,Code Completion,LLM,Local AI,Chat</Tags>
-    <ProjectUrl>https://github.com/jalpesh/LocalPilot</ProjectUrl>
   </Metadata>
   <Installation>
     <InstallationTarget Id="Microsoft.VisualStudio.Community" Version="[17.0, 19.0)">

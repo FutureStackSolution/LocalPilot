@@ -14,7 +14,7 @@ namespace LocalPilot.Chat
 
         public LocalPilotChatWindow() : base(null)
         {
-            Caption = "⚡ LocalPilot Chat";
+            Caption = "LocalPilot Chat";
             Content = new LocalPilotChatControl();
         }
     }

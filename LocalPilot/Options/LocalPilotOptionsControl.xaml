@@ -123,13 +123,17 @@
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
-                <StackPanel Grid.Column="0">
-                    <TextBlock Text="⚡ LocalPilot"
-                               Foreground="#7C6AF7"
-                               FontSize="22" FontWeight="Bold"/>
-                    <TextBlock Text="AI-powered coding assistant using your local Ollama models"
-                               Style="{StaticResource LpMutedLabel}"
-                               Margin="0,4,0,0"/>
+                <StackPanel Grid.Column="0" Orientation="Horizontal">
+                    <Image Source="/LocalPilot;component/Assets/Logo_Concept_Minimalist.png" 
+                           Width="32" Height="32" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="LocalPilot"
+                                   Foreground="#7C6AF7"
+                                   FontSize="20" FontWeight="Bold"/>
+                        <TextBlock Text="Local AI Assistant"
+                                   Style="{StaticResource LpMutedLabel}"
+                                   Margin="0,2,0,0"/>
+                    </StackPanel>
                 </StackPanel>
 
                 <!-- Connection Status Badge -->
