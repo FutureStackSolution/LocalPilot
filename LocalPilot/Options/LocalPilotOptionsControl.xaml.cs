@@ -107,37 +107,68 @@ namespace LocalPilot.Options
         // ── Event Handlers ────────────────────────────────────────────────────
         private async void BtnTestConnection_Click(object sender, RoutedEventArgs e)
         {
-            _ollama.UpdateBaseUrl(TxtBaseUrl.Text.Trim());
-            TxtConnectionResult.Visibility = Visibility.Visible;
-            TxtConnectionResult.Text       = "Testing connection…";
-            TxtConnectionResult.Foreground = new SolidColorBrush(Color.FromRgb(0x88, 0x88, 0xAA));
+            try
+            {
+                string url = TxtBaseUrl.Text.Trim();
+                if (!url.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+                {
+                    TxtConnectionResult.Text = "✗  URL must start with http:// or https://";
+                    TxtConnectionResult.Foreground = Brushes.Red;
+                    TxtConnectionResult.Visibility = Visibility.Visible;
+                    return;
+                }
 
-            bool ok = await _ollama.IsAvailableAsync();
-            if (ok)
-            {
-                TxtConnectionResult.Text       = "✓  Ollama is running and reachable!";
-                TxtConnectionResult.Foreground = new SolidColorBrush(Color.FromRgb(0x4E, 0xC9, 0xB0));
-                SetConnectionStatus(true);
-                await LoadModelsAsync(TxtBaseUrl.Text.Trim());
+                _ollama.UpdateBaseUrl(url);
+                TxtConnectionResult.Visibility = Visibility.Visible;
+                TxtConnectionResult.Text       = "Testing connection…";
+                TxtConnectionResult.Foreground = SystemColors.GrayTextBrush;
+
+                bool ok = await _ollama.IsAvailableAsync();
+                if (ok)
+                {
+                    TxtConnectionResult.Text       = "✓  Ollama is running and reachable!";
+                    TxtConnectionResult.Foreground = new SolidColorBrush(Color.FromRgb(0x4E, 0xC9, 0xB0));
+                    SetConnectionStatus(true);
+                    await LoadModelsAsync(url);
+                }
+                else
+                {
+                    TxtConnectionResult.Text       = "✗  Cannot reach Ollama. Check URL and ensure it's running.";
+                    TxtConnectionResult.Foreground = new SolidColorBrush(Color.FromRgb(0xF4, 0x47, 0x47));
+                    SetConnectionStatus(false);
+                }
             }
-            else
+            catch (Exception ex)
             {
-                TxtConnectionResult.Text       = "✗  Cannot reach Ollama. Make sure 'ollama serve' is running.";
-                TxtConnectionResult.Foreground = new SolidColorBrush(Color.FromRgb(0xF4, 0x47, 0x47));
-                SetConnectionStatus(false);
+                TxtConnectionResult.Text = $"✗  Error: {ex.Message}";
+                TxtConnectionResult.Foreground = Brushes.Red;
             }
         }
 
         private async void BtnRefreshModels_Click(object sender, RoutedEventArgs e)
         {
-            await LoadModelsAsync(TxtBaseUrl.Text.Trim());
+            try
+            {
+                await LoadModelsAsync(TxtBaseUrl.Text.Trim());
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Refresh failed: {ex.Message}", "LocalPilot", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
         }
 
         private void BtnSave_Click(object sender, RoutedEventArgs e)
         {
-            SaveSettings();
-            MessageBox.Show("Settings saved!", "LocalPilot", MessageBoxButton.OK,
-                            MessageBoxImage.Information);
+            try
+            {
+                SaveSettings();
+                MessageBox.Show("Settings saved!", "LocalPilot", MessageBoxButton.OK,
+                                MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Save failed: {ex.Message}", "LocalPilot", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
         }
 
         private void BtnReset_Click(object sender, RoutedEventArgs e)
@@ -152,29 +183,48 @@ namespace LocalPilot.Options
         }
 
         private void SldrDelay_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
-            => TxtDelay.Text = $"{(int)e.NewValue} ms";
+        {
+            if (TxtDelay != null)
+                TxtDelay.Text = $"{(int)e.NewValue} ms";
+        }
 
         private void SldrMaxTokens_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
-            => TxtMaxTokens.Text = $"{(int)e.NewValue}";
+        {
+            if (TxtMaxTokens != null)
+                TxtMaxTokens.Text = $"{(int)e.NewValue}";
+        }
 
         private void SldrTemp_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
-            => TxtTemp.Text = $"{e.NewValue:F2}";
+        {
+            if (TxtTemp != null)
+                TxtTemp.Text = $"{e.NewValue:F2}";
+        }
 
         // ── Helpers ───────────────────────────────────────────────────────────
         private async Task LoadModelsAsync(string baseUrl)
         {
-            _ollama.UpdateBaseUrl(baseUrl);
-            var models = await _ollama.GetAvailableModelsAsync();
-
-            Dispatcher.Invoke(() =>
+            try
             {
-                PopulateCombo(CmbCompletionModel, models, LocalPilotSettings.Instance.CompletionModel);
-                PopulateCombo(CmbChatModel,        models, LocalPilotSettings.Instance.ChatModel);
-                PopulateCombo(CmbExplainModel,     models, LocalPilotSettings.Instance.ExplainModel);
-                PopulateCombo(CmbRefactorModel,    models, LocalPilotSettings.Instance.RefactorModel);
-                PopulateCombo(CmbDocModel,         models, LocalPilotSettings.Instance.DocModel);
-                PopulateCombo(CmbReviewModel,      models, LocalPilotSettings.Instance.ReviewModel);
-            });
+                if (string.IsNullOrWhiteSpace(baseUrl) || !baseUrl.Contains("://"))
+                    return;
+
+                _ollama.UpdateBaseUrl(baseUrl);
+                var models = await _ollama.GetAvailableModelsAsync();
+
+                Dispatcher.Invoke(() =>
+                {
+                    PopulateCombo(CmbCompletionModel, models, LocalPilotSettings.Instance.CompletionModel);
+                    PopulateCombo(CmbChatModel,        models, LocalPilotSettings.Instance.ChatModel);
+                    PopulateCombo(CmbExplainModel,     models, LocalPilotSettings.Instance.ExplainModel);
+                    PopulateCombo(CmbRefactorModel,    models, LocalPilotSettings.Instance.RefactorModel);
+                    PopulateCombo(CmbDocModel,         models, LocalPilotSettings.Instance.DocModel);
+                    PopulateCombo(CmbReviewModel,      models, LocalPilotSettings.Instance.ReviewModel);
+                });
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[LocalPilot] LoadModelsAsync failed: {ex.Message}");
+            }
         }
 
         private void PopulateCombo(ComboBox cmb, List<string> models, string selected)

@@ -30,7 +30,7 @@
             type="Menu">
         <Parent guid="guidLocalPilotCmdSet" id="LocalPilotMenuGroup"/>
         <Strings>
-          <ButtonText>⚡ LocalPilot</ButtonText>
+          <ButtonText>LocalPilot</ButtonText>
         </Strings>
       </Menu>
 
@@ -40,8 +40,8 @@
             type="Menu">
         <Parent guid="guidLocalPilotCmdSet" id="LocalPilotContextGroup"/>
         <Strings>
-          <ButtonText>⚡ LocalPilot</ButtonText>
-          <CommandName>LocalPilotSubMenu</CommandName>
+          <ButtonText>LocalPilot</ButtonText>
+          <CommandName>LocalPilot</CommandName>
         </Strings>
       </Menu>
     </Menus>
@@ -51,7 +51,7 @@
       <Button guid="guidLocalPilotCmdSet" id="cmdidOpenChat" priority="0x0100" type="Button">
         <Parent guid="guidLocalPilotCmdSet" id="LocalPilotMenuGroup"/>
         <Strings>
-          <ButtonText>⚡ Open LocalPilot Chat</ButtonText>
+          <ButtonText>Open LocalPilot Chat</ButtonText>
           <ToolTipText>Open the LocalPilot AI Chat panel</ToolTipText>
         </Strings>
       </Button>
@@ -60,7 +60,7 @@
       <Button guid="guidLocalPilotCmdSet" id="cmdidExplainCode" priority="0x0101" type="Button">
         <Parent guid="guidLocalPilotCmdSet" id="LocalPilotContextInnerGroup"/>
         <Strings>
-          <ButtonText>✨ Explain Code</ButtonText>
+          <ButtonText>Explain Code</ButtonText>
         </Strings>
       </Button>
 
@@ -68,7 +68,7 @@
       <Button guid="guidLocalPilotCmdSet" id="cmdidRefactorCode" priority="0x0102" type="Button">
         <Parent guid="guidLocalPilotCmdSet" id="LocalPilotContextInnerGroup"/>
         <Strings>
-          <ButtonText>🔧 Refactor Code</ButtonText>
+          <ButtonText>Refactor Code</ButtonText>
         </Strings>
       </Button>
 
@@ -76,7 +76,7 @@
       <Button guid="guidLocalPilotCmdSet" id="cmdidGenerateDoc" priority="0x0103" type="Button">
         <Parent guid="guidLocalPilotCmdSet" id="LocalPilotContextInnerGroup"/>
         <Strings>
-          <ButtonText>📝 Generate Documentation</ButtonText>
+          <ButtonText>Generate Documentation</ButtonText>
         </Strings>
       </Button>
 
@@ -84,7 +84,7 @@
       <Button guid="guidLocalPilotCmdSet" id="cmdidReviewCode" priority="0x0104" type="Button">
         <Parent guid="guidLocalPilotCmdSet" id="LocalPilotContextInnerGroup"/>
         <Strings>
-          <ButtonText>🔍 Review Code</ButtonText>
+          <ButtonText>Review Code</ButtonText>
         </Strings>
       </Button>
 
@@ -92,7 +92,7 @@
       <Button guid="guidLocalPilotCmdSet" id="cmdidFixCode" priority="0x0105" type="Button">
         <Parent guid="guidLocalPilotCmdSet" id="LocalPilotContextInnerGroup"/>
         <Strings>
-          <ButtonText>🛠 Fix Code</ButtonText>
+          <ButtonText>Fix Code</ButtonText>
         </Strings>
       </Button>
 
@@ -100,7 +100,7 @@
       <Button guid="guidLocalPilotCmdSet" id="cmdidGenerateTest" priority="0x0106" type="Button">
         <Parent guid="guidLocalPilotCmdSet" id="LocalPilotContextInnerGroup"/>
         <Strings>
-          <ButtonText>🧪 Generate Unit Tests</ButtonText>
+          <ButtonText>Generate Unit Tests</ButtonText>
         </Strings>
       </Button>
 

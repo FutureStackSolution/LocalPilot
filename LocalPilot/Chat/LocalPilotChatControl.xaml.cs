@@ -19,7 +19,7 @@ namespace LocalPilot.Chat
         private readonly OllamaService _ollama;
         private readonly List<ChatMessage> _history = new List<ChatMessage>();
         private CancellationTokenSource _cts;
-        private TextBlock _streamingBlock;    // current AI message being streamed
+        private RichTextBox _streamingBlock;    // current AI message being streamed
 
         // Fixed accent/code colours — look fine on both light and dark themes
         private static readonly SolidColorBrush BrushAccent = new SolidColorBrush(Color.FromRgb(0x7C, 0x6A, 0xF7));
@@ -50,45 +50,15 @@ namespace LocalPilot.Chat
             Loaded += OnLoaded;
         }
 
-        private async void OnLoaded(object sender, RoutedEventArgs e)
+        private void OnLoaded(object sender, RoutedEventArgs e)
         {
-            await PopulateModelsAsync();
             ShowWelcomeMessage();
-        }
-
-        // ── Model population ──────────────────────────────────────────────────
-        private async Task PopulateModelsAsync()
-        {
-            var models = await _ollama.GetAvailableModelsAsync();
-            CmbModel.Items.Clear();
-
-            if (models.Count == 0)
-            {
-                CmbModel.Items.Add(new ComboBoxItem
-                {
-                    Content    = "No models found",
-                    Foreground = SystemColors.GrayTextBrush
-                });
-                CmbModel.SelectedIndex = 0;
-                return;
-            }
-
-            string preferred = LocalPilotSettings.Instance.ChatModel;
-            int selectIdx = 0;
-
-            for (int i = 0; i < models.Count; i++)
-            {
-                CmbModel.Items.Add(new ComboBoxItem { Content = models[i] });
-                if (models[i].Equals(preferred, StringComparison.OrdinalIgnoreCase))
-                    selectIdx = i;
-            }
-
-            CmbModel.SelectedIndex = selectIdx;
         }
 
         // ── Welcome message ───────────────────────────────────────────────────
         private void ShowWelcomeMessage()
         {
+            _history.Clear();
             _history.Add(new ChatMessage
             {
                 Role    = "system",
@@ -97,17 +67,8 @@ namespace LocalPilot.Chat
                           "Be concise, precise, and always use proper code formatting."
             });
 
-            AppendAIBubble(
-                "👋 Hi! I'm **LocalPilot**, your local AI coding assistant powered by Ollama.\n\n" +
-                "I can help you:\n" +
-                "• **Explain** selected code\n" +
-                "• **Refactor** for better quality\n" +
-                "• **Generate** documentation\n" +
-                "• **Review** for bugs and improvements\n" +
-                "• **Fix** errors and issues\n" +
-                "• **Write** unit tests\n\n" +
-                "Select code in the editor and use the quick action chips above, or just ask me anything!",
-                isStreaming: false);
+            // Modern introductory text is now partly in XAML, but we can add a greet
+            AppendAIBubble("👋 Hi! I'm ready to help with your code. Select some text and use the actions above, or just ask me a question below.");
         }
 
         // ── Send message ──────────────────────────────────────────────────────
@@ -135,7 +96,6 @@ namespace LocalPilot.Chat
             await StreamResponseAsync();
         }
 
-        // ── Quick action chips ────────────────────────────────────────────────
         private async void QuickAction_Click(object sender, RoutedEventArgs e)
         {
             var btn = (Button)sender;
@@ -193,13 +153,10 @@ namespace LocalPilot.Chat
             _cts = new CancellationTokenSource();
             var token = _cts.Token;
 
-            string model = (CmbModel.SelectedItem as ComboBoxItem)?.Content?.ToString()
-                           ?? LocalPilotSettings.Instance.ChatModel;
+            // Use model from settings directly
+            string model = LocalPilotSettings.Instance.ChatModel;
 
             SetStreaming(true);
-
-            // Create an AI bubble that will be updated live
-            _streamingBlock = AppendAIBubble(string.Empty, isStreaming: true);
 
             var sb = new StringBuilder();
 
@@ -212,6 +169,9 @@ namespace LocalPilot.Chat
                     // Update UI on UI thread
                     Dispatcher.Invoke(() =>
                     {
+                        if (_streamingBlock == null && !string.IsNullOrEmpty(sb.ToString()))
+                            _streamingBlock = AppendAIBubble(string.Empty);
+
                         if (_streamingBlock != null)
                             RenderMarkdown(_streamingBlock, sb.ToString());
 
@@ -238,7 +198,7 @@ namespace LocalPilot.Chat
             catch (Exception ex)
             {
                 Dispatcher.Invoke(() =>
-                    AppendAIBubble($"❌ Error: {ex.Message}", isStreaming: false));
+                    AppendAIBubble($"❌ Error: {ex.Message}"));
             }
             finally
             {
@@ -253,36 +213,30 @@ namespace LocalPilot.Chat
             var border = new Border
             {
                 Background      = ThemeSurface,
-                BorderBrush     = new SolidColorBrush(Color.FromArgb(0x80, 0x7C, 0x6A, 0xF7)),
+                BorderBrush     = new SolidColorBrush(Color.FromArgb(0x20, 0x7C, 0x6A, 0xF7)),
                 BorderThickness = new Thickness(1),
-                CornerRadius    = new CornerRadius(10, 10, 3, 10),
-                Padding         = new Thickness(12, 8, 12, 8),
-                Margin          = new Thickness(40, 4, 4, 4),
-                HorizontalAlignment = HorizontalAlignment.Right,
-                MaxWidth        = 340
+                CornerRadius    = new CornerRadius(12, 12, 2, 12),
+                Padding         = new Thickness(14, 10, 14, 10),
+                Margin          = new Thickness(48, 8, 0, 8),
+                HorizontalAlignment = HorizontalAlignment.Right
             };
 
             var container = new StackPanel { Orientation = Orientation.Vertical };
 
-            var label = new TextBlock
+            var body = new RichTextBox
             {
-                Text       = "You",
-                Foreground = BrushAccent,
-                FontSize   = 10,
-                FontWeight = FontWeights.SemiBold,
-                Margin     = new Thickness(0, 0, 0, 3)
-            };
-
-            var body = new TextBlock
-            {
+                Background   = Brushes.Transparent,
                 Foreground   = ThemeWindowFg,
+                BorderThickness = new Thickness(0),
+                IsReadOnly   = true,
                 FontFamily   = UIFont,
                 FontSize     = 13,
-                TextWrapping = TextWrapping.Wrap,
-                Text         = text
+                IsDocumentEnabled = true,
+                Padding      = new Thickness(0)
             };
+            SetRichText(body, text);
 
-            container.Children.Add(label);
+            // container.Children.Add(label); // Removed
             container.Children.Add(body);
             border.Child = container;
             MessagesContainer.Children.Add(border);
@@ -290,42 +244,89 @@ namespace LocalPilot.Chat
             ChatScroll.ScrollToBottom();
         }
 
-        private TextBlock AppendAIBubble(string text, bool isStreaming)
+        private RichTextBox AppendAIBubble(string text)
         {
             var border = new Border
             {
                 Background   = ThemeWindowBg,
                 BorderBrush  = ThemeBorder,
                 BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(10, 10, 10, 3),
-                Padding      = new Thickness(12, 8, 12, 8),
-                Margin       = new Thickness(4, 4, 40, 4),
+                CornerRadius = new CornerRadius(12, 12, 12, 2),
+                Padding      = new Thickness(14, 10, 14, 10),
+                Margin       = new Thickness(0, 8, 48, 8),
                 HorizontalAlignment = HorizontalAlignment.Left
             };
 
             var container = new StackPanel { Orientation = Orientation.Vertical };
 
+            var header = new Grid { Margin = new Thickness(0, 0, 0, 6) };
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Auto) });
+
             var label = new TextBlock
             {
-                Text       = "⚡ LocalPilot",
+                Text       = "LocalPilot",
                 Foreground = BrushAccent,
                 FontSize   = 10,
-                FontWeight = FontWeights.SemiBold,
-                Margin     = new Thickness(0, 0, 0, 3)
+                FontWeight = FontWeights.Bold,
+                VerticalAlignment = VerticalAlignment.Center
             };
+            Grid.SetColumn(label, 0);
 
-            var body = new TextBlock
+            var copyBtn = new Button
             {
+                Content    = "📋 Copy",
+                Background = Brushes.Transparent,
+                BorderThickness = new Thickness(0),
+                Foreground = (Brush)Application.Current.Resources[VsBrushes.GrayTextKey],
+                FontSize   = 9,
+                Padding    = new Thickness(4, 2, 4, 2),
+                Cursor     = Cursors.Hand,
+                ToolTip    = "Copy to clipboard"
+            };
+            Grid.SetColumn(copyBtn, 1);
+            
+            header.Children.Add(label);
+            header.Children.Add(copyBtn);
+
+            var body = new RichTextBox
+            {
+                Background   = Brushes.Transparent,
                 Foreground   = ThemeWindowFg,
+                BorderThickness = new Thickness(0),
+                IsReadOnly   = true,
                 FontFamily   = UIFont,
                 FontSize     = 13,
-                TextWrapping = TextWrapping.Wrap
+                IsDocumentEnabled = true,
+                Padding      = new Thickness(0)
+            };
+
+            // Capture text for copying
+            copyBtn.Click += (s, e) =>
+            {
+                string rawText = text;
+                // If the stream is still going, we need to grab the current text from the RichTextBox
+                if (string.IsNullOrEmpty(rawText) && body.Document != null)
+                {
+                    var textRange = new TextRange(body.Document.ContentStart, body.Document.ContentEnd);
+                    rawText = textRange.Text;
+                }
+
+                if (!string.IsNullOrEmpty(rawText))
+                {
+                    Clipboard.SetText(rawText);
+                    copyBtn.Content = "✓ Copied";
+                    Task.Run(async () => {
+                        await Task.Delay(1500);
+                        Dispatcher.Invoke(() => copyBtn.Content = "📋 Copy");
+                    });
+                }
             };
 
             if (!string.IsNullOrEmpty(text))
                 RenderMarkdown(body, text);
 
-            container.Children.Add(label);
+            container.Children.Add(header);
             container.Children.Add(body);
             border.Child = container;
             MessagesContainer.Children.Add(border);
@@ -334,14 +335,13 @@ namespace LocalPilot.Chat
             return body;
         }
 
-        /// <summary>
-        /// Very simple markdown renderer — handles bold, code blocks and plain text.
-        /// For production, replace with a proper markdown library.
-        /// </summary>
-        private void RenderMarkdown(TextBlock tb, string md)
+        // ── Markdown rendering for RichTextBox ───────────────────────────────
+        private void RenderMarkdown(RichTextBox rtb, string md)
         {
-            tb.Inlines.Clear();
+            rtb.Document.Blocks.Clear();
             if (string.IsNullOrEmpty(md)) return;
+
+            var paragraph = new Paragraph { Margin = new Thickness(0) };
 
             // Split on code fences
             var parts = md.Split(new[] { "```" }, StringSplitOptions.None);
@@ -350,17 +350,17 @@ namespace LocalPilot.Chat
             {
                 if (i % 2 == 1)
                 {
-                    // Code block — strip language identifier on first line
+                    // Code block with Basic Syntax Highlighting
                     var code = parts[i];
-                    var nl   = code.IndexOf('\n');
-                    if (nl >= 0) code = code.Substring(nl + 1);
-
-                    tb.Inlines.Add(new Run(code.TrimEnd())
+                    var nl = code.IndexOf('\n');
+                    string lang = string.Empty;
+                    if (nl >= 0)
                     {
-                        FontFamily = ConsoleFont,
-                        FontSize   = 12,
-                        Foreground = BrushCode
-                    });
+                        lang = code.Substring(0, nl).Trim();
+                        code = code.Substring(nl + 1);
+                    }
+
+                    HighlightCode(paragraph, code.TrimEnd());
                 }
                 else
                 {
@@ -368,14 +368,56 @@ namespace LocalPilot.Chat
                     var segments = parts[i].Split(new[] { "**" }, StringSplitOptions.None);
                     for (int j = 0; j < segments.Length; j++)
                     {
-                        var run = new Run(segments[j])
-                        {
-                            Foreground = ThemeWindowFg
-                        };
+                        var run = new Run(segments[j]) { Foreground = ThemeWindowFg };
                         if (j % 2 == 1) run.FontWeight = FontWeights.Bold;
-                        tb.Inlines.Add(run);
+                        paragraph.Inlines.Add(run);
                     }
                 }
+            }
+
+            rtb.Document.Blocks.Add(paragraph);
+        }
+
+        private static readonly string[] Keywords = {
+            "public", "private", "protected", "internal", "static", "void", "async", "await", "task",
+            "class", "namespace", "using", "var", "string", "int", "bool", "return", "if", "else",
+            "foreach", "for", "while", "switch", "case", "break", "new", "try", "catch", "finally",
+            "throw", "override", "virtual", "abstract", "get", "set"
+        };
+
+        private void HighlightCode(Paragraph p, string code)
+        {
+            // Simple approach: split by non-word chars and match keywords
+            // Or use Regex for a more robust (but still lightweight) approach
+            var lines = code.Split('\n');
+            for (int lineIdx = 0; lineIdx < lines.Length; lineIdx++)
+            {
+                var line = lines[lineIdx];
+                if (line.TrimStart().StartsWith("//"))
+                {
+                    p.Inlines.Add(new Run(line) { Foreground = new SolidColorBrush(Color.FromRgb(0x6A, 0x99, 0x55)), FontFamily = ConsoleFont });
+                }
+                else
+                {
+                    // Tokenize basic parts
+                    var tokens = System.Text.RegularExpressions.Regex.Split(line, @"(\W)");
+                    foreach (var token in tokens)
+                    {
+                        var run = new Run(token) { FontFamily = ConsoleFont, FontSize = 12 };
+                        
+                        if (Array.Exists(Keywords, k => k == token))
+                            run.Foreground = new SolidColorBrush(Color.FromRgb(0x56, 0x9C, 0xD6)); // Blue Key
+                        else if (System.Text.RegularExpressions.Regex.IsMatch(token, @"^\d+$"))
+                            run.Foreground = new SolidColorBrush(Color.FromRgb(0xB5, 0xCE, 0xA8)); // Green Num
+                        else if (token.StartsWith("\"") || token.StartsWith("'"))
+                            run.Foreground = BrushCode; // Orange String
+                        else
+                            run.Foreground = ThemeWindowFg; // Normal
+
+                        p.Inlines.Add(run);
+                    }
+                }
+                if (lineIdx < lines.Length - 1) p.Inlines.Add(new LineBreak());
             }
         }
 
