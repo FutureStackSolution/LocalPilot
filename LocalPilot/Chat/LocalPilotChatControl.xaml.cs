@@ -77,10 +77,22 @@ namespace LocalPilot.Chat
 
         private async void TxtInput_KeyDown(object sender, KeyEventArgs e)
         {
-            if (e.Key == Key.Return && Keyboard.Modifiers != ModifierKeys.Shift)
+            if (e.Key == Key.Return)
             {
-                e.Handled = true;
-                await SendMessageAsync(TxtInput.Text.Trim());
+                if (Keyboard.Modifiers == ModifierKeys.Shift)
+                {
+                    // Shift+Enter: Insert newline
+                    int caretIndex = TxtInput.CaretIndex;
+                    TxtInput.Text = TxtInput.Text.Insert(caretIndex, Environment.NewLine);
+                    TxtInput.CaretIndex = caretIndex + Environment.NewLine.Length;
+                    e.Handled = true;
+                }
+                else
+                {
+                    // Enter only: Send
+                    e.Handled = true;
+                    await SendMessageAsync(TxtInput.Text.Trim());
+                }
             }
         }
 
@@ -162,7 +174,13 @@ namespace LocalPilot.Chat
 
             try
             {
-                await foreach (var chunk in _ollama.StreamChatAsync(model, _history, null, token))
+                var options = new OllamaOptions
+                {
+                    Temperature = LocalPilotSettings.Instance.Temperature,
+                    NumPredict = LocalPilotSettings.Instance.MaxChatTokens
+                };
+
+                await foreach (var chunk in _ollama.StreamChatAsync(model, _history, options, token))
                 {
                     sb.Append(chunk);
 
@@ -173,9 +191,13 @@ namespace LocalPilot.Chat
                             _streamingBlock = AppendAIBubble(string.Empty);
 
                         if (_streamingBlock != null)
+                        {
                             RenderMarkdown(_streamingBlock, sb.ToString());
+                            _streamingBlock.UpdateLayout();
+                        }
 
-                        // Auto-scroll
+                        // Force layout refresh and scroll
+                        ChatScroll.UpdateLayout();
                         ChatScroll.ScrollToBottom();
                     });
                 }
@@ -202,8 +224,17 @@ namespace LocalPilot.Chat
             }
             finally
             {
-                Dispatcher.Invoke(() => SetStreaming(false));
-                _streamingBlock = null;
+                string finalMd = sb.ToString();
+                Dispatcher.Invoke(() => 
+                {
+                    if (_streamingBlock != null)
+                    {
+                        var container = (StackPanel)_streamingBlock.Parent;
+                        RenderFullMarkdown(container, finalMd);
+                    }
+                    SetStreaming(false);
+                    _streamingBlock = null;
+                });
             }
         }
 
@@ -232,7 +263,8 @@ namespace LocalPilot.Chat
                 FontFamily   = UIFont,
                 FontSize     = 13,
                 IsDocumentEnabled = true,
-                Padding      = new Thickness(0)
+                Padding      = new Thickness(0),
+                VerticalScrollBarVisibility = ScrollBarVisibility.Disabled
             };
             SetRichText(body, text);
 
@@ -259,37 +291,28 @@ namespace LocalPilot.Chat
 
             var container = new StackPanel { Orientation = Orientation.Vertical };
 
-            var header = new Grid { Margin = new Thickness(0, 0, 0, 6) };
-            header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Auto) });
-
-            var label = new TextBlock
+            if (string.IsNullOrEmpty(text))
             {
-                Text       = "LocalPilot",
-                Foreground = BrushAccent,
-                FontSize   = 10,
-                FontWeight = FontWeights.Bold,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            Grid.SetColumn(label, 0);
-
-            var copyBtn = new Button
+                // Streaming placeholder
+                var body = CreateRichTextBox();
+                _streamingBlock = body;
+                container.Children.Add(body);
+            }
+            else
             {
-                Content    = "📋 Copy",
-                Background = Brushes.Transparent,
-                BorderThickness = new Thickness(0),
-                Foreground = (Brush)Application.Current.Resources[VsBrushes.GrayTextKey],
-                FontSize   = 9,
-                Padding    = new Thickness(4, 2, 4, 2),
-                Cursor     = Cursors.Hand,
-                ToolTip    = "Copy to clipboard"
-            };
-            Grid.SetColumn(copyBtn, 1);
-            
-            header.Children.Add(label);
-            header.Children.Add(copyBtn);
+                RenderFullMarkdown(container, text);
+            }
 
-            var body = new RichTextBox
+            border.Child = container;
+            MessagesContainer.Children.Add(border);
+            ChatScroll.ScrollToBottom();
+
+            return _streamingBlock;
+        }
+
+        private RichTextBox CreateRichTextBox()
+        {
+            return new RichTextBox
             {
                 Background   = Brushes.Transparent,
                 Foreground   = ThemeWindowFg,
@@ -298,41 +321,83 @@ namespace LocalPilot.Chat
                 FontFamily   = UIFont,
                 FontSize     = 13,
                 IsDocumentEnabled = true,
-                Padding      = new Thickness(0)
+                Padding      = new Thickness(0),
+                VerticalScrollBarVisibility = ScrollBarVisibility.Disabled
             };
+        }
 
-            // Capture text for copying
-            copyBtn.Click += (s, e) =>
+        private void RenderFullMarkdown(StackPanel container, string md)
+        {
+            container.Children.Clear();
+            var parts = md.Split(new[] { "```" }, StringSplitOptions.None);
+
+            for (int i = 0; i < parts.Length; i++)
             {
-                string rawText = text;
-                // If the stream is still going, we need to grab the current text from the RichTextBox
-                if (string.IsNullOrEmpty(rawText) && body.Document != null)
+                if (i % 2 == 1)
                 {
-                    var textRange = new TextRange(body.Document.ContentStart, body.Document.ContentEnd);
-                    rawText = textRange.Text;
-                }
+                    // Code block with Copy button
+                    var codePart = parts[i];
+                    var nl = codePart.IndexOf('\n');
+                    string lang = string.Empty;
+                    if (nl >= 0)
+                    {
+                        lang = codePart.Substring(0, nl).Trim();
+                        codePart = codePart.Substring(nl + 1);
+                    }
+                    string cleanCode = codePart.TrimEnd();
 
-                if (!string.IsNullOrEmpty(rawText))
+                    var grid = new Grid { Margin = new Thickness(0, 8, 0, 8) };
+                    var codeBorder = new Border {
+                        Background = new SolidColorBrush(Color.FromArgb(0x06, 0x00, 0x00, 0x00)),
+                        BorderBrush = new SolidColorBrush(Color.FromArgb(0x10, 0x7C, 0x6A, 0xF7)),
+                        BorderThickness = new Thickness(1),
+                        CornerRadius = new CornerRadius(8),
+                        Padding = new Thickness(10)
+                    };
+                    
+                    var codeRtb = CreateRichTextBox();
+                    HighlightCode((Paragraph)codeRtb.Document.Blocks.FirstBlock, cleanCode);
+                    codeBorder.Child = codeRtb;
+                    grid.Children.Add(codeBorder);
+
+                    var copyBtn = new Button {
+                        Content = "📋 Copy Code",
+                        HorizontalAlignment = HorizontalAlignment.Right,
+                        VerticalAlignment = VerticalAlignment.Top,
+                        Margin = new Thickness(0, 4, 4, 0),
+                        Padding = new Thickness(6, 2, 6, 2),
+                        FontSize = 9,
+                        Cursor = Cursors.Hand,
+                        ToolTip = "Copy this code block"
+                    };
+
+                    // Use common icon style if available
+                    if (Application.Current.Resources.Contains("IconButtonStyle"))
+                        copyBtn.Style = (Style)Application.Current.Resources["IconButtonStyle"];
+                    else
+                    {
+                        copyBtn.Background = new SolidColorBrush(Color.FromArgb(0x60, 0x00, 0x00, 0x00));
+                        copyBtn.Foreground = Brushes.White;
+                        copyBtn.BorderThickness = new Thickness(0);
+                    }
+
+                    copyBtn.Click += (s, e) => {
+                        Clipboard.SetText(cleanCode);
+                        copyBtn.Content = "✓ Copied";
+                        Task.Delay(1500).ContinueWith(_ => Dispatcher.Invoke(() => copyBtn.Content = "📋 Copy Code"));
+                    };
+                    grid.Children.Add(copyBtn);
+                    container.Children.Add(grid);
+                }
+                else
                 {
-                    Clipboard.SetText(rawText);
-                    copyBtn.Content = "✓ Copied";
-                    Task.Run(async () => {
-                        await Task.Delay(1500);
-                        Dispatcher.Invoke(() => copyBtn.Content = "📋 Copy");
-                    });
+                    // Plain text
+                    if (string.IsNullOrWhiteSpace(parts[i])) continue;
+                    var rtb = CreateRichTextBox();
+                    RenderMarkdown(rtb, parts[i]);
+                    container.Children.Add(rtb);
                 }
-            };
-
-            if (!string.IsNullOrEmpty(text))
-                RenderMarkdown(body, text);
-
-            container.Children.Add(header);
-            container.Children.Add(body);
-            border.Child = container;
-            MessagesContainer.Children.Add(border);
-
-            ChatScroll.ScrollToBottom();
-            return body;
+            }
         }
 
         // ── Markdown rendering for RichTextBox ───────────────────────────────
@@ -457,15 +522,32 @@ namespace LocalPilot.Chat
             _cts?.Cancel();
         }
 
-        // ── Public API (called by command handlers) ────────────────────────
         public void FireQuickAction(string action)
         {
-            // Must run on the UI thread — this may be called from JoinableTaskFactory
             Dispatcher.Invoke(() =>
             {
-                var btn = new Button { Tag = action };
-                QuickAction_Click(btn, new RoutedEventArgs());
+                var mockBtn = new Button { Tag = action };
+                QuickAction_Click(mockBtn, new RoutedEventArgs());
             });
+        }
+
+        private void BtnQuickActions_Click(object sender, RoutedEventArgs e)
+        {
+            if (BtnQuickActions.ContextMenu != null)
+            {
+                BtnQuickActions.ContextMenu.PlacementTarget = BtnQuickActions;
+                BtnQuickActions.ContextMenu.IsOpen = true;
+            }
+        }
+
+        private void MenuQuickAction_Click(object sender, RoutedEventArgs e)
+        {
+            var item = (MenuItem)sender;
+            var action = item.Tag?.ToString();
+            if (string.IsNullOrEmpty(action)) return;
+
+            var mockBtn = new Button { Tag = action };
+            QuickAction_Click(mockBtn, new RoutedEventArgs());
         }
     }
 }

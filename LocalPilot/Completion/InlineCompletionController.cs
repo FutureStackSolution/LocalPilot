@@ -22,7 +22,7 @@ namespace LocalPilot.Completion
     {
         [Import] internal ITextDocumentFactoryService TextDocumentFactory { get; set; }
 
-        private IWpfTextView  _view;
+        private IWpfTextView _view;
         private ITextDocument _document;
         private OllamaService _ollama;
         private CompletionPromptBuilder _promptBuilder;
@@ -35,16 +35,16 @@ namespace LocalPilot.Completion
         {
             if (!LocalPilotSettings.Instance.EnableInlineCompletion) return;
 
-            _view          = textView;
-            _ollama        = new OllamaService(LocalPilotSettings.Instance.OllamaBaseUrl);
+            _view = textView;
+            _ollama = new OllamaService(LocalPilotSettings.Instance.OllamaBaseUrl);
             _promptBuilder = new CompletionPromptBuilder(LocalPilotSettings.Instance);
             _ghostAdornment = new GhostTextAdornment(textView);
 
             TextDocumentFactory.TryGetTextDocument(textView.TextBuffer, out _document);
 
-            textView.TextBuffer.Changed     += OnTextBufferChanged;
-            textView.Caret.PositionChanged  += OnCaretPositionChanged;
-            textView.Closed                 += OnViewClosed;
+            textView.TextBuffer.Changed += OnTextBufferChanged;
+            textView.Caret.PositionChanged += OnCaretPositionChanged;
+            textView.Closed += OnViewClosed;
         }
 
         private void OnTextBufferChanged(object sender, TextContentChangedEventArgs e)
@@ -84,12 +84,12 @@ namespace LocalPilot.Completion
                 await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory
                       .SwitchToMainThreadAsync(token);
 
-                var snapshot    = _view.TextBuffer.CurrentSnapshot;
-                caretPos        = _view.Caret.Position.BufferPosition.Position;
-                prefix          = snapshot.GetText(0, caretPos);
-                suffix          = snapshot.GetText(caretPos, snapshot.Length - caretPos);
-                var fileExt     = System.IO.Path.GetExtension(_document?.FilePath ?? ".cs");
-                var filePath    = _document?.FilePath ?? "untitled";
+                var snapshot = _view.TextBuffer.CurrentSnapshot;
+                caretPos = _view.Caret.Position.BufferPosition.Position;
+                prefix = snapshot.GetText(0, caretPos);
+                suffix = snapshot.GetText(caretPos, snapshot.Length - caretPos);
+                var fileExt = System.IO.Path.GetExtension(_document?.FilePath ?? ".cs");
+                var filePath = _document?.FilePath ?? "untitled";
 
                 // Build prompt
                 var prompt = _promptBuilder.Build(fileExt, prefix, suffix, filePath);
@@ -99,8 +99,8 @@ namespace LocalPilot.Completion
                 var opts = new OllamaOptions
                 {
                     Temperature = LocalPilotSettings.Instance.Temperature,
-                    NumPredict  = LocalPilotSettings.Instance.MaxCompletionTokens,
-                    Stop        = new System.Collections.Generic.List<string> { "\n\n\n", "</MID>" }
+                    NumPredict = LocalPilotSettings.Instance.MaxCompletionTokens,
+                    Stop = new System.Collections.Generic.List<string> { "\n\n\n", "</MID>" }
                 };
 
                 await foreach (var chunk in _ollama.StreamCompletionAsync(
@@ -129,13 +129,15 @@ namespace LocalPilot.Completion
 
         private void OnViewClosed(object sender, EventArgs e)
         {
-            _view.TextBuffer.Changed    -= OnTextBufferChanged;
+            _view.TextBuffer.Changed -= OnTextBufferChanged;
             _view.Caret.PositionChanged -= OnCaretPositionChanged;
-            _view.Closed                -= OnViewClosed;
+            _view.Closed -= OnViewClosed;
 
             _cts?.Cancel();
             _debounceTimer?.Dispose();
             _ollama?.Dispose();
         }
+
+
     }
 }

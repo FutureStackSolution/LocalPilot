@@ -25,7 +25,8 @@ namespace LocalPilot.Settings
         // ── Inline completion behaviour ────────────────────────────────────────
         public bool   EnableInlineCompletion { get; set; } = true;
         public int    CompletionDelayMs      { get; set; } = 600;   // debounce
-        public int    MaxCompletionTokens    { get; set; } = 128;
+        public int    MaxCompletionTokens    { get; set; } = 256;
+        public int    MaxChatTokens          { get; set; } = 4096;
         public double Temperature            { get; set; } = 0.2;
         public bool   ShowCompletionGhost    { get; set; } = true;  // ghost-text
 

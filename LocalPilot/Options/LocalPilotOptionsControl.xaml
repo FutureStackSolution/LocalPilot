@@ -229,84 +229,13 @@
             <CheckBox x:Name="ChkShowGhost" Content="Show ghost-text preview while typing"
                       Style="{StaticResource LpCheckStyle}"/>
 
-            <!-- Delay Slider -->
-            <Grid Margin="0,8,0,0">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="70"/>
-                </Grid.ColumnDefinitions>
-                <StackPanel Grid.Column="0">
-                    <TextBlock Text="Completion Trigger Delay (ms)" Style="{StaticResource LpLabelStyle}"/>
-                    <Slider x:Name="SldrDelay" Minimum="200" Maximum="2000"
-                            TickFrequency="100" IsSnapToTickEnabled="True"
-                            Foreground="#7C6AF7"
-                            ValueChanged="SldrDelay_ValueChanged"/>
-                </StackPanel>
-                <TextBlock x:Name="TxtDelay" Grid.Column="1"
-                           VerticalAlignment="Center" HorizontalAlignment="Center"
-                           Foreground="#7C6AF7" FontWeight="SemiBold"/>
-            </Grid>
-
-            <!-- Max Tokens Slider -->
-            <Grid Margin="0,10,0,0">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="70"/>
-                </Grid.ColumnDefinitions>
-                <StackPanel Grid.Column="0">
-                    <TextBlock Text="Max Completion Tokens" Style="{StaticResource LpLabelStyle}"/>
-                    <Slider x:Name="SldrMaxTokens" Minimum="32" Maximum="512"
-                            TickFrequency="32" IsSnapToTickEnabled="True"
-                            Foreground="#7C6AF7"
-                            ValueChanged="SldrMaxTokens_ValueChanged"/>
-                </StackPanel>
-                <TextBlock x:Name="TxtMaxTokens" Grid.Column="1"
-                           VerticalAlignment="Center" HorizontalAlignment="Center"
-                           Foreground="#7C6AF7" FontWeight="SemiBold"/>
-            </Grid>
-
-            <!-- Temperature Slider -->
-            <Grid Margin="0,10,0,0">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="70"/>
-                </Grid.ColumnDefinitions>
-                <StackPanel Grid.Column="0">
-                    <TextBlock Text="Temperature (creativity)" Style="{StaticResource LpLabelStyle}"/>
-                    <Slider x:Name="SldrTemp" Minimum="0" Maximum="1"
-                            TickFrequency="0.05" IsSnapToTickEnabled="True"
-                            Foreground="#7C6AF7"
-                            ValueChanged="SldrTemp_ValueChanged"/>
-                </StackPanel>
-                <TextBlock x:Name="TxtTemp" Grid.Column="1"
-                           VerticalAlignment="Center" HorizontalAlignment="Center"
-                           Foreground="#7C6AF7" FontWeight="SemiBold"/>
-            </Grid>
-
-            <!-- Context Lines -->
-            <Grid Margin="0,10,0,0">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="8"/>
-                    <ColumnDefinition Width="*"/>
-                </Grid.ColumnDefinitions>
-                <StackPanel Grid.Column="0">
-                    <TextBlock Text="Context Lines Before Cursor" Style="{StaticResource LpLabelStyle}"/>
-                    <TextBox x:Name="TxtContextBefore" Style="{StaticResource LpInputStyle}"/>
-                </StackPanel>
-                <StackPanel Grid.Column="2">
-                    <TextBlock Text="Context Lines After Cursor" Style="{StaticResource LpLabelStyle}"/>
-                    <TextBox x:Name="TxtContextAfter" Style="{StaticResource LpInputStyle}"/>
-                </StackPanel>
-            </Grid>
-
             <!-- ═══ Section 4: Code Actions ══════════════════════════════════ -->
             <TextBlock Text="⚙️  Code Actions" Style="{StaticResource LpSectionHeader}"/>
 
             <UniformGrid Columns="3" Margin="0,4,0,4">
                 <CheckBox x:Name="ChkExplain"  Content="Explain Code"       Style="{StaticResource LpCheckStyle}"/>
                 <CheckBox x:Name="ChkRefactor" Content="Refactor Code"      Style="{StaticResource LpCheckStyle}"/>
-                <CheckBox x:Name="ChkDocGen"   Content="Generate Docs"      Style="{StaticResource LpCheckStyle}"/>
+                <CheckBox x:Name="ChkDocGen"   Content="Generate Documentation" Style="{StaticResource LpCheckStyle}"/>
                 <CheckBox x:Name="ChkReview"   Content="Code Review"        Style="{StaticResource LpCheckStyle}"/>
                 <CheckBox x:Name="ChkFix"      Content="Fix Issues"         Style="{StaticResource LpCheckStyle}"/>
                 <CheckBox x:Name="ChkUnitTest" Content="Generate Unit Test" Style="{StaticResource LpCheckStyle}"/>
@@ -318,20 +247,121 @@
             <CheckBox x:Name="ChkEnableChat" Content="Enable LocalPilot Chat Panel"
                       Style="{StaticResource LpCheckStyle}"/>
 
-            <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                <TextBlock Text="Max Chat History: " Style="{StaticResource LpLabelStyle}"
-                           VerticalAlignment="Center"/>
-                <TextBox x:Name="TxtChatHistory" Style="{StaticResource LpInputStyle}"
-                         Width="80"/>
-                <TextBlock Text=" messages" Style="{StaticResource LpMutedLabel}"
-                           VerticalAlignment="Center" Margin="4,0,0,0"/>
-            </StackPanel>
-
             <!-- ═══ Section 6: UI ════════════════════════════════════════════ -->
             <TextBlock Text="🎨  Interface" Style="{StaticResource LpSectionHeader}"/>
 
             <CheckBox x:Name="ChkStatusBar" Content="Show LocalPilot status in the status bar"
                       Style="{StaticResource LpCheckStyle}"/>
+
+            <!-- ═══ Section 7: Advanced ═════════════════════════════════════ -->
+            <TextBlock Text="🛠️  Advanced Generation Settings" Style="{StaticResource LpSectionHeader}"/>
+            <TextBlock Text="Recommended for expert users only. These values affect stability and performance."
+                       Style="{StaticResource LpMutedLabel}" Margin="0,0,0,12"/>
+
+            <Expander Header="Fine-tune Parameters (Temperature, Context, Tokens)" 
+                      Foreground="{DynamicResource {x:Static vsshell:VsBrushes.WindowTextKey}}"
+                      Margin="0,0,0,10">
+                <StackPanel Margin="10,10,0,0">
+                    <!-- Temperature Slider -->
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="70"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Temperature (Lower = more stable code)" Style="{StaticResource LpLabelStyle}"/>
+                            <Slider x:Name="SldrTemp" Minimum="0" Maximum="1"
+                                    TickFrequency="0.05" IsSnapToTickEnabled="True"
+                                    Foreground="#7C6AF7"
+                                    ValueChanged="SldrTemp_ValueChanged"/>
+                        </StackPanel>
+                        <TextBlock x:Name="TxtTemp" Grid.Column="1"
+                                   VerticalAlignment="Center" HorizontalAlignment="Center"
+                                   Foreground="#7C6AF7" FontWeight="SemiBold"/>
+                    </Grid>
+
+                    <!-- Max Tokens Slider -->
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="70"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Max Completion Tokens (inline length)" Style="{StaticResource LpLabelStyle}"/>
+                            <Slider x:Name="SldrMaxTokens" Minimum="32" Maximum="1024"
+                                    TickFrequency="32" IsSnapToTickEnabled="True"
+                                    Foreground="#7C6AF7"
+                                    ValueChanged="SldrMaxTokens_ValueChanged"/>
+                        </StackPanel>
+                        <TextBlock x:Name="TxtMaxTokens" Grid.Column="1"
+                                   VerticalAlignment="Center" HorizontalAlignment="Center"
+                                   Foreground="#7C6AF7" FontWeight="SemiBold"/>
+                    </Grid>
+
+                    <!-- Max Chat Tokens Slider -->
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="70"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Max Chat Tokens (response length)" Style="{StaticResource LpLabelStyle}"/>
+                            <Slider x:Name="SldrMaxChatTokens" Minimum="512" Maximum="16384"
+                                    TickFrequency="512" IsSnapToTickEnabled="True"
+                                    Foreground="#7C6AF7"
+                                    ValueChanged="SldrMaxChatTokens_ValueChanged"/>
+                        </StackPanel>
+                        <TextBlock x:Name="TxtMaxChatTokens" Grid.Column="1"
+                                   VerticalAlignment="Center" HorizontalAlignment="Center"
+                                   Foreground="#7C6AF7" FontWeight="SemiBold"/>
+                    </Grid>
+
+                    <!-- Delay Slider -->
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="70"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Inline Trigger Delay (ms)" Style="{StaticResource LpLabelStyle}"/>
+                            <Slider x:Name="SldrDelay" Minimum="200" Maximum="2000"
+                                    TickFrequency="100" IsSnapToTickEnabled="True"
+                                    Foreground="#7C6AF7"
+                                    ValueChanged="SldrDelay_ValueChanged"/>
+                        </StackPanel>
+                        <TextBlock x:Name="TxtDelay" Grid.Column="1"
+                                   VerticalAlignment="Center" HorizontalAlignment="Center"
+                                   Foreground="#7C6AF7" FontWeight="SemiBold"/>
+                    </Grid>
+
+                    <!-- Context Lines -->
+                    <Grid Margin="0,0,0,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="8"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0">
+                            <TextBlock Text="Context Before (lines)" Style="{StaticResource LpLabelStyle}"/>
+                            <TextBox x:Name="TxtContextBefore" Style="{StaticResource LpInputStyle}"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Text="Context After (lines)" Style="{StaticResource LpLabelStyle}"/>
+                            <TextBox x:Name="TxtContextAfter" Style="{StaticResource LpInputStyle}"/>
+                        </StackPanel>
+                    </Grid>
+
+                    <!-- History -->
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                        <TextBlock Text="Max Chat History: " Style="{StaticResource LpLabelStyle}"
+                                   VerticalAlignment="Center"/>
+                        <TextBox x:Name="TxtChatHistory" Style="{StaticResource LpInputStyle}"
+                                 Width="80"/>
+                        <TextBlock Text=" messages" Style="{StaticResource LpMutedLabel}"
+                                   VerticalAlignment="Center" Margin="4,0,0,0"/>
+                    </StackPanel>
+                </StackPanel>
+            </Expander>
 
             <!-- Footer Buttons -->
             <Separator Style="{StaticResource LpSepStyle}" Margin="0,16,0,10"/>

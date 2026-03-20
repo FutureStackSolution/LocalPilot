@@ -27,8 +27,8 @@
 
         <!-- Send Button -->
         <Style x:Key="SendBtnStyle" TargetType="Button">
-            <Setter Property="Background"       Value="#7C6AF7"/>
-            <Setter Property="Foreground"       Value="White"/>
+            <Setter Property="Background"       Value="{DynamicResource {x:Static vsshell:VsBrushes.TitleBarActiveGradientBeginKey}}"/>
+            <Setter Property="Foreground"       Value="{DynamicResource {x:Static vsshell:VsBrushes.ToolWindowTextKey}}"/>
             <Setter Property="BorderThickness"  Value="0"/>
             <Setter Property="Width"            Value="36"/>
             <Setter Property="Height"           Value="36"/>
@@ -45,10 +45,10 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Background" Value="#9B8FFB"/>
+                                <Setter Property="Opacity" Value="0.8"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
-                                <Setter Property="Background" Value="#A0A0A0"/>
+                                <Setter Property="Background" Value="{DynamicResource {x:Static vsshell:VsBrushes.ButtonFaceKey}}"/>
                                 <Setter Property="Opacity"    Value="0.5"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
@@ -148,8 +148,8 @@
 
     <Grid>
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/> <!-- Header -->
-            <RowDefinition Height="*"/>    <!-- Messages -->
+            <RowDefinition Height="Auto"/> <!-- Main Header -->
+            <RowDefinition Height="*"/>    <!-- Messages (Scrollable) -->
             <RowDefinition Height="Auto"/> <!-- Footer / Input -->
         </Grid.RowDefinitions>
 
@@ -187,24 +187,12 @@
                       VerticalScrollBarVisibility="Auto"
                       HorizontalScrollBarVisibility="Disabled"
                       Background="Transparent">
-            <StackPanel Margin="16,16,16,8">
-                <!-- Welcome Message & Quick Actions inside the scroll for a natural flow -->
-                <TextBlock Text="What can I help you with today?"
-                           FontSize="16" FontWeight="SemiBold"
+            <StackPanel Margin="16,8,16,8">
+                <!-- Welcome Message only shows at the start of history -->
+                <TextBlock Text="What's on your mind?"
+                           FontSize="14" FontWeight="SemiBold"
                            Foreground="{DynamicResource {x:Static vsshell:VsBrushes.WindowTextKey}}"
-                           Margin="0,0,0,12"/>
-
-                <WrapPanel x:Name="QuickActions" Margin="0,0,0,24">
-                    <Button Content="Explain code"  Style="{StaticResource ActionChipStyle}" Tag="explain"  Click="QuickAction_Click"/>
-                    <Button Content="Refactor"      Style="{StaticResource ActionChipStyle}" Tag="refactor" Click="QuickAction_Click"/>
-                    <Button Content="Add comments"  Style="{StaticResource ActionChipStyle}" Tag="document" Click="QuickAction_Click"/>
-                    <Button Content="Find bugs"     Style="{StaticResource ActionChipStyle}" Tag="review"   Click="QuickAction_Click"/>
-                    <Button Content="Fix issues"    Style="{StaticResource ActionChipStyle}" Tag="fix"      Click="QuickAction_Click"/>
-                    <Button Content="Write tests"   Style="{StaticResource ActionChipStyle}" Tag="test"     Click="QuickAction_Click"/>
-                </WrapPanel>
-
-                <Separator Background="{DynamicResource {x:Static vsshell:VsBrushes.ActiveBorderKey}}"
-                           Margin="0,0,0,20" Opacity="0.5"/>
+                           Margin="0,8,0,16" Opacity="0.7"/>
 
                 <StackPanel x:Name="MessagesContainer" VerticalAlignment="Top"/>
             </StackPanel>
@@ -213,12 +201,61 @@
         <!-- ═══ Footer / Input Area ══════════════════════════════════════ -->
         <Border Grid.Row="2" Background="Transparent" Padding="12,4,12,16">
             <StackPanel>
+                <!-- Quick Actions Pinned at Bottom -->
+                <StackPanel Orientation="Horizontal" Margin="4,0,0,8">
+                    <Button x:Name="BtnQuickActions" Style="{StaticResource IconButtonStyle}"
+                            ToolTip="Quick Actions"
+                            Click="BtnQuickActions_Click">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="⚡" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                            <TextBlock Text="Quick Actions" FontSize="11" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                        </StackPanel>
+                        <Button.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="Explain Code"            Tag="explain"  Click="MenuQuickAction_Click"/>
+                                <MenuItem Header="Refactor Code"           Tag="refactor" Click="MenuQuickAction_Click"/>
+                                <MenuItem Header="Generate Documentation" Tag="document" Click="MenuQuickAction_Click"/>
+                                <MenuItem Header="Code Review"             Tag="review"   Click="MenuQuickAction_Click"/>
+                                <MenuItem Header="Fix Issues"              Tag="fix"      Click="MenuQuickAction_Click"/>
+                                <MenuItem Header="Generate Unit Tests"     Tag="test"     Click="MenuQuickAction_Click"/>
+                            </ContextMenu>
+                        </Button.ContextMenu>
+                    </Button>
+                </StackPanel>
+                
                 <!-- Streaming Status -->
                 <Border x:Name="StreamingBar" Visibility="Collapsed" Margin="4,0,4,8"
                         Background="#107C6AF7" CornerRadius="8" Padding="10,6">
                     <Grid>
-                        <TextBlock Text="LocalPilot is thinking..." Foreground="#7C6AF7"
-                                   FontSize="11" VerticalAlignment="Center"/>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="LocalPilot is thinking" Foreground="#7C6AF7"
+                                       FontSize="11" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="ThinkingDots" Foreground="#7C6AF7"
+                                       FontSize="11" VerticalAlignment="Center">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Visibility, ElementName=StreamingBar}" Value="Visible">
+                                                <DataTrigger.EnterActions>
+                                                    <BeginStoryboard x:Name="DotsAnim">
+                                                        <Storyboard RepeatBehavior="Forever">
+                                                            <StringAnimationUsingKeyFrames Storyboard.TargetProperty="Text" Duration="0:0:1.5">
+                                                                <DiscreteStringKeyFrame Value="." KeyTime="0:0:0.0" />
+                                                                <DiscreteStringKeyFrame Value=".." KeyTime="0:0:0.5" />
+                                                                <DiscreteStringKeyFrame Value="..." KeyTime="0:0:1.0" />
+                                                            </StringAnimationUsingKeyFrames>
+                                                        </Storyboard>
+                                                    </BeginStoryboard>
+                                                </DataTrigger.EnterActions>
+                                                <DataTrigger.ExitActions>
+                                                    <StopStoryboard BeginStoryboardName="DotsAnim"/>
+                                                </DataTrigger.ExitActions>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
                         <Button x:Name="BtnStop" Content="Stop" HorizontalAlignment="Right"
                                 Foreground="#F44747" Background="Transparent" BorderThickness="0"
                                 Cursor="Hand" FontSize="11" Click="BtnStop_Click"/>
@@ -227,27 +264,28 @@
 
                 <!-- Main Input Grid -->
                 <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-
-                    <TextBox x:Name="TxtInput" Grid.Column="0"
+                    <TextBox x:Name="TxtInput"
                              Style="{StaticResource ChatInputStyle}"
                              MinHeight="44" MaxHeight="150"
-                             Margin="0,0,8,0"
-                             AcceptsReturn="True"
+                             Padding="12,10,40,10"
+                             AcceptsReturn="False"
                              VerticalContentAlignment="Top"
                              KeyDown="TxtInput_KeyDown">
                         <TextBox.Resources>
-                            <!-- Hide border on default textbox context menu if desirable -->
+                            <!-- Resources for TextBox -->
                         </TextBox.Resources>
                     </TextBox>
 
-                    <Button x:Name="BtnSend" Grid.Column="1" Content="➤"
-                            Style="{StaticResource SendBtnStyle}"
+                    <Button x:Name="BtnSend"
+                            Style="{StaticResource IconButtonStyle}"
+                            HorizontalAlignment="Right"
                             VerticalAlignment="Bottom"
-                            Click="BtnSend_Click"/>
+                            Margin="0,0,8,8"
+                            Width="28" Height="28"
+                            Click="BtnSend_Click">
+                        <TextBlock Text="&#xE724;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                   VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                    </Button>
                 </Grid>
             </StackPanel>
         </Border>

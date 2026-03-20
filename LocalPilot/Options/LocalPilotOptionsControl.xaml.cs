@@ -29,6 +29,7 @@ namespace LocalPilot.Options
             // Sliders
             SldrDelay.Value          = s.CompletionDelayMs;
             SldrMaxTokens.Value      = s.MaxCompletionTokens;
+            SldrMaxChatTokens.Value  = s.MaxChatTokens;
             SldrTemp.Value           = s.Temperature;
 
             // Context
@@ -70,6 +71,7 @@ namespace LocalPilot.Options
             s.OllamaBaseUrl         = TxtBaseUrl.Text.Trim();
             s.CompletionDelayMs     = (int)SldrDelay.Value;
             s.MaxCompletionTokens   = (int)SldrMaxTokens.Value;
+            s.MaxChatTokens         = (int)SldrMaxChatTokens.Value;
             s.Temperature           = Math.Round(SldrTemp.Value, 2);
 
             if (int.TryParse(TxtContextBefore.Text, out int cb)) s.ContextLinesBefore = cb;
@@ -198,6 +200,12 @@ namespace LocalPilot.Options
         {
             if (TxtTemp != null)
                 TxtTemp.Text = $"{e.NewValue:F2}";
+        }
+
+        private void SldrMaxChatTokens_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (TxtMaxChatTokens != null)
+                TxtMaxChatTokens.Text = $"{(int)e.NewValue}";
         }
 
         // ── Helpers ───────────────────────────────────────────────────────────

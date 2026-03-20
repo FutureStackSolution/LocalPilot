@@ -214,7 +214,7 @@ namespace LocalPilot.Services
         public double TopP { get; set; } = 0.9;
 
         [JsonProperty("num_predict")]
-        public int NumPredict { get; set; } = 256;
+        public int NumPredict { get; set; } = 4096;
 
         [JsonProperty("stop")]
         public List<string> Stop { get; set; } = new List<string>();
