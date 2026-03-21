@@ -28,35 +28,19 @@ namespace LocalPilot.Options
         private void OnLoaded(object sender, RoutedEventArgs e)
         {
             InitializeAsync();
-            UpdateBrushes();
-            VSColorTheme.ThemeChanged += OnThemeChanged;
         }
 
         private void OnUnloaded(object sender, RoutedEventArgs e)
         {
-            VSColorTheme.ThemeChanged -= OnThemeChanged;
             _cts?.Cancel();
             _cts?.Dispose();
         }
 
-        private void OnThemeChanged(ThemeChangedEventArgs e) => UpdateBrushes();
+        private void UpdateBrushes() { }
 
         private async void InitializeAsync()
         {
             await RefreshConnectionStatusAsync();
-        }
-
-        private void UpdateBrushes()
-        {
-            try
-            {
-                SetResourceBrush("LpWindowBgBrush",      VsBrushes.WindowKey);
-                SetResourceBrush("LpWindowFgBrush",      VsBrushes.WindowTextKey);
-                SetResourceBrush("LpMenuBgBrush",        VsBrushes.WindowKey);
-                SetResourceBrush("LpMenuBorderBrush",    VsBrushes.ToolWindowBorderKey);
-                SetResourceBrush("LpMutedFgBrush",       VsBrushes.GrayTextKey);
-            }
-            catch { }
         }
 
         private void SetResourceBrush(string key, object vsKey)
