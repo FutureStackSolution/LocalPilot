@@ -15,12 +15,13 @@ namespace LocalPilot.Settings
         public string OllamaBaseUrl    { get; set; } = "http://localhost:11434";
 
         // ── Models ─────────────────────────────────────────────────────────────
-        public string CompletionModel  { get; set; } = "phi3:mini";
-        public string ChatModel        { get; set; } = "phi3:mini";
-        public string ExplainModel     { get; set; } = "phi3:mini";
-        public string RefactorModel    { get; set; } = "phi3:mini";
-        public string DocModel         { get; set; } = "phi3:mini";
-        public string ReviewModel      { get; set; } = "phi3:mini";
+        // ── Models ─────────────────────────────────────────────────────────────
+        public string CompletionModel  { get; set; } = "llama3:8b";
+        public string ChatModel        { get; set; } = "llama3:8b";
+        public string ExplainModel     { get; set; } = "llama3:8b";
+        public string RefactorModel    { get; set; } = "llama3:8b";
+        public string DocModel         { get; set; } = "llama3:8b";
+        public string ReviewModel      { get; set; } = "llama3:8b";
 
         // ── Inline completion behaviour ────────────────────────────────────────
         public bool   EnableInlineCompletion { get; set; } = true;

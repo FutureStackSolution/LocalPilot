@@ -5,6 +5,7 @@ using System.Net.Http;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Runtime.CompilerServices;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -14,23 +15,22 @@ namespace LocalPilot.Services
     /// Communicates with a local Ollama instance over HTTP.
     /// Supports streaming completions, chat, and model listing.
     /// </summary>
-    public class OllamaService : IDisposable
+    public class OllamaService
     {
-        private readonly HttpClient _httpClient;
-        private bool _disposed;
+        private static readonly HttpClient _httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
+        private string _baseUrl;
 
         public OllamaService(string baseUrl = "http://localhost:11434")
         {
-            _httpClient = new HttpClient
-            {
-                BaseAddress = new Uri(baseUrl),
-                Timeout = TimeSpan.FromSeconds(120)
-            };
+            _baseUrl = baseUrl?.TrimEnd('/') ?? "http://localhost:11434";
         }
 
         public void UpdateBaseUrl(string baseUrl)
         {
-            _httpClient.BaseAddress = new Uri(baseUrl);
+            // If HttpClient is static, BaseAddress cannot be updated per instance.
+            // Instead, the _baseUrl field is used to construct full URLs for each request.
+            // This method now only updates the instance's _baseUrl.
+            _baseUrl = baseUrl?.TrimEnd('/') ?? "http://localhost:11434";
         }
 
         // ── Model listing ──────────────────────────────────────────────────────
@@ -39,7 +39,7 @@ namespace LocalPilot.Services
             var names = new List<string>();
             try
             {
-                var response = await _httpClient.GetAsync("/api/tags", ct);
+                var response = await _httpClient.GetAsync($"{_baseUrl}/api/tags", ct);
                 if (!response.IsSuccessStatusCode) return names;
 
                 var json = await response.Content.ReadAsStringAsync();
@@ -59,7 +59,7 @@ namespace LocalPilot.Services
         {
             try
             {
-                var resp = await _httpClient.GetAsync("/api/tags", ct);
+                var resp = await _httpClient.GetAsync($"{_baseUrl}/api/tags", ct);
                 return resp.IsSuccessStatusCode;
             }
             catch { return false; }
@@ -88,7 +88,7 @@ namespace LocalPilot.Services
             string errorMessage = null;
             try
             {
-                response = await _httpClient.PostAsync("/api/generate", content, ct);
+                response = await _httpClient.PostAsync($"{_baseUrl}/api/generate", content, ct);
                 response.EnsureSuccessStatusCode();
             }
             catch (Exception ex)
@@ -104,16 +104,14 @@ namespace LocalPilot.Services
 
             using (var stream = await response.Content.ReadAsStreamAsync())
             using (var reader = new StreamReader(stream))
+            using (var jsonReader = new JsonTextReader(reader) { SupportMultipleContent = true })
             {
-                while (!reader.EndOfStream && !ct.IsCancellationRequested)
+                while (await jsonReader.ReadAsync(ct))
                 {
-                    var line = await reader.ReadLineAsync();
-                    if (string.IsNullOrWhiteSpace(line)) continue;
+                    if (jsonReader.TokenType != JsonToken.StartObject) continue;
 
-                    JObject obj;
-                    try { obj = JObject.Parse(line); }
-                    catch { continue; }
-
+                    var obj = await JObject.LoadAsync(jsonReader, ct);
+                    
                     var token = obj["response"]?.ToString() ?? string.Empty;
                     if (!string.IsNullOrEmpty(token))
                         yield return token;
@@ -140,45 +138,45 @@ namespace LocalPilot.Services
                 options = options ?? new OllamaOptions()
             };
 
-            var body    = JsonConvert.SerializeObject(payload);
-            var content = new StringContent(body, Encoding.UTF8, "application/json");
-
             HttpResponseMessage response = null;
-            string errorMessage = null;
+            string errorDetails = null;
             try
             {
-                response = await _httpClient.PostAsync("/api/chat", content, ct);
+                var request = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/api/chat");
+                request.Content = new StringContent(JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
+
+                response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
                 response.EnsureSuccessStatusCode();
             }
             catch (Exception ex)
             {
-                errorMessage = $"\n[LocalPilot Error] Could not reach Ollama: {ex.Message}";
+                errorDetails = ex.Message;
             }
 
-            if (errorMessage != null)
+            if (errorDetails != null)
             {
-                yield return errorMessage;
+                yield return $"\n[LocalPilot Error] Could not reach Ollama: {errorDetails}";
                 yield break;
             }
 
-            using (var stream = await response.Content.ReadAsStreamAsync())
-            using (var reader = new StreamReader(stream))
+            using (response)
             {
-                while (!reader.EndOfStream && !ct.IsCancellationRequested)
+                using (var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false))
+                using (var reader = new StreamReader(stream))
+                using (var jsonReader = new JsonTextReader(reader) { SupportMultipleContent = true })
                 {
-                    var line = await reader.ReadLineAsync();
-                    if (string.IsNullOrWhiteSpace(line)) continue;
+                    while (await jsonReader.ReadAsync(ct).ConfigureAwait(false))
+                    {
+                        if (jsonReader.TokenType != JsonToken.StartObject) continue;
+                        var obj = await JObject.LoadAsync(jsonReader, ct).ConfigureAwait(false);
+                        
+                        var token = obj["message"]?["content"]?.ToString() ?? string.Empty;
+                        if (!string.IsNullOrEmpty(token))
+                            yield return token;
 
-                    JObject obj;
-                    try { obj = JObject.Parse(line); }
-                    catch { continue; }
-
-                    var token = obj["message"]?["content"]?.ToString() ?? string.Empty;
-                    if (!string.IsNullOrEmpty(token))
-                        yield return token;
-
-                    if (obj["done"]?.Value<bool>() == true)
-                        break;
+                        if (obj["done"]?.Value<bool>() == true)
+                            break;
+                    }
                 }
             }
         }
@@ -196,12 +194,6 @@ namespace LocalPilot.Services
             return sb.ToString();
         }
 
-        public void Dispose()
-        {
-            if (_disposed) return;
-            _httpClient?.Dispose();
-            _disposed = true;
-        }
     }
 
     // ── Supporting types ───────────────────────────────────────────────────────

@@ -6,9 +6,10 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
-using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Input;
 using Microsoft.VisualStudio.Shell;
+using Microsoft.VisualStudio.PlatformUI;
 using LocalPilot.Services;
 using LocalPilot.Settings;
 
@@ -21,38 +22,68 @@ namespace LocalPilot.Chat
         private CancellationTokenSource _cts;
         private RichTextBox _streamingBlock;    // current AI message being streamed
 
+        // VS theme-aware colours (Dynamically linked to VS Theme)
+        private Brush ThemeWindowBg => (Brush)this.Resources["LpWindowBgBrush"];
+        private Brush ThemeWindowFg => (Brush)this.Resources["LpWindowFgBrush"];
+        private Brush ThemeSurface  => (Brush)this.Resources["LpMenuBgBrush"];
+        private Brush ThemeBorder   => (Brush)this.Resources["LpMenuBorderBrush"];
+
         // Fixed accent/code colours — look fine on both light and dark themes
         private static readonly SolidColorBrush BrushAccent = new SolidColorBrush(Color.FromRgb(0x7C, 0x6A, 0xF7));
         private static readonly SolidColorBrush BrushCode   = new SolidColorBrush(Color.FromRgb(0xCE, 0x91, 0x78));
         private static readonly FontFamily ConsoleFont = new FontFamily("Consolas");
         private static readonly FontFamily UIFont      = new FontFamily("Segoe UI");
 
-        // VS theme-aware colours (resolved at runtime)
-        private static Brush ThemeWindowBg   => GetVsBrush(VsBrushes.ToolWindowBackgroundKey);
-        private static Brush ThemeWindowFg   => GetVsBrush(VsBrushes.ToolWindowTextKey);
-        private static Brush ThemeSurface    => GetVsBrush(VsBrushes.ButtonFaceKey);
-        private static Brush ThemeBorder     => GetVsBrush(VsBrushes.ActiveBorderKey);
-
-        private static Brush GetVsBrush(object key)
-        {
-            try
-            {
-                var brush = Application.Current?.Resources[key];
-                return brush as Brush ?? SystemColors.WindowBrush;
-            }
-            catch { return SystemColors.WindowBrush; }
-        }
-
         public LocalPilotChatControl()
         {
             InitializeComponent();
             _ollama = new OllamaService(LocalPilotSettings.Instance.OllamaBaseUrl);
             Loaded += OnLoaded;
+            Unloaded += OnUnloaded;
         }
 
         private void OnLoaded(object sender, RoutedEventArgs e)
         {
+            UpdateBrushes();
             ShowWelcomeMessage();
+            VSColorTheme.ThemeChanged += OnThemeChanged;
+        }
+
+        private void OnUnloaded(object sender, RoutedEventArgs e)
+        {
+            VSColorTheme.ThemeChanged -= OnThemeChanged;
+            _cts?.Cancel();
+            _cts?.Dispose();
+        }
+
+        private void OnThemeChanged(ThemeChangedEventArgs e) => UpdateBrushes();
+
+        private void UpdateBrushes()
+        {
+            // Update local StaticResources with current VS theme colors
+            // This bypasses the XAML compiler's inability to resolve VsBrushes directly
+            try
+            {
+                SetResourceBrush("LpWindowBgBrush",      VsBrushes.ToolWindowBackgroundKey);
+                SetResourceBrush("LpWindowFgBrush",      VsBrushes.ToolWindowTextKey);
+                SetResourceBrush("LpMenuBgBrush",        VsBrushes.ToolWindowBackgroundKey); // Blend with window
+                SetResourceBrush("LpMenuBorderBrush",    VsBrushes.ToolWindowBorderKey);
+                SetResourceBrush("LpMutedFgBrush",       VsBrushes.GrayTextKey);
+                
+                // Refresh specific elements that might need it
+                ChatScroll.Background = (Brush)this.Resources["LpWindowBgBrush"];
+            }
+            catch { /* Fallback to hex colors already in XAML */ }
+        }
+
+        private void SetResourceBrush(string key, object vsKey)
+        {
+            var brush = Application.Current.FindResource(vsKey) as Brush;
+            if (brush != null)
+            {
+                if (brush.CanFreeze) brush.Freeze(); // Enterprise optimization: Freeze brush for performance
+                this.Resources[key] = brush;
+            }
         }
 
         // ── Welcome message ───────────────────────────────────────────────────
@@ -180,34 +211,38 @@ namespace LocalPilot.Chat
                     NumPredict = LocalPilotSettings.Instance.MaxChatTokens
                 };
 
-                await foreach (var chunk in _ollama.StreamChatAsync(model, _history, options, token))
+                int tokenCount = 0;
+                // Buffer for incoming text to avoid hammering the UI thread for every character
+                await foreach (var chunk in _ollama.StreamChatAsync(model, _history, options, token).ConfigureAwait(false))
                 {
                     sb.Append(chunk);
+                    tokenCount++;
 
-                    // Update UI on UI thread
-                    Dispatcher.Invoke(() =>
+                    // UI Batching: Update UI only every 5 tokens to keep rendering smooth on high-performance streams
+                    if (tokenCount % 5 == 0 || tokenCount == 1)
                     {
-                        if (_streamingBlock == null && !string.IsNullOrEmpty(sb.ToString()))
-                            _streamingBlock = AppendAIBubble(string.Empty);
-
-                        if (_streamingBlock != null)
+                        var currentText = sb.ToString();
+                        await Dispatcher.BeginInvoke(new Action(() =>
                         {
-                            RenderMarkdown(_streamingBlock, sb.ToString());
-                            _streamingBlock.UpdateLayout();
-                        }
+                            if (_streamingBlock == null && !string.IsNullOrEmpty(currentText))
+                                _streamingBlock = AppendAIBubble(string.Empty);
 
-                        // Force layout refresh and scroll
-                        ChatScroll.UpdateLayout();
-                        ChatScroll.ScrollToBottom();
-                    });
+                            if (_streamingBlock != null)
+                            {
+                                RenderMarkdown(_streamingBlock, currentText);
+                                ChatScroll.ScrollToBottom();
+                            }
+                        }));
+                    }
                 }
 
                 // Done — add to history
                 var reply = sb.ToString();
-                _history.Add(new ChatMessage { Role = "assistant", Content = reply });
-
-                // Trim history if too long
-                TrimHistory();
+                Dispatcher.Invoke(() => 
+                {
+                    _history.Add(new ChatMessage { Role = "assistant", Content = reply });
+                    TrimHistory();
+                });
             }
             catch (OperationCanceledException)
             {
@@ -248,7 +283,7 @@ namespace LocalPilot.Chat
                 BorderThickness = new Thickness(1),
                 CornerRadius    = new CornerRadius(12, 12, 2, 12),
                 Padding         = new Thickness(14, 10, 14, 10),
-                Margin          = new Thickness(48, 8, 0, 8),
+                Margin          = new Thickness(24, 4, 0, 4),
                 HorizontalAlignment = HorizontalAlignment.Right
             };
 
@@ -264,7 +299,8 @@ namespace LocalPilot.Chat
                 FontSize     = 13,
                 IsDocumentEnabled = true,
                 Padding      = new Thickness(0),
-                VerticalScrollBarVisibility = ScrollBarVisibility.Disabled
+                VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                ContextMenu  = BuildRichTextBoxContextMenu()
             };
             SetRichText(body, text);
 
@@ -285,8 +321,9 @@ namespace LocalPilot.Chat
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(12, 12, 12, 2),
                 Padding      = new Thickness(14, 10, 14, 10),
-                Margin       = new Thickness(0, 8, 48, 8),
-                HorizontalAlignment = HorizontalAlignment.Left
+                Margin       = new Thickness(0, 4, 8, 4),
+                HorizontalAlignment = HorizontalAlignment.Left,
+                MaxWidth     = 1600
             };
 
             var container = new StackPanel { Orientation = Orientation.Vertical };
@@ -312,7 +349,7 @@ namespace LocalPilot.Chat
 
         private RichTextBox CreateRichTextBox()
         {
-            return new RichTextBox
+            var rtb = new RichTextBox
             {
                 Background   = Brushes.Transparent,
                 Foreground   = ThemeWindowFg,
@@ -322,8 +359,98 @@ namespace LocalPilot.Chat
                 FontSize     = 13,
                 IsDocumentEnabled = true,
                 Padding      = new Thickness(0),
-                VerticalScrollBarVisibility = ScrollBarVisibility.Disabled
+                VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                ContextMenu  = BuildRichTextBoxContextMenu()
             };
+            return rtb;
+        }
+
+        /// <summary>
+        /// Builds a VS-theme-aware right-click context menu for read-only RichTextBox controls
+        /// (Copy + Select All). Uses the same VsBrushes keys as the XAML styles.
+        /// </summary>
+        private ContextMenu BuildRichTextBoxContextMenu()
+        {
+            Brush menuBg     = new SolidColorBrush(Color.FromRgb(0x1B, 0x1B, 0x1C));
+            Brush menuBorder = new SolidColorBrush(Color.FromRgb(0x33, 0x33, 0x37));
+            Brush itemFg     = new SolidColorBrush(Color.FromRgb(0xF1, 0xF1, 0xF1));
+            Brush hoverBg    = new SolidColorBrush(Color.FromRgb(0x3E, 0x3E, 0x40));
+            Brush hoverFg    = Brushes.White;
+            Brush sepColor   = new SolidColorBrush(Color.FromRgb(0x33, 0x33, 0x37));
+
+            ContextMenu MakeMenu()
+            {
+                var menu = new ContextMenu
+                {
+                    Background = menuBg,
+                    BorderBrush = menuBorder,
+                    BorderThickness = new Thickness(1),
+                    Padding = new Thickness(0, 4, 0, 4)
+                };
+
+                // Round corners via the border template
+                menu.Template = CreateMenuTemplate();
+
+                menu.Items.Add(MakeMenuItem("Copy",       ApplicationCommands.Copy,      "\uE8C8", itemFg, hoverBg, hoverFg));
+                menu.Items.Add(new Separator { Background = sepColor, Margin = new Thickness(4, 2, 4, 2) });
+                menu.Items.Add(MakeMenuItem("Select All", ApplicationCommands.SelectAll, "\uE8B3", itemFg, hoverBg, hoverFg));
+
+                return menu;
+            }
+
+            return MakeMenu();
+        }
+
+        private static ControlTemplate CreateMenuTemplate()
+        {
+            var template = new ControlTemplate(typeof(ContextMenu));
+            var factory  = new FrameworkElementFactory(typeof(Border));
+            factory.SetBinding(Border.BackgroundProperty,       new System.Windows.Data.Binding("Background") { RelativeSource = new System.Windows.Data.RelativeSource(System.Windows.Data.RelativeSourceMode.TemplatedParent) });
+            factory.SetBinding(Border.BorderBrushProperty,      new System.Windows.Data.Binding("BorderBrush") { RelativeSource = new System.Windows.Data.RelativeSource(System.Windows.Data.RelativeSourceMode.TemplatedParent) });
+            factory.SetBinding(Border.BorderThicknessProperty,  new System.Windows.Data.Binding("BorderThickness") { RelativeSource = new System.Windows.Data.RelativeSource(System.Windows.Data.RelativeSourceMode.TemplatedParent) });
+            factory.SetValue(Border.CornerRadiusProperty, new CornerRadius(4));
+            factory.SetBinding(Border.PaddingProperty, new System.Windows.Data.Binding("Padding") { RelativeSource = new System.Windows.Data.RelativeSource(System.Windows.Data.RelativeSourceMode.TemplatedParent) });
+            var items = new FrameworkElementFactory(typeof(ItemsPresenter));
+            factory.AppendChild(items);
+            template.VisualTree = factory;
+            return template;
+        }
+
+        private static MenuItem MakeMenuItem(string header, ICommand command, string icon,
+                                             Brush fg, Brush hoverBg, Brush hoverFg)
+        {
+            var iconBlock = new TextBlock
+            {
+                Text       = icon,
+                FontFamily = new FontFamily("Segoe MDL2 Assets"),
+                Foreground = fg,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+
+            var item = new MenuItem
+            {
+                Header  = header,
+                Command = command,
+                Icon    = iconBlock,
+                Foreground = fg,
+                Background = Brushes.Transparent,
+                Padding  = new Thickness(28, 6, 20, 6),
+                FontSize = 12
+            };
+
+            // Hover highlight via triggers
+            var style = new Style(typeof(MenuItem));
+            var hoverTrigger = new Trigger { Property = MenuItem.IsHighlightedProperty, Value = true };
+            hoverTrigger.Setters.Add(new Setter(MenuItem.BackgroundProperty, hoverBg));
+            hoverTrigger.Setters.Add(new Setter(MenuItem.ForegroundProperty, hoverFg));
+            style.Triggers.Add(hoverTrigger);
+            item.Style = style;
+            return item;
+        }
+
+        private Brush GetVsBrush(Microsoft.VisualStudio.Shell.ThemeResourceKey key)
+        {
+            return (Brush)Application.Current.FindResource(key);
         }
 
         private void RenderFullMarkdown(StackPanel container, string md)
@@ -503,9 +630,19 @@ namespace LocalPilot.Chat
 
         private void TrimHistory()
         {
-            int max = LocalPilotSettings.Instance.ChatHistoryMaxItems * 2; // user+ai pairs
-            while (_history.Count > max + 1) // keep system message
+            // 1. Data history trimming (what goes to AI)
+            int maxHistory = LocalPilotSettings.Instance.ChatHistoryMaxItems * 2; // user+ai pairs
+            while (_history.Count > maxHistory + 1) // keep system message [0]
                 _history.RemoveAt(1);
+
+            // 2. UI tree pruning (what stays in WPF memory)
+            // Each message adds one 'Border' to MessagesContainer.
+            // Keeping too many UI elements causes high RAM usage and lag.
+            const int maxUiElements = 50; 
+            while (MessagesContainer.Children.Count > maxUiElements)
+            {
+                MessagesContainer.Children.RemoveAt(0);
+            }
         }
 
         // ── Toolbar events ────────────────────────────────────────────────────
