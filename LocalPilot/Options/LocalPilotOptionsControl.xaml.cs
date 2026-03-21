@@ -5,6 +5,9 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
+using Microsoft.VisualStudio.Shell;
+using Microsoft.VisualStudio.PlatformUI;
 using LocalPilot.Services;
 using LocalPilot.Settings;
 
@@ -18,7 +21,51 @@ namespace LocalPilot.Options
         public LocalPilotOptionsControl()
         {
             InitializeComponent();
-            Loaded += async (s, e) => await RefreshConnectionStatusAsync();
+            Loaded += OnLoaded;
+            Unloaded += OnUnloaded;
+        }
+
+        private void OnLoaded(object sender, RoutedEventArgs e)
+        {
+            InitializeAsync();
+            UpdateBrushes();
+            VSColorTheme.ThemeChanged += OnThemeChanged;
+        }
+
+        private void OnUnloaded(object sender, RoutedEventArgs e)
+        {
+            VSColorTheme.ThemeChanged -= OnThemeChanged;
+            _cts?.Cancel();
+            _cts?.Dispose();
+        }
+
+        private void OnThemeChanged(ThemeChangedEventArgs e) => UpdateBrushes();
+
+        private async void InitializeAsync()
+        {
+            await RefreshConnectionStatusAsync();
+        }
+
+        private void UpdateBrushes()
+        {
+            try
+            {
+                SetResourceBrush("LpWindowBgBrush",      VsBrushes.ToolWindowBackgroundKey);
+                SetResourceBrush("LpWindowFgBrush",      VsBrushes.ToolWindowTextKey);
+                SetResourceBrush("LpMenuBgBrush",        VsBrushes.CommandBarMenuBackgroundGradientBeginKey);
+                SetResourceBrush("LpMenuBorderBrush",    VsBrushes.CommandBarMenuBorderKey);
+                SetResourceBrush("LpMutedFgBrush",       VsBrushes.GrayTextKey);
+            }
+            catch { }
+        }
+
+        private void SetResourceBrush(string key, object vsKey)
+        {
+            var brush = Application.Current.FindResource(vsKey) as Brush;
+            if (brush != null)
+            {
+                this.Resources[key] = brush;
+            }
         }
 
         // ── Load settings into all controls ───────────────────────────────────
@@ -162,17 +209,20 @@ namespace LocalPilot.Options
             }
         }
 
-        private void BtnSave_Click(object sender, RoutedEventArgs e)
+        private async void BtnSave_Click(object sender, RoutedEventArgs e)
         {
             try
             {
                 SaveSettings();
-                MessageBox.Show("Settings saved!", "LocalPilot", MessageBoxButton.OK,
-                                MessageBoxImage.Information);
+                await ShowToastAsync(success: true,
+                    title:    "Settings saved",
+                    subtitle: "All changes have been persisted.");
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Save failed: {ex.Message}", "LocalPilot", MessageBoxButton.OK, MessageBoxImage.Error);
+                await ShowToastAsync(success: false,
+                    title:    "Save failed",
+                    subtitle: ex.Message);
             }
         }
 
@@ -185,6 +235,61 @@ namespace LocalPilot.Options
                 LocalPilotSettings.UpdateInstance(new LocalPilotSettings());
                 LoadSettings(LocalPilotSettings.Instance);
             }
+        }
+
+        private void BtnDismissToast_Click(object sender, RoutedEventArgs e)
+        {
+            SaveToast.Visibility = Visibility.Collapsed;
+            SaveToast.Opacity    = 0;
+        }
+
+        /// <summary>
+        /// Shows the inline toast banner with a fade-in → hold → fade-out animation,
+        /// then collapses it. Non-blocking — awaits only a Task.Delay.
+        /// </summary>
+        private async Task ShowToastAsync(bool success, string title, string subtitle)
+        {
+            // Configure appearance
+            ToastTitle.Text    = title;
+            ToastSubtitle.Text = subtitle;
+
+            SaveToast.BorderBrush = success
+                ? new SolidColorBrush(Color.FromRgb(0x4E, 0xC9, 0xB0))   // teal  ✓
+                : new SolidColorBrush(Color.FromRgb(0xF4, 0x47, 0x47));   // red   ✗
+
+            // Swap the tick icon colour
+            var iconBlock = FindToastIcon();
+            if (iconBlock != null)
+            {
+                iconBlock.Text       = success ? "\uE73E" : "\uEA39";      // check / error
+                iconBlock.Foreground = success
+                    ? new SolidColorBrush(Color.FromRgb(0x4E, 0xC9, 0xB0))
+                    : new SolidColorBrush(Color.FromRgb(0xF4, 0x47, 0x47));
+            }
+
+            // Make visible and start XAML storyboard
+            SaveToast.Opacity    = 0;
+            SaveToast.Visibility = Visibility.Visible;
+
+            var sb = SaveToast.Resources["ToastStoryboard"] as System.Windows.Media.Animation.Storyboard;
+            sb?.Begin(SaveToast);
+
+            // Wait for the total animation duration (2.75 s) then hide
+            await Task.Delay(2800);
+
+            if (SaveToast.Opacity <= 0.05)          // only collapse if not re-triggered
+                SaveToast.Visibility = Visibility.Collapsed;
+        }
+
+        private TextBlock FindToastIcon()
+        {
+            // The icon TextBlock is nested inside the first Border child of the Grid
+            if (SaveToast.Child is System.Windows.Controls.Grid grid &&
+                grid.Children.Count > 0 &&
+                grid.Children[0] is Border iconBorder &&
+                iconBorder.Child is TextBlock tb)
+                return tb;
+            return null;
         }
 
         private void SldrDelay_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -241,15 +346,30 @@ namespace LocalPilot.Options
         private void PopulateCombo(ComboBox cmb, List<string> models, string selected)
         {
             cmb.Items.Clear();
+
+            if (models == null || models.Count == 0)
+            {
+                cmb.Items.Add(new ComboBoxItem { Content = "(No models found)", IsEnabled = false });
+                cmb.SelectedIndex = 0;
+                return;
+            }
+
             foreach (var m in models)
             {
                 var item = new ComboBoxItem { Content = m };
                 cmb.Items.Add(item);
+
+                // Exact match or contains (handles cases where ollama adds :latest etc)
                 if (m.Equals(selected, StringComparison.OrdinalIgnoreCase))
                     cmb.SelectedItem = item;
             }
+
+            // Fallback: If the selected model isn't in the list, 
+            // pick the first available one so the user can start immediately.
             if (cmb.SelectedItem == null && cmb.Items.Count > 0)
+            {
                 cmb.SelectedIndex = 0;
+            }
         }
 
         private void SetComboItem(ComboBox cmb, string value)

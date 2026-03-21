@@ -3,32 +3,127 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
-             xmlns:vsshell="clr-namespace:Microsoft.VisualStudio.Shell;assembly=Microsoft.VisualStudio.Shell.15.0"
              mc:Ignorable="d"
              d:DesignHeight="700" d:DesignWidth="700"
-             Background="{DynamicResource {x:Static vsshell:VsBrushes.WindowKey}}"
-             Foreground="{DynamicResource {x:Static vsshell:VsBrushes.WindowTextKey}}"
              FontFamily="Segoe UI" FontSize="13">
 
     <UserControl.Resources>
-        <!-- VS Theme-aware brushes as local aliases -->
-        <SolidColorBrush x:Key="LpAccentBrush"  Color="#7C6AF7"/>
-        <SolidColorBrush x:Key="LpGreenBrush"   Color="#4EC9B0"/>
-        <SolidColorBrush x:Key="LpRedBrush"     Color="#F44747"/>
+        <!-- Theme Colors (VS Dark approximation) -->
+        <SolidColorBrush x:Key="LpWindowBgBrush"      Color="#2D2D30"/>
+        <SolidColorBrush x:Key="LpWindowFgBrush"      Color="#F1F1F1"/>
+        <SolidColorBrush x:Key="LpMenuBgBrush"        Color="#1B1B1C"/>
+        <SolidColorBrush x:Key="LpMenuBorderBrush"    Color="#333337"/>
+        <SolidColorBrush x:Key="LpHoverBgBrush"       Color="#3E3E40"/>
+        <SolidColorBrush x:Key="LpHoverFgBrush"       Color="#FFFFFF"/>
+        <SolidColorBrush x:Key="LpMutedFgBrush"       Color="#999999"/>
+
+        <!-- Theme-aware ContextMenu popup shell -->
+        <Style x:Key="ThemedContextMenuStyle" TargetType="ContextMenu">
+            <Setter Property="Background"      Value="{StaticResource LpMenuBgBrush}"/>
+            <Setter Property="Foreground"      Value="{StaticResource LpWindowFgBrush}"/>
+            <Setter Property="BorderBrush"     Value="{StaticResource LpMenuBorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding"         Value="0,4"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ContextMenu">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="4"
+                                Padding="{TemplateBinding Padding}">
+                            <ItemsPresenter/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Theme-aware MenuItem -->
+        <Style x:Key="ThemedMenuItemStyle" TargetType="MenuItem">
+            <Setter Property="Background"  Value="Transparent"/>
+            <Setter Property="Foreground"  Value="{StaticResource LpWindowFgBrush}"/>
+            <Setter Property="Padding"     Value="28,6,20,6"/>
+            <Setter Property="FontSize"    Value="12"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="MenuItem">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                Padding="{TemplateBinding Padding}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" SharedSizeGroup="Icon"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <ContentPresenter Grid.Column="0" ContentSource="Icon"
+                                                  SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"
+                                                  VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                <ContentPresenter Grid.Column="1" ContentSource="Header"
+                                                  RecognizesAccessKey="True"
+                                                  SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"
+                                                  VerticalAlignment="Center"/>
+                            </Grid>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="Bd" Property="Background"
+                                        Value="{StaticResource LpHoverBgBrush}"/>
+                                <Setter Property="Foreground"
+                                        Value="{StaticResource LpHoverFgBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Shared themed right-click menu for all text inputs (Cut / Copy / Paste / Select All) -->
+        <ContextMenu x:Key="ThemedEditContextMenu"
+                     Style="{StaticResource ThemedContextMenuStyle}"
+                     Grid.IsSharedSizeScope="True">
+            <MenuItem Style="{StaticResource ThemedMenuItemStyle}"
+                      Header="Cut" Command="ApplicationCommands.Cut">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE8C6;" FontFamily="Segoe MDL2 Assets"
+                               Foreground="{StaticResource LpWindowFgBrush}"/>
+                </MenuItem.Icon>
+            </MenuItem>
+            <MenuItem Style="{StaticResource ThemedMenuItemStyle}"
+                      Header="Copy" Command="ApplicationCommands.Copy">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE8C8;" FontFamily="Segoe MDL2 Assets"
+                               Foreground="{StaticResource LpWindowFgBrush}"/>
+                </MenuItem.Icon>
+            </MenuItem>
+            <MenuItem Style="{StaticResource ThemedMenuItemStyle}"
+                      Header="Paste" Command="ApplicationCommands.Paste">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE77F;" FontFamily="Segoe MDL2 Assets"
+                               Foreground="{StaticResource LpWindowFgBrush}"/>
+                </MenuItem.Icon>
+            </MenuItem>
+            <Separator Background="{StaticResource LpMenuBorderBrush}"
+                       Margin="4,2"/>
+            <MenuItem Style="{StaticResource ThemedMenuItemStyle}"
+                      Header="Select All" Command="ApplicationCommands.SelectAll">
+                <MenuItem.Icon>
+                    <TextBlock Text="&#xE8B3;" FontFamily="Segoe MDL2 Assets"
+                               Foreground="{StaticResource LpWindowFgBrush}"/>
+                </MenuItem.Icon>
+            </MenuItem>
+        </ContextMenu>
 
         <!-- TextBox Style — uses VS theme colours -->
         <Style x:Key="LpInputStyle" TargetType="TextBox">
-            <Setter Property="Background"
-                    Value="{DynamicResource {x:Static vsshell:VsBrushes.ComboBoxBackgroundKey}}"/>
-            <Setter Property="Foreground"
-                    Value="{DynamicResource {x:Static vsshell:VsBrushes.WindowTextKey}}"/>
-            <Setter Property="BorderBrush"
-                    Value="{DynamicResource {x:Static vsshell:VsBrushes.ComboBoxBorderKey}}"/>
+            <Setter Property="Background"      Value="#333337"/>
+            <Setter Property="Foreground"      Value="{StaticResource LpWindowFgBrush}"/>
+            <Setter Property="BorderBrush"     Value="{StaticResource LpMenuBorderBrush}"/>
             <Setter Property="BorderThickness"   Value="1"/>
             <Setter Property="Padding"           Value="8,5"/>
             <Setter Property="Height"            Value="32"/>
             <Setter Property="VerticalContentAlignment" Value="Center"/>
             <Setter Property="CaretBrush"        Value="#7C6AF7"/>
+            <Setter Property="ContextMenu"       Value="{StaticResource ThemedEditContextMenu}"/>
         </Style>
 
         <!-- Section Header -->
@@ -42,7 +137,7 @@
         <!-- Label -->
         <Style x:Key="LpLabelStyle" TargetType="TextBlock">
             <Setter Property="Foreground"
-                    Value="{DynamicResource {x:Static vsshell:VsBrushes.WindowTextKey}}"/>
+                    Value="{StaticResource LpWindowFgBrush}"/>
             <Setter Property="FontSize"     Value="12"/>
             <Setter Property="Margin"       Value="0,0,0,3"/>
         </Style>
@@ -50,14 +145,14 @@
         <!-- Muted label -->
         <Style x:Key="LpMutedLabel" TargetType="TextBlock">
             <Setter Property="Foreground"
-                    Value="{DynamicResource {x:Static vsshell:VsBrushes.GrayTextKey}}"/>
+                    Value="{StaticResource LpMutedFgBrush}"/>
             <Setter Property="FontSize"     Value="12"/>
         </Style>
 
         <!-- CheckBox — inherits VS theme -->
         <Style x:Key="LpCheckStyle" TargetType="CheckBox">
             <Setter Property="Foreground"
-                    Value="{DynamicResource {x:Static vsshell:VsBrushes.WindowTextKey}}"/>
+                    Value="{StaticResource LpWindowFgBrush}"/>
             <Setter Property="Margin"       Value="0,4,0,4"/>
         </Style>
 
@@ -93,11 +188,11 @@
         <!-- Secondary Button — VS themed -->
         <Style x:Key="LpSecondaryBtn" TargetType="Button">
             <Setter Property="Background"
-                    Value="{DynamicResource {x:Static vsshell:VsBrushes.ButtonFaceKey}}"/>
+                    Value="{StaticResource LpWindowBgBrush}"/>
             <Setter Property="Foreground"
-                    Value="{DynamicResource {x:Static vsshell:VsBrushes.ButtonTextKey}}"/>
+                    Value="{StaticResource LpWindowFgBrush}"/>
             <Setter Property="BorderBrush"
-                    Value="{DynamicResource {x:Static vsshell:VsBrushes.ComboBoxBorderKey}}"/>
+                    Value="{StaticResource LpMenuBorderBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Padding"         Value="14,7"/>
             <Setter Property="Cursor"          Value="Hand"/>
@@ -106,14 +201,16 @@
         <!-- Separator -->
         <Style x:Key="LpSepStyle" TargetType="Separator">
             <Setter Property="Background"
-                    Value="{DynamicResource {x:Static vsshell:VsBrushes.ActiveBorderKey}}"/>
+                    Value="{StaticResource LpWindowFgBrush}"/>
             <Setter Property="Margin"       Value="0,4,0,4"/>
         </Style>
+
     </UserControl.Resources>
 
     <ScrollViewer VerticalScrollBarVisibility="Auto"
                   HorizontalScrollBarVisibility="Disabled"
-                  Background="{DynamicResource {x:Static vsshell:VsBrushes.WindowKey}}">
+                  Background="#1B1B1C"
+                  Foreground="{StaticResource LpWindowFgBrush}">
         <StackPanel Margin="24,20,24,28">
 
             <!-- ═══ Header ════════════════════════════════════════════════════ -->
@@ -138,14 +235,14 @@
 
                 <!-- Connection Status Badge -->
                 <Border Grid.Column="1" VerticalAlignment="Center"
-                        Background="{DynamicResource {x:Static vsshell:VsBrushes.ButtonFaceKey}}"
-                        BorderBrush="{DynamicResource {x:Static vsshell:VsBrushes.ComboBoxBorderKey}}"
+                        Background="#333337"
+                        BorderBrush="#444444"
                         BorderThickness="1" CornerRadius="20" Padding="12,6">
                     <StackPanel Orientation="Horizontal">
                         <Ellipse x:Name="StatusDot" Width="8" Height="8"
                                  Fill="#4EC9B0" VerticalAlignment="Center"/>
                         <TextBlock x:Name="StatusText" Text="Ollama Connected"
-                                   Foreground="{DynamicResource {x:Static vsshell:VsBrushes.WindowTextKey}}"
+                                   Foreground="{StaticResource LpWindowFgBrush}"
                                    FontSize="12" Margin="6,0,0,0"
                                    VerticalAlignment="Center"/>
                     </StackPanel>
@@ -263,7 +360,7 @@
                        Style="{StaticResource LpMutedLabel}" Margin="0,0,0,12"/>
 
             <Expander Header="Fine-tune Parameters (Temperature, Context, Tokens)" 
-                      Foreground="{DynamicResource {x:Static vsshell:VsBrushes.WindowTextKey}}"
+                      Foreground="{StaticResource LpWindowFgBrush}"
                       Margin="0,0,0,10">
                 <StackPanel Margin="10,10,0,0">
                     <!-- Temperature Slider -->
@@ -369,6 +466,70 @@
 
             <!-- Footer Buttons -->
             <Separator Style="{StaticResource LpSepStyle}" Margin="0,16,0,10"/>
+
+            <!-- ── Save Toast Notification ───────────────────────────────── -->
+            <Border x:Name="SaveToast"
+                    Opacity="0" Visibility="Collapsed"
+                    Background="{StaticResource LpWindowFgBrush}"
+                    BorderBrush="#4EC9B0"
+                    BorderThickness="1"
+                    CornerRadius="6"
+                    Padding="14,10"
+                    Margin="0,0,0,10">
+                <Border.Resources>
+                    <!-- Fade-in then out storyboard -->
+                    <Storyboard x:Key="ToastStoryboard">
+                        <!-- Make visible immediately (handled in code, but keep opacity anim here) -->
+                        <DoubleAnimationUsingKeyFrames Storyboard.TargetProperty="Opacity">
+                            <!-- Rise -->
+                            <LinearDoubleKeyFrame Value="0"  KeyTime="0:0:0.0"/>
+                            <LinearDoubleKeyFrame Value="1"  KeyTime="0:0:0.25"/>
+                            <!-- Hold -->
+                            <LinearDoubleKeyFrame Value="1"  KeyTime="0:0:2.25"/>
+                            <!-- Fade out -->
+                            <LinearDoubleKeyFrame Value="0"  KeyTime="0:0:2.75"/>
+                        </DoubleAnimationUsingKeyFrames>
+                    </Storyboard>
+                </Border.Resources>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <!-- Green tick icon -->
+                    <Border Grid.Column="0" Background="#1A4EC9B0" CornerRadius="14"
+                            Width="28" Height="28" Margin="0,0,10,0">
+                        <TextBlock Text="&#xE73E;" FontFamily="Segoe MDL2 Assets" FontSize="13"
+                                   Foreground="#4EC9B0"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+
+                    <!-- Message -->
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <TextBlock x:Name="ToastTitle"
+                                   Text="Settings saved"
+                                   FontWeight="SemiBold" FontSize="12"
+                                   Foreground="{StaticResource LpWindowFgBrush}"/>
+                        <TextBlock x:Name="ToastSubtitle"
+                                   Text="All changes have been persisted."
+                                   FontSize="11" Opacity="0.7"
+                                   Foreground="{StaticResource LpWindowFgBrush}"/>
+                    </StackPanel>
+
+                    <!-- Dismiss × button -->
+                    <Button Grid.Column="2" x:Name="BtnDismissToast"
+                            Content="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="10"
+                            Background="Transparent" BorderThickness="0"
+                             Foreground="{StaticResource LpMutedFgBrush}"
+                            Cursor="Hand" Padding="4"
+                            VerticalAlignment="Top"
+                            Click="BtnDismissToast_Click"
+                            ToolTip="Dismiss"/>
+                </Grid>
+            </Border>
+
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                 <Button Content="Reset to Defaults" Style="{StaticResource LpSecondaryBtn}"
                         x:Name="BtnReset" Click="BtnReset_Click" Margin="0,0,10,0"/>

@@ -78,42 +78,41 @@ namespace LocalPilot.Completion
 
             try
             {
-                string prefix, suffix;
-                int caretPos;
-
+                // 1. Get snapshot and buffer info on the UI thread
                 await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory
                       .SwitchToMainThreadAsync(token);
 
                 var snapshot = _view.TextBuffer.CurrentSnapshot;
-                caretPos = _view.Caret.Position.BufferPosition.Position;
-                prefix = snapshot.GetText(0, caretPos);
-                suffix = snapshot.GetText(caretPos, snapshot.Length - caretPos);
+                var caretPos = _view.Caret.Position.BufferPosition.Position;
+                var prefix = snapshot.GetText(0, caretPos);
+                var suffix = snapshot.GetText(caretPos, snapshot.Length - caretPos);
                 var fileExt = System.IO.Path.GetExtension(_document?.FilePath ?? ".cs");
                 var filePath = _document?.FilePath ?? "untitled";
 
-                // Build prompt
-                var prompt = _promptBuilder.Build(fileExt, prefix, suffix, filePath);
-
-                // Call Ollama
-                var completionText = string.Empty;
-                var opts = new OllamaOptions
+                // 2. Offload network request and processing to a background thread
+                var completionText = await Task.Run(async () =>
                 {
-                    Temperature = LocalPilotSettings.Instance.Temperature,
-                    NumPredict = LocalPilotSettings.Instance.MaxCompletionTokens,
-                    Stop = new System.Collections.Generic.List<string> { "\n\n\n", "</MID>" }
-                };
+                    var prompt = _promptBuilder.Build(fileExt, prefix, suffix, filePath);
+                    var opts = new OllamaOptions
+                    {
+                        Temperature = LocalPilotSettings.Instance.Temperature,
+                        NumPredict = LocalPilotSettings.Instance.MaxCompletionTokens,
+                        Stop = new System.Collections.Generic.List<string> { "\n\n\n", "</MID>" }
+                    };
 
-                await foreach (var chunk in _ollama.StreamCompletionAsync(
-                    LocalPilotSettings.Instance.CompletionModel, prompt, opts, token))
-                {
-                    completionText += chunk;
-                    if (token.IsCancellationRequested) return;
-                }
+                    string result = string.Empty;
+                    await foreach (var chunk in _ollama.StreamCompletionAsync(
+                        LocalPilotSettings.Instance.CompletionModel, prompt, opts, token).ConfigureAwait(false))
+                    {
+                        result += chunk;
+                        if (token.IsCancellationRequested) break;
+                    }
+                    return result.Trim();
+                }, token);
 
-                completionText = completionText.Trim();
-                if (string.IsNullOrWhiteSpace(completionText)) return;
+                if (string.IsNullOrWhiteSpace(completionText) || token.IsCancellationRequested) return;
 
-                // Show ghost text on UI thread
+                // 3. Return to UI thread only to render
                 await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory
                       .SwitchToMainThreadAsync(CancellationToken.None);
 
@@ -135,7 +134,6 @@ namespace LocalPilot.Completion
 
             _cts?.Cancel();
             _debounceTimer?.Dispose();
-            _ollama?.Dispose();
         }
 
 
