@@ -34,7 +34,7 @@
         <!-- Send Button -->
         <Style x:Key="SendBtnStyle" TargetType="Button">
             <Setter Property="Background"       Value="#7C6AF7"/>
-            <Setter Property="Foreground"       Value="{StaticResource LpWindowFgBrush}"/>
+            <Setter Property="Foreground"       Value="{DynamicResource LpWindowFgBrush}"/>
             <Setter Property="BorderThickness"  Value="0"/>
             <Setter Property="Width"            Value="36"/>
             <Setter Property="Height"           Value="36"/>
@@ -54,7 +54,7 @@
                                 <Setter Property="Opacity" Value="0.8"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
-                                <Setter Property="Background" Value="{StaticResource LpWindowFgBrush}"/>
+                                <Setter Property="Background" Value="{DynamicResource LpWindowFgBrush}"/>
                                 <Setter Property="Opacity"    Value="0.5"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
@@ -65,9 +65,9 @@
 
         <!-- Quick Action Chip -->
         <Style x:Key="ActionChipStyle" TargetType="Button">
-            <Setter Property="Background"      Value="#333337"/>
-            <Setter Property="Foreground"      Value="{StaticResource LpWindowFgBrush}"/>
-            <Setter Property="BorderBrush"     Value="{StaticResource LpMenuBorderBrush}"/>
+            <Setter Property="Background"      Value="{DynamicResource LpMenuBgBrush}"/>
+            <Setter Property="Foreground"      Value="{DynamicResource LpWindowFgBrush}"/>
+            <Setter Property="BorderBrush"     Value="{DynamicResource LpMenuBorderBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Padding"         Value="12,5"/>
             <Setter Property="FontSize"        Value="11"/>
@@ -99,7 +99,7 @@
         <Style x:Key="IconButtonStyle" TargetType="Button">
             <Setter Property="Background"      Value="Transparent"/>
             <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="Foreground"      Value="{StaticResource LpMutedFgBrush}"/>
+            <Setter Property="Foreground"      Value="{DynamicResource LpMutedFgBrush}"/>
             <Setter Property="Cursor"          Value="Hand"/>
             <Setter Property="Padding"         Value="4"/>
             <Setter Property="Template">
@@ -124,9 +124,9 @@
 
         <!-- Theme-aware ContextMenu -->
         <Style x:Key="ThemedContextMenuStyle" TargetType="ContextMenu">
-            <Setter Property="Background"   Value="{StaticResource LpMenuBgBrush}"/>
-            <Setter Property="Foreground"   Value="{StaticResource LpWindowFgBrush}"/>
-            <Setter Property="BorderBrush"  Value="{StaticResource LpMenuBorderBrush}"/>
+            <Setter Property="Background"   Value="{DynamicResource LpMenuBgBrush}"/>
+            <Setter Property="Foreground"   Value="{DynamicResource LpWindowFgBrush}"/>
+            <Setter Property="BorderBrush"  Value="{DynamicResource LpMenuBorderBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Padding"      Value="0,4"/>
             <Setter Property="Template">
@@ -147,7 +147,7 @@
         <!-- Theme-aware MenuItem -->
         <Style x:Key="ThemedMenuItemStyle" TargetType="MenuItem">
             <Setter Property="Background"  Value="Transparent"/>
-            <Setter Property="Foreground"  Value="{StaticResource LpWindowFgBrush}"/>
+            <Setter Property="Foreground"  Value="{DynamicResource LpWindowFgBrush}"/>
             <Setter Property="Padding"     Value="28,6,20,6"/>
             <Setter Property="FontSize"    Value="12"/>
             <Setter Property="Template">
@@ -178,9 +178,9 @@
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsHighlighted" Value="True">
                                 <Setter TargetName="Bd" Property="Background"
-                                        Value="{StaticResource LpHoverBgBrush}"/>
+                                        Value="{DynamicResource LpHoverBgBrush}"/>
                                 <Setter Property="Foreground"
-                                        Value="{StaticResource LpHoverFgBrush}"/>
+                                        Value="{DynamicResource LpHoverFgBrush}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -190,9 +190,9 @@
 
         <!-- Chat Input TextBox -->
         <Style x:Key="ChatInputStyle" TargetType="TextBox">
-            <Setter Property="Background"       Value="#333337"/>
-            <Setter Property="Foreground"       Value="{StaticResource LpWindowFgBrush}"/>
-            <Setter Property="BorderBrush"      Value="{StaticResource LpMenuBorderBrush}"/>
+            <Setter Property="Background"       Value="{DynamicResource LpMenuBgBrush}"/>
+            <Setter Property="Foreground"       Value="{DynamicResource LpWindowFgBrush}"/>
+            <Setter Property="BorderBrush"      Value="{DynamicResource LpMenuBorderBrush}"/>
             <Setter Property="BorderThickness"  Value="1"/>
             <Setter Property="Padding"          Value="12,10"/>
             <Setter Property="AcceptsReturn"    Value="True"/>
@@ -226,37 +226,37 @@
                       Header="Cut" Command="ApplicationCommands.Cut">
                 <MenuItem.Icon>
                     <TextBlock Text="&#xE8C6;" FontFamily="Segoe MDL2 Assets"
-                               Foreground="{StaticResource LpWindowFgBrush}"/>
+                               Foreground="{DynamicResource LpWindowFgBrush}"/>
                 </MenuItem.Icon>
             </MenuItem>
             <MenuItem Style="{StaticResource ThemedMenuItemStyle}"
                       Header="Copy" Command="ApplicationCommands.Copy">
                 <MenuItem.Icon>
                     <TextBlock Text="&#xE8C8;" FontFamily="Segoe MDL2 Assets"
-                               Foreground="{StaticResource LpWindowFgBrush}"/>
+                               Foreground="{DynamicResource LpWindowFgBrush}"/>
                 </MenuItem.Icon>
             </MenuItem>
             <MenuItem Style="{StaticResource ThemedMenuItemStyle}"
                       Header="Paste" Command="ApplicationCommands.Paste">
                 <MenuItem.Icon>
                     <TextBlock Text="&#xE77F;" FontFamily="Segoe MDL2 Assets"
-                               Foreground="{StaticResource LpWindowFgBrush}"/>
+                               Foreground="{DynamicResource LpWindowFgBrush}"/>
                 </MenuItem.Icon>
             </MenuItem>
-            <Separator Background="{StaticResource LpMenuBorderBrush}"
+            <Separator Background="{DynamicResource LpMenuBorderBrush}"
                        Margin="4,2"/>
             <MenuItem Style="{StaticResource ThemedMenuItemStyle}"
                       Header="Select All" Command="ApplicationCommands.SelectAll">
                 <MenuItem.Icon>
                     <TextBlock Text="&#xE8B3;" FontFamily="Segoe MDL2 Assets"
-                               Foreground="{StaticResource LpWindowFgBrush}"/>
+                               Foreground="{DynamicResource LpWindowFgBrush}"/>
                 </MenuItem.Icon>
             </MenuItem>
         </ContextMenu>
 
     </UserControl.Resources>
 
-    <Grid Background="{StaticResource LpWindowBgBrush}">
+    <Grid Background="{DynamicResource LpWindowBgBrush}">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/> <!-- Main Header -->
             <RowDefinition Height="*"/>    <!-- Messages (Scrollable) -->
@@ -265,8 +265,8 @@
 
         <!-- ═══ Sleek Header ═════════════════════════════════════════════════ -->
         <Border Grid.Row="0"
-                Background="#1B1B1C"
-                BorderBrush="{StaticResource LpMenuBorderBrush}"
+                Background="{DynamicResource LpMenuBgBrush}"
+                BorderBrush="{DynamicResource LpMenuBorderBrush}"
                 BorderThickness="0,0,0,1" Padding="14,10">
             <Grid>
                 <Grid.ColumnDefinitions>
@@ -278,7 +278,7 @@
                     <Image Source="/LocalPilot;component/Assets/Logo_Concept_Minimalist.png" 
                            Width="18" Height="18" VerticalAlignment="Center"/>
                     <TextBlock Text="LocalPilot" FontSize="13" FontWeight="SemiBold"
-                               Foreground="{StaticResource LpWindowFgBrush}"
+                               Foreground="{DynamicResource LpWindowFgBrush}"
                                Margin="8,0,0,0" VerticalAlignment="Center"/>
                 </StackPanel>
 
@@ -287,7 +287,7 @@
                             ToolTip="Clear conversation"
                             Click="BtnClear_Click">
                         <TextBlock Text="&#xE74D;" FontFamily="Segoe MDL2 Assets" FontSize="12"
-                                   Foreground="{StaticResource LpMutedFgBrush}"/>
+                                   Foreground="{DynamicResource LpMutedFgBrush}"/>
                     </Button>
                 </StackPanel>
             </Grid>
@@ -298,11 +298,11 @@
                       VerticalScrollBarVisibility="Auto"
                       HorizontalScrollBarVisibility="Disabled"
                       Background="Transparent">
-            <StackPanel Margin="16,8,16,8">
+            <StackPanel Margin="8,8,8,8">
                 <!-- Welcome Message only shows at the start of history -->
                 <TextBlock Text="What's on your mind?"
                            FontSize="14" FontWeight="SemiBold"
-                           Foreground="{StaticResource LpWindowFgBrush}"
+                           Foreground="{DynamicResource LpWindowFgBrush}"
                            Margin="0,8,0,16" Opacity="0.7"/>
 
                 <StackPanel x:Name="MessagesContainer" VerticalAlignment="Top"/>
@@ -328,42 +328,42 @@
                                           Header="Explain Code" Tag="explain" Click="MenuQuickAction_Click">
                                     <MenuItem.Icon>
                                         <TextBlock Text="&#xE946;" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center"
-                                                   Foreground="{StaticResource LpWindowFgBrush}"/>
+                                                   Foreground="{DynamicResource LpWindowFgBrush}"/>
                                     </MenuItem.Icon>
                                 </MenuItem>
                                 <MenuItem Style="{StaticResource ThemedMenuItemStyle}"
                                           Header="Refactor Code" Tag="refactor" Click="MenuQuickAction_Click">
                                     <MenuItem.Icon>
                                         <TextBlock Text="&#xE70F;" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center"
-                                                   Foreground="{StaticResource LpWindowFgBrush}"/>
+                                                   Foreground="{DynamicResource LpWindowFgBrush}"/>
                                     </MenuItem.Icon>
                                 </MenuItem>
                                 <MenuItem Style="{StaticResource ThemedMenuItemStyle}"
                                           Header="Generate Documentation" Tag="document" Click="MenuQuickAction_Click">
                                     <MenuItem.Icon>
                                         <TextBlock Text="&#xE8B5;" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center"
-                                                   Foreground="{StaticResource LpWindowFgBrush}"/>
+                                                   Foreground="{DynamicResource LpWindowFgBrush}"/>
                                     </MenuItem.Icon>
                                 </MenuItem>
                                 <MenuItem Style="{StaticResource ThemedMenuItemStyle}"
                                           Header="Code Review" Tag="review" Click="MenuQuickAction_Click">
                                     <MenuItem.Icon>
                                         <TextBlock Text="&#xE928;" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center"
-                                                   Foreground="{StaticResource LpWindowFgBrush}"/>
+                                                   Foreground="{DynamicResource LpWindowFgBrush}"/>
                                     </MenuItem.Icon>
                                 </MenuItem>
                                 <MenuItem Style="{StaticResource ThemedMenuItemStyle}"
                                           Header="Fix Issues" Tag="fix" Click="MenuQuickAction_Click">
                                     <MenuItem.Icon>
                                         <TextBlock Text="&#xEA8A;" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center"
-                                                   Foreground="{StaticResource LpWindowFgBrush}"/>
+                                                   Foreground="{DynamicResource LpWindowFgBrush}"/>
                                     </MenuItem.Icon>
                                 </MenuItem>
                                 <MenuItem Style="{StaticResource ThemedMenuItemStyle}"
                                           Header="Generate Unit Tests" Tag="test" Click="MenuQuickAction_Click">
                                     <MenuItem.Icon>
                                         <TextBlock Text="&#xEBE8;" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center"
-                                                   Foreground="{StaticResource LpWindowFgBrush}"/>
+                                                   Foreground="{DynamicResource LpWindowFgBrush}"/>
                                     </MenuItem.Icon>
                                 </MenuItem>
                             </ContextMenu>
@@ -407,11 +407,11 @@
                             </TextBlock>
 
                             <TextBlock Text="LocalPilot is thinking" 
-                                       Foreground="{StaticResource LpWindowFgBrush}"
+                                       Foreground="{DynamicResource LpWindowFgBrush}"
                                        FontSize="11" VerticalAlignment="Center" Opacity="0.8"/>
 
                             <TextBlock x:Name="ThinkingDots" 
-                                       Foreground="{StaticResource LpWindowFgBrush}"
+                                       Foreground="{DynamicResource LpWindowFgBrush}"
                                        FontSize="11" VerticalAlignment="Center" Opacity="0.8">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">

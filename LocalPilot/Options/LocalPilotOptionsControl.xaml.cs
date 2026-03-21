@@ -50,10 +50,10 @@ namespace LocalPilot.Options
         {
             try
             {
-                SetResourceBrush("LpWindowBgBrush",      VsBrushes.ToolWindowBackgroundKey);
-                SetResourceBrush("LpWindowFgBrush",      VsBrushes.ToolWindowTextKey);
-                SetResourceBrush("LpMenuBgBrush",        VsBrushes.CommandBarMenuBackgroundGradientBeginKey);
-                SetResourceBrush("LpMenuBorderBrush",    VsBrushes.CommandBarMenuBorderKey);
+                SetResourceBrush("LpWindowBgBrush",      VsBrushes.WindowKey);
+                SetResourceBrush("LpWindowFgBrush",      VsBrushes.WindowTextKey);
+                SetResourceBrush("LpMenuBgBrush",        VsBrushes.WindowKey);
+                SetResourceBrush("LpMenuBorderBrush",    VsBrushes.ToolWindowBorderKey);
                 SetResourceBrush("LpMutedFgBrush",       VsBrushes.GrayTextKey);
             }
             catch { }
@@ -270,6 +270,14 @@ namespace LocalPilot.Options
             // Make visible and start XAML storyboard
             SaveToast.Opacity    = 0;
             SaveToast.Visibility = Visibility.Visible;
+
+            // Updated Icon Border Background
+            if (iconBlock?.Parent is Border b)
+            {
+                b.Background = success 
+                    ? new SolidColorBrush(Color.FromArgb(0x1A, 0x4E, 0xC9, 0xB0))
+                    : new SolidColorBrush(Color.FromArgb(0x1A, 0xF4, 0x47, 0x47));
+            }
 
             var sb = SaveToast.Resources["ToastStoryboard"] as System.Windows.Media.Animation.Storyboard;
             sb?.Begin(SaveToast);

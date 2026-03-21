@@ -66,8 +66,8 @@ namespace LocalPilot.Chat
             {
                 SetResourceBrush("LpWindowBgBrush",      VsBrushes.ToolWindowBackgroundKey);
                 SetResourceBrush("LpWindowFgBrush",      VsBrushes.ToolWindowTextKey);
-                SetResourceBrush("LpMenuBgBrush",        VsBrushes.CommandBarMenuBackgroundGradientBeginKey);
-                SetResourceBrush("LpMenuBorderBrush",    VsBrushes.CommandBarMenuBorderKey);
+                SetResourceBrush("LpMenuBgBrush",        VsBrushes.ToolWindowBackgroundKey); // Blend with window
+                SetResourceBrush("LpMenuBorderBrush",    VsBrushes.ToolWindowBorderKey);
                 SetResourceBrush("LpMutedFgBrush",       VsBrushes.GrayTextKey);
                 
                 // Refresh specific elements that might need it
@@ -238,8 +238,11 @@ namespace LocalPilot.Chat
 
                 // Done — add to history
                 var reply = sb.ToString();
-                _history.Add(new ChatMessage { Role = "assistant", Content = reply });
-                TrimHistory();
+                Dispatcher.Invoke(() => 
+                {
+                    _history.Add(new ChatMessage { Role = "assistant", Content = reply });
+                    TrimHistory();
+                });
             }
             catch (OperationCanceledException)
             {
@@ -280,7 +283,7 @@ namespace LocalPilot.Chat
                 BorderThickness = new Thickness(1),
                 CornerRadius    = new CornerRadius(12, 12, 2, 12),
                 Padding         = new Thickness(14, 10, 14, 10),
-                Margin          = new Thickness(48, 8, 0, 8),
+                Margin          = new Thickness(24, 4, 0, 4),
                 HorizontalAlignment = HorizontalAlignment.Right
             };
 
@@ -318,8 +321,9 @@ namespace LocalPilot.Chat
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(12, 12, 12, 2),
                 Padding      = new Thickness(14, 10, 14, 10),
-                Margin       = new Thickness(0, 8, 48, 8),
-                HorizontalAlignment = HorizontalAlignment.Left
+                Margin       = new Thickness(0, 4, 8, 4),
+                HorizontalAlignment = HorizontalAlignment.Left,
+                MaxWidth     = 1600
             };
 
             var container = new StackPanel { Orientation = Orientation.Vertical };
