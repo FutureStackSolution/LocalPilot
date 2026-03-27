@@ -1,8 +1,7 @@
-using System;
+using Microsoft.VisualStudio.Text.Editor;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
-using Microsoft.VisualStudio.Text.Editor;
 
 namespace LocalPilot.Completion
 {

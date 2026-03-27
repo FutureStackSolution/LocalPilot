@@ -1,9 +1,8 @@
+using LocalPilot.Chat;
+using Microsoft.VisualStudio.Shell;
 using System;
 using System.ComponentModel.Design;
 using System.Threading.Tasks;
-using Microsoft.VisualStudio.Shell;
-using Microsoft.VisualStudio.Shell.Interop;
-using LocalPilot.Chat;
 
 namespace LocalPilot.Commands
 {
@@ -60,7 +59,7 @@ namespace LocalPilot.Commands
         private void OpenChat(object sender, EventArgs e)
         {
             ThreadHelper.ThrowIfNotOnUIThread();
-            _package.JoinableTaskFactory.RunAsync(async () =>
+            _ = _package.JoinableTaskFactory.RunAsync(async () =>
             {
                 var win = await _package.ShowToolWindowAsync(
                     typeof(LocalPilotChatWindow), 0, true, _package.DisposalToken);
@@ -99,7 +98,7 @@ namespace LocalPilot.Commands
 
         private void OpenOptions(object sender, EventArgs e)
         {
-            _package.JoinableTaskFactory.RunAsync(async () =>
+            _ = _package.JoinableTaskFactory.RunAsync(async () =>
             {
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                 var dte = await _package.GetServiceAsync(typeof(EnvDTE.DTE)) as EnvDTE.DTE;
@@ -109,7 +108,7 @@ namespace LocalPilot.Commands
 
         private void OpenChatWithAction(string action)
         {
-            _package.JoinableTaskFactory.RunAsync(async () =>
+            _ = _package.JoinableTaskFactory.RunAsync(async () =>
             {
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                 await _package.ShowToolWindowAsync(
