@@ -1,8 +1,3 @@
-using System;
-using System.Collections.Generic;
-using System.Threading;
-using System.Threading.Tasks;
-using LocalPilot.Services;
 using LocalPilot.Settings;
 
 namespace LocalPilot.Completion

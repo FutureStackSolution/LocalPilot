@@ -1,13 +1,7 @@
-using System;
-using System.Collections.Generic;
-using System.ComponentModel;
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Input;
-using System.Windows.Media;
-using Microsoft.VisualStudio.Shell;
 using LocalPilot.Settings;
-using LocalPilot.Services;
+using Microsoft.VisualStudio.Shell;
+using System;
+using System.Windows;
 
 namespace LocalPilot.Options
 {

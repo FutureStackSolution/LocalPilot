@@ -1,7 +1,7 @@
+using LocalPilot.Settings;
+using Newtonsoft.Json;
 using System;
 using System.IO;
-using Newtonsoft.Json;
-using LocalPilot.Settings;
 
 namespace LocalPilot.Options
 {

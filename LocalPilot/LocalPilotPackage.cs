@@ -1,12 +1,12 @@
+using LocalPilot.Chat;
+using LocalPilot.Commands;
+using LocalPilot.Options;
+using LocalPilot.Settings;
+using Microsoft.VisualStudio.Shell;
 using System;
 using System.Runtime.InteropServices;
 using System.Threading;
-using Microsoft.VisualStudio.Shell;
 using Task = System.Threading.Tasks.Task;
-using LocalPilot.Commands;
-using LocalPilot.Chat;
-using LocalPilot.Options;
-using LocalPilot.Settings;
 
 namespace LocalPilot
 {

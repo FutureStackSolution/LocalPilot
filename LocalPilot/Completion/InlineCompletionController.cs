@@ -1,12 +1,12 @@
+using LocalPilot.Services;
+using LocalPilot.Settings;
+using Microsoft.VisualStudio.Text;
+using Microsoft.VisualStudio.Text.Editor;
+using Microsoft.VisualStudio.Utilities;
 using System;
 using System.ComponentModel.Composition;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.VisualStudio.Text;
-using Microsoft.VisualStudio.Text.Editor;
-using Microsoft.VisualStudio.Utilities;
-using LocalPilot.Services;
-using LocalPilot.Settings;
 
 namespace LocalPilot.Completion
 {
