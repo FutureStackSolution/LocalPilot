@@ -1,6 +1,7 @@
 using LocalPilot.Settings;
 using Microsoft.VisualStudio.Shell;
 using System;
+using System.Runtime.InteropServices;
 using System.Windows;
 
 namespace LocalPilot.Options
@@ -9,6 +10,8 @@ namespace LocalPilot.Options
     /// VS DialogPage that hosts the WPF Options UI.
     /// </summary>
     [System.ComponentModel.DesignerCategory("")]
+    [ComVisible(true)]
+    [Guid("4A5B6C7D-8E9F-4A5B-6C7D-8E9F4A5B6C7D")]
     public class LocalPilotOptionsPage : UIElementDialogPage
     {
         private LocalPilotOptionsControl _control;

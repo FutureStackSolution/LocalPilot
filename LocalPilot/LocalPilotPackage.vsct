@@ -12,51 +12,45 @@
         <Parent guid="guidSHLMainMenu" id="IDM_VS_MENU_TOOLS"/>
       </Group>
 
-      <!-- Anchor group in the code editor right-click context menu -->
-      <!-- This group holds ONLY the ⚡ LocalPilot submenu entry -->
+      <!-- Anchor group in the code editor context menu -->
       <Group guid="guidLocalPilotCmdSet" id="LocalPilotContextGroup" priority="0x0600">
         <Parent guid="guidSHLMainMenu" id="IDM_VS_CTXT_CODEWIN"/>
       </Group>
 
-      <!-- Group INSIDE the LocalPilot context submenu — holds all action buttons -->
+      <!-- Group INSIDE the LocalPilot context submenu -->
       <Group guid="guidLocalPilotCmdSet" id="LocalPilotContextInnerGroup" priority="0x0100">
         <Parent guid="guidLocalPilotCmdSet" id="LocalPilotContextMenu"/>
       </Group>
+
+      <!-- We can just use the standard group IDG_VS_WND_OTRWND directly for tool window commands in Other Windows -->
     </Groups>
 
     <Menus>
-      <!-- Top-level ⚡ LocalPilot sub-menu under Tools -->
-      <Menu guid="guidLocalPilotCmdSet" id="LocalPilotMenu" priority="0x0100"
-            type="Menu">
+      <Menu guid="guidLocalPilotCmdSet" id="LocalPilotMenu" priority="0x0100" type="Menu">
         <Parent guid="guidLocalPilotCmdSet" id="LocalPilotMenuGroup"/>
         <Strings>
           <ButtonText>LocalPilot</ButtonText>
         </Strings>
       </Menu>
 
-      <!-- ⚡ LocalPilot submenu in the CODE EDITOR context menu -->
-      <!-- All action buttons are children of LocalPilotContextInnerGroup inside here -->
-      <Menu guid="guidLocalPilotCmdSet" id="LocalPilotContextMenu" priority="0x0100"
-            type="Menu">
+      <Menu guid="guidLocalPilotCmdSet" id="LocalPilotContextMenu" priority="0x0100" type="Menu">
         <Parent guid="guidLocalPilotCmdSet" id="LocalPilotContextGroup"/>
         <Strings>
           <ButtonText>LocalPilot</ButtonText>
-          <CommandName>LocalPilot</CommandName>
         </Strings>
       </Menu>
     </Menus>
 
     <Buttons>
-      <!-- ── Open Chat ──────────────────────────────────────────────────── -->
-      <Button guid="guidLocalPilotCmdSet" id="cmdidOpenChat" priority="0x0100" type="Button">
-        <Parent guid="guidLocalPilotCmdSet" id="LocalPilotMenuGroup"/>
+      <Button guid="guidLocalPilotCmdSet" id="cmdidOpenChat" priority="0x0010" type="Button">
+        <!-- Make Other Windows the PRIMARY parent for better discovery -->
+        <Parent guid="guidSHLMainMenu" id="IDG_VS_WND_OTRWND"/>
         <Strings>
-          <ButtonText>Open LocalPilot Chat</ButtonText>
+          <ButtonText>LocalPilot Chat</ButtonText>
           <ToolTipText>Open the LocalPilot AI Chat panel</ToolTipText>
         </Strings>
       </Button>
 
-      <!-- ── Explain Code ───────────────────────────────────────────────── -->
       <Button guid="guidLocalPilotCmdSet" id="cmdidExplainCode" priority="0x0101" type="Button">
         <Parent guid="guidLocalPilotCmdSet" id="LocalPilotContextInnerGroup"/>
         <Strings>
@@ -64,7 +58,6 @@
         </Strings>
       </Button>
 
-      <!-- ── Refactor Code ──────────────────────────────────────────────── -->
       <Button guid="guidLocalPilotCmdSet" id="cmdidRefactorCode" priority="0x0102" type="Button">
         <Parent guid="guidLocalPilotCmdSet" id="LocalPilotContextInnerGroup"/>
         <Strings>
@@ -72,7 +65,6 @@
         </Strings>
       </Button>
 
-      <!-- ── Generate Documentation ────────────────────────────────────── -->
       <Button guid="guidLocalPilotCmdSet" id="cmdidGenerateDoc" priority="0x0103" type="Button">
         <Parent guid="guidLocalPilotCmdSet" id="LocalPilotContextInnerGroup"/>
         <Strings>
@@ -80,7 +72,6 @@
         </Strings>
       </Button>
 
-      <!-- ── Code Review ────────────────────────────────────────────────── -->
       <Button guid="guidLocalPilotCmdSet" id="cmdidReviewCode" priority="0x0104" type="Button">
         <Parent guid="guidLocalPilotCmdSet" id="LocalPilotContextInnerGroup"/>
         <Strings>
@@ -88,7 +79,6 @@
         </Strings>
       </Button>
 
-      <!-- ── Fix Code ───────────────────────────────────────────────────── -->
       <Button guid="guidLocalPilotCmdSet" id="cmdidFixCode" priority="0x0105" type="Button">
         <Parent guid="guidLocalPilotCmdSet" id="LocalPilotContextInnerGroup"/>
         <Strings>
@@ -96,7 +86,6 @@
         </Strings>
       </Button>
 
-      <!-- ── Generate Unit Test ────────────────────────────────────────── -->
       <Button guid="guidLocalPilotCmdSet" id="cmdidGenerateTest" priority="0x0106" type="Button">
         <Parent guid="guidLocalPilotCmdSet" id="LocalPilotContextInnerGroup"/>
         <Strings>
@@ -104,8 +93,6 @@
         </Strings>
       </Button>
 
-      <!-- ── Options ────────────────────────────────────────────────────── -->
-      <!-- ── Options ────────────────────────────────────────────────────── -->
       <Button guid="guidLocalPilotCmdSet" id="cmdidOpenOptions" priority="0x0107" type="Button">
         <Parent guid="guidLocalPilotCmdSet" id="LocalPilotMenuGroup"/>
         <Strings>
@@ -115,10 +102,28 @@
     </Buttons>
   </Commands>
 
+  <CommandPlacements>
+    <!-- Fallback placement in Tools -->
+    <CommandPlacement guid="guidLocalPilotCmdSet" id="cmdidOpenChat" priority="0x0100">
+      <Parent guid="guidLocalPilotCmdSet" id="LocalPilotMenuGroup"/>
+    </CommandPlacement>
+
+    <!-- Placement for Other Windows (v17 style) -->
+    <CommandPlacement guid="guidLocalPilotCmdSet" id="cmdidOpenChat" priority="0x0100">
+      <Parent guid="guidSHLMainMenu" id="IDG_VS_WND_OTRWND"/>
+    </CommandPlacement>
+  </CommandPlacements>
+
   <Symbols>
+    <!-- We don't need to define IDG_VS_WND_OTRWND or guidSHLMainMenu if they are in headers, 
+         but ensuring the GUID is correct. Standard SHL main menu. -->
+    <GuidSymbol name="guidSHLMainMenu" value="{d309f791-903f-11d0-9efc-00a0c911004f}">
+      <IDSymbol name="IDG_VS_WND_OTRWND" value="0x0001" />
+    </GuidSymbol>
+
     <GuidSymbol name="guidLocalPilotPackage" value="{5a6b34f5-329a-497a-956a-7f055a948b94}"/>
 
-    <GuidSymbol name="guidLocalPilotCmdSet" value="{E1F2A3B4-C5D6-47E8-F9A0-B1C2D3E4F5A6}">
+    <GuidSymbol name="guidLocalPilotCmdSet" value="{BA6A4123-D789-4B52-A9F0-C1D2E3F4B5A6}">
       <IDSymbol name="LocalPilotMenuGroup"         value="0x1020"/>
       <IDSymbol name="LocalPilotContextGroup"      value="0x1021"/>
       <IDSymbol name="LocalPilotMenu"              value="0x1022"/>
@@ -135,12 +140,12 @@
     </GuidSymbol>
 
     <GuidSymbol name="guidMenuIcons" value="{C1D2A3B4-C5D6-47E8-F9A0-B1C2D3E4F5A6}">
-      <IDSymbol name="bmpExplain" value="1"/>
+      <IDSymbol name="bmpExplain"  value="1"/>
       <IDSymbol name="bmpRefactor" value="2"/>
-      <IDSymbol name="bmpDoc" value="3"/>
-      <IDSymbol name="bmpReview" value="4"/>
-      <IDSymbol name="bmpFix" value="5"/>
-      <IDSymbol name="bmpTest" value="6"/>
+      <IDSymbol name="bmpDoc"      value="3"/>
+      <IDSymbol name="bmpReview"   value="4"/>
+      <IDSymbol name="bmpFix"      value="5"/>
+      <IDSymbol name="bmpTest"     value="6"/>
     </GuidSymbol>
   </Symbols>
 </CommandTable>
