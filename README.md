@@ -42,14 +42,16 @@
       <h3>💬 Advanced Chat Panel</h3>
       A dedicated side panel for complex reasoning, code generation, and deep-dive technical discussions.
       <br/>
+            <br/>
       <p align="center">
-        <img src="LocalPilot/Assets/ChatInterface.png" width="450" height="450" alt="Chat Interface" />
+        <img src="LocalPilot/Assets/ChatInterface.png"  alt="Chat Interface" />
       </p>
     </td>
     <td width="50%" valign="top">
       <h3>⚡ Contextual Quick Actions</h3>
       Instant access to Refactor, Explain, or Document code directly from your right-click context menu.
       <br/>
+            <br/>
       <p align="center">
         <img src="LocalPilot/Assets/QuickActions.png" width="300" height="400" alt="Quick Actions" />
       </p>
@@ -60,6 +62,7 @@
       <h3>🛠️ Flexible Configuration</h3>
       Easily manage your Ollama connection and assign different models for chat and autocomplete tasks.
       <br/>
+            <br/>
       <p align="center">
         <img src="LocalPilot/Assets/LocalPilotConfiguration.png" width="350" height="300" alt="Configuration" />
       </p>
