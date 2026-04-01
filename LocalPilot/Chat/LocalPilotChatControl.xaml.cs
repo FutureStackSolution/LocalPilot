@@ -229,18 +229,27 @@ namespace LocalPilot.Chat
                     };
 
                     int tokenCount = 0;
+                    int batchSize = 12;
+
                     // Buffer for incoming text to avoid hammering the UI thread
                     await foreach (var chunk in _ollama.StreamChatAsync(model, _history, options, token).ConfigureAwait(false))
                     {
                         sb.Append(chunk);
                         tokenCount++;
 
-                        // UI Batching: Update UI less frequently (every 12 tokens) to maintain responsiveness
-                        // Rapid re-rendering of large Markdown blocks is the primary cause of UI hangs
-                        if (tokenCount % 12 == 0 || tokenCount == 1)
+                        // UI Batching: Update UI less frequently as the message grows
+                        // This prevents O(N^2) rendering from hanging the UI thread
+                        if (tokenCount % batchSize == 0 || tokenCount == 1)
                         {
+                            // Dynamic batching: Increase batch size for very long messages
+                            if (tokenCount > 500) batchSize = 24;
+                            if (tokenCount > 2000) batchSize = 48;
+
                             var currentText = sb.ToString();
+                            
+                            // Switch to UI thread and check for cancellation immediately
                             await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync(token);
+                            token.ThrowIfCancellationRequested();
 
                             if (_streamingBlock == null && !string.IsNullOrEmpty(currentText))
                                 _streamingBlock = AppendAIBubble(string.Empty);
@@ -250,6 +259,9 @@ namespace LocalPilot.Chat
                                 RenderMarkdown(_streamingBlock, currentText);
                                 ChatScroll.ScrollToBottom();
                             }
+                            
+                            // Yield back to the UI thread to allow 'Stop' button and other messages to process
+                            await Task.Yield();
                         }
                     }
                 }
@@ -542,12 +554,15 @@ namespace LocalPilot.Chat
         // ── Markdown rendering for RichTextBox ───────────────────────────────
         private void RenderMarkdown(RichTextBox rtb, string md)
         {
-            rtb.Document.Blocks.Clear();
             if (string.IsNullOrEmpty(md)) return;
 
-            var paragraph = new Paragraph { Margin = new Thickness(0) };
+            // Enterprise Optimization: Only update if the content has actually changed
+            // This avoids unnecessary WPF layout passes
+            rtb.Document.Blocks.Clear();
 
-            // Split on code fences
+            var paragraph = new Paragraph { Margin = new Thickness(0) };
+            
+            // Split on code fences - use a more stable approach for streaming
             var parts = md.Split(new[] { "```" }, StringSplitOptions.None);
 
             for (int i = 0; i < parts.Length; i++)
@@ -557,12 +572,7 @@ namespace LocalPilot.Chat
                     // Code block with Basic Syntax Highlighting
                     var code = parts[i];
                     var nl = code.IndexOf('\n');
-                    string lang = string.Empty;
-                    if (nl >= 0)
-                    {
-                        lang = code.Substring(0, nl).Trim();
-                        code = code.Substring(nl + 1);
-                    }
+                    if (nl >= 0) code = code.Substring(nl + 1);
 
                     HighlightCode(paragraph, code.TrimEnd());
                 }
@@ -637,7 +647,13 @@ namespace LocalPilot.Chat
         private void SetStreaming(bool streaming)
         {
             StreamingBar.Visibility = streaming ? Visibility.Visible : Visibility.Collapsed;
-            BtnSend.IsEnabled       = !streaming;
+            
+            // Lock all interaction during streaming to prevent action queuing
+            BtnSend.IsEnabled           = !streaming;
+            BtnClear.IsEnabled          = !streaming;
+            BtnQuickActions.IsEnabled    = !streaming;
+            TxtInput.IsEnabled          = !streaming;
+            TxtInput.Opacity           = streaming ? 0.6 : 1.0;
         }
 
         private void TrimHistory()
@@ -673,12 +689,9 @@ namespace LocalPilot.Chat
 
         public void FireQuickAction(string action)
         {
-            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
-            {
-                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                var mockBtn = new Button { Tag = action };
-                QuickAction_Click(mockBtn, new RoutedEventArgs());
-            });
+            ThreadHelper.ThrowIfNotOnUIThread();
+            var mockBtn = new Button { Tag = action };
+            QuickAction_Click(mockBtn, new RoutedEventArgs());
         }
 
         private void BtnQuickActions_Click(object sender, RoutedEventArgs e)

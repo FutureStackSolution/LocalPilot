@@ -140,3 +140,24 @@ We welcome community contributions! Whether it's bugs, features, or documentatio
 1. **Check Issues**: See the [Existing Issues](https://github.com/FutureStackSolution/LocalPilot/issues) to avoid duplicates.
 2. **Clear Reports**: For bugs, include your VS version, Ollama model, and reproduction steps.
 3. **Pull Requests**: Create a branch from `main`, ensure the project builds, and submit your PR with a clear description.
+
+---
+
+## 💻 Hardware Requirements
+
+Since **LocalPilot** runs Large Language Models (LLMs) **entirely on your local machine** via Ollama, your hardware performance directly impacts the speed and responsiveness of AI suggestions.
+
+### 🏁 Minimum Requirements
+*   **CPU**: Recent Multi-core processor (Intel i5/AMD Ryzen 5 or equivalent).
+*   **RAM**: 8GB (16GB+ strongly recommended for a smooth experience).
+*   **GPU**: 4GB VRAM (Dedicated NVIDIA or Apple Silicon GPU preferred for faster inference).
+*   **Storage**: 5GB+ for model storage (SSD/NVMe highly recommended).
+
+### 🚀 Recommended for "Pro" Experience
+*   **RAM**: 32GB+ for handling larger models (13B+) alongside Visual Studio.
+*   **GPU**: NVIDIA RTX 3060/4060 or higher with 12GB+ VRAM.
+*   **NVIDIA CUDA**: Ensure latest drivers are installed for GPU acceleration.
+
+> [!IMPORTANT]
+> LocalPilot is designed for efficiency, but because it performs all AI processing locally, it requires capable hardware. If suggestions feel slow, consider using a smaller, quantized model (e.g., `phi3:mini` or `starcoder2:3b`) in the settings.
+
