@@ -3,7 +3,7 @@
   xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011"
   xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
     <Metadata>
-        <Identity Id="LocalPilot.457d4812-d3f6-4fea-9649-2a494282e03d"
+        <Identity Id="LocalPilot.d17a707d-703b-4fcd-a6f6-2ad5518c660b"
                   Version="1.0"
                   Language="en-US"
                   Publisher="FutureStack Solution" />
