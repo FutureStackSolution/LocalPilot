@@ -27,8 +27,20 @@
 
 *   ✨ **Ghost-Text Inline Completions**: Predictive code suggestions provided in real-time as you type, perfectly integrated into the editor.
 *   💬 **Advanced Chat Interface**: A full-featured chat panel for reasoning, generation, and complex coding discussions.
+<div align="center">
+  <img src="LocalPilot/Assets/ChatInterface.png" width="90%" alt="Chat Interface" />
+</div>
 *   ⚡ **Quick Actions**: Instant context-menu actions to Explain, Refactor, Document, or Fix code snippets with a single click.
+
+<div align="center">
+  <img src="LocalPilot/Assets/QuickActions.png" width="90%" alt="Quick Action" />
+</div>
 *   🛠️ **Customizable Architectures**: Scale your experience by choosing different backend models for different tasks (e.g., a lightning-fast model for inline suggestions and a reasoning-heavy model for chat).
+<div align="center">
+  <img src="LocalPilot/Assets/LocalPilotConfiguration.png" width="90%" alt="Local Pilot Configuration" />
+</div>
+
+
 
 ---
 
