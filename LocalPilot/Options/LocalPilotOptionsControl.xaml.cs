@@ -16,7 +16,7 @@ namespace LocalPilot.Options
     public partial class LocalPilotOptionsControl : UserControl
     {
         private readonly OllamaService _ollama = new OllamaService();
-        private CancellationTokenSource _cts;
+        private CancellationTokenSource _cts = new CancellationTokenSource();
 
         public LocalPilotOptionsControl()
         {
@@ -27,7 +27,10 @@ namespace LocalPilot.Options
 
         private void OnLoaded(object sender, RoutedEventArgs e)
         {
-            InitializeAsync();
+            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+            {
+                await InitializeInternalAsync();
+            });
         }
 
         private void OnUnloaded(object sender, RoutedEventArgs e)
@@ -38,7 +41,7 @@ namespace LocalPilot.Options
 
         private void UpdateBrushes() { }
 
-        private async void InitializeAsync()
+        private async Task InitializeInternalAsync()
         {
             await RefreshConnectionStatusAsync();
         }
@@ -91,7 +94,13 @@ namespace LocalPilot.Options
             SetComboItem(CmbReviewModel,      s.ReviewModel);
 
             // Kick off background model fetch
-            _ = LoadModelsAsync(s.OllamaBaseUrl);
+            _cts?.Cancel();
+            _cts = new CancellationTokenSource();
+            var token = _cts.Token;
+            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+            {
+                await LoadModelsAsync(s.OllamaBaseUrl, token);
+            });
         }
 
         // ── Save settings from controls ───────────────────────────────────────
@@ -138,76 +147,85 @@ namespace LocalPilot.Options
         }
 
         // ── Event Handlers ────────────────────────────────────────────────────
-        private async void BtnTestConnection_Click(object sender, RoutedEventArgs e)
+        private void BtnTestConnection_Click(object sender, RoutedEventArgs e)
         {
-            try
+            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
             {
-                string url = TxtBaseUrl.Text.Trim();
-                if (!url.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+                try
                 {
-                    TxtConnectionResult.Text = "✗  URL must start with http:// or https://";
-                    TxtConnectionResult.Foreground = Brushes.Red;
+                    string url = TxtBaseUrl.Text.Trim();
+                    if (!url.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+                    {
+                        TxtConnectionResult.Text = "✗  URL must start with http:// or https://";
+                        TxtConnectionResult.Foreground = Brushes.Red;
+                        TxtConnectionResult.Visibility = Visibility.Visible;
+                        return;
+                    }
+
+                    _ollama.UpdateBaseUrl(url);
                     TxtConnectionResult.Visibility = Visibility.Visible;
-                    return;
-                }
+                    TxtConnectionResult.Text = "Testing connection…";
+                    TxtConnectionResult.Foreground = SystemColors.GrayTextBrush;
 
-                _ollama.UpdateBaseUrl(url);
-                TxtConnectionResult.Visibility = Visibility.Visible;
-                TxtConnectionResult.Text       = "Testing connection…";
-                TxtConnectionResult.Foreground = SystemColors.GrayTextBrush;
+                    bool ok = await _ollama.IsAvailableAsync();
+                    if (ok)
+                    {
+                        TxtConnectionResult.Text = "✓  Ollama is running and reachable!";
+                        TxtConnectionResult.Foreground = new SolidColorBrush(Color.FromRgb(0x4E, 0xC9, 0xB0));
+                        SetConnectionStatus(true);
+                        await LoadModelsAsync(url, _cts.Token);
 
-                bool ok = await _ollama.IsAvailableAsync();
-                if (ok)
-                {
-                    TxtConnectionResult.Text       = "✓  Ollama is running and reachable!";
-                    TxtConnectionResult.Foreground = new SolidColorBrush(Color.FromRgb(0x4E, 0xC9, 0xB0));
-                    SetConnectionStatus(true);
-                    await LoadModelsAsync(url);
-                    
-                    MessageBox.Show("Successfully connected to Ollama!", "LocalPilot", 
-                                    MessageBoxButton.OK, MessageBoxImage.Information);
+                        MessageBox.Show("Successfully connected to Ollama!", "LocalPilot",
+                                        MessageBoxButton.OK, MessageBoxImage.Information);
+                    }
+                    else
+                    {
+                        TxtConnectionResult.Text = "✗  Cannot reach Ollama. Check URL and ensure it's running.";
+                        TxtConnectionResult.Foreground = new SolidColorBrush(Color.FromRgb(0xF4, 0x47, 0x47));
+                        SetConnectionStatus(false);
+                    }
                 }
-                else
+                catch (Exception ex)
                 {
-                    TxtConnectionResult.Text       = "✗  Cannot reach Ollama. Check URL and ensure it's running.";
-                    TxtConnectionResult.Foreground = new SolidColorBrush(Color.FromRgb(0xF4, 0x47, 0x47));
-                    SetConnectionStatus(false);
+                    TxtConnectionResult.Text = $"✗  Error: {ex.Message}";
+                    TxtConnectionResult.Foreground = Brushes.Red;
                 }
-            }
-            catch (Exception ex)
-            {
-                TxtConnectionResult.Text = $"✗  Error: {ex.Message}";
-                TxtConnectionResult.Foreground = Brushes.Red;
-            }
+            });
         }
 
-        private async void BtnRefreshModels_Click(object sender, RoutedEventArgs e)
+        private void BtnRefreshModels_Click(object sender, RoutedEventArgs e)
         {
-            try
+            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
             {
-                await LoadModelsAsync(TxtBaseUrl.Text.Trim());
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Refresh failed: {ex.Message}", "LocalPilot", MessageBoxButton.OK, MessageBoxImage.Error);
-            }
+                try
+                {
+                    await LoadModelsAsync(TxtBaseUrl.Text.Trim(), _cts.Token);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Refresh failed: {ex.Message}", "LocalPilot", MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+            });
         }
 
-        private async void BtnSave_Click(object sender, RoutedEventArgs e)
+        private void BtnSave_Click(object sender, RoutedEventArgs e)
         {
-            try
+            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
             {
-                SaveSettings();
-                await ShowToastAsync(success: true,
-                    title:    "Settings saved",
-                    subtitle: "All changes have been persisted.");
-            }
-            catch (Exception ex)
-            {
-                await ShowToastAsync(success: false,
-                    title:    "Save failed",
-                    subtitle: ex.Message);
-            }
+                try
+                {
+                    SaveSettings();
+                    await ShowToastAsync(success: true,
+                        title: "Settings saved",
+                        subtitle: "All changes have been persisted.");
+                }
+                catch (Exception ex)
+                {
+                    await ShowToastAsync(success: false,
+                        title: "Save failed",
+                        subtitle: ex.Message);
+                }
+            });
         }
 
         private void BtnReset_Click(object sender, RoutedEventArgs e)
@@ -309,7 +327,7 @@ namespace LocalPilot.Options
         }
 
         // ── Helpers ───────────────────────────────────────────────────────────
-        private async Task LoadModelsAsync(string baseUrl)
+        private async Task LoadModelsAsync(string baseUrl, CancellationToken ct)
         {
             try
             {
@@ -317,18 +335,20 @@ namespace LocalPilot.Options
                     return;
 
                 _ollama.UpdateBaseUrl(baseUrl);
-                var models = await _ollama.GetAvailableModelsAsync();
+                var models = await _ollama.GetAvailableModelsAsync(ct);
 
-                Dispatcher.Invoke(() =>
-                {
-                    PopulateCombo(CmbCompletionModel, models, LocalPilotSettings.Instance.CompletionModel);
-                    PopulateCombo(CmbChatModel,        models, LocalPilotSettings.Instance.ChatModel);
-                    PopulateCombo(CmbExplainModel,     models, LocalPilotSettings.Instance.ExplainModel);
-                    PopulateCombo(CmbRefactorModel,    models, LocalPilotSettings.Instance.RefactorModel);
-                    PopulateCombo(CmbDocModel,         models, LocalPilotSettings.Instance.DocModel);
-                    PopulateCombo(CmbReviewModel,      models, LocalPilotSettings.Instance.ReviewModel);
-                });
+                if (ct.IsCancellationRequested) return;
+
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                
+                PopulateCombo(CmbCompletionModel, models, LocalPilotSettings.Instance.CompletionModel);
+                PopulateCombo(CmbChatModel, models, LocalPilotSettings.Instance.ChatModel);
+                PopulateCombo(CmbExplainModel, models, LocalPilotSettings.Instance.ExplainModel);
+                PopulateCombo(CmbRefactorModel, models, LocalPilotSettings.Instance.RefactorModel);
+                PopulateCombo(CmbDocModel, models, LocalPilotSettings.Instance.DocModel);
+                PopulateCombo(CmbReviewModel, models, LocalPilotSettings.Instance.ReviewModel);
             }
+            catch (OperationCanceledException) { }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"[LocalPilot] LoadModelsAsync failed: {ex.Message}");
@@ -375,7 +395,8 @@ namespace LocalPilot.Options
         private async Task RefreshConnectionStatusAsync()
         {
             bool ok = await _ollama.IsAvailableAsync();
-            Dispatcher.Invoke(() => SetConnectionStatus(ok));
+            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+            SetConnectionStatus(ok);
         }
 
         private void SetConnectionStatus(bool connected)

@@ -42,7 +42,7 @@
       <h3>💬 Advanced Chat Panel</h3>
       A dedicated side panel for complex reasoning, code generation, and deep-dive technical discussions.
       <p align="center">
-        <img src="LocalPilot/Assets/ChatInterface.png" width="300" height="450" alt="Chat Interface" />
+        <img src="LocalPilot/Assets/ChatInterface.png"  alt="Chat Interface" />
       </p>
     </td>
     <td width="50%" valign="top">
@@ -68,10 +68,6 @@
         <li>🏠 <strong>100% Local</strong>: Your code never leaves your workstation.</li>
         <li>⚡ <strong>Optimized</strong>: Designed for minimal impact on IDE performance.</li>
       </ul>
-      <br/>
-      <div align="center">
-         <img src="LocalPilot/Assets/Logo_Concept_Minimalist.png" width="100" height="100" alt="LocalPilot Logo" />
-      </div>
     </td>
   </tr>
 </table>
