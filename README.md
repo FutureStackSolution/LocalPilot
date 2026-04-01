@@ -81,15 +81,25 @@ Highlight any code, right-click, and select **LocalPilot** to:
 
 ---
 
-## 🐝 Contributions & Support
+### 🤝 How to Contribute
 
-We welcome contributions from the community! If you encounter any bugs or have ideas for premium features, please check our [Issue Guidelines](https://github.com/FutureStackSolution/LocalPilot/issues).
+We love community involvement! Whether you're fixing a bug, suggesting a feature, or helping with documentation, your input is welcome.
 
-### Enterprise Support
-For teams looking to deploy LocalPilot at scale or needing custom internal model integrations, please contact the development team via the GitHub repository.
+#### 🛠️ Reporting Issues
+If you encounter any problems or have a great idea for a new feature, please follow these steps to create an issue:
+1.  **Search First**: Check the [Existing Issues](https://github.com/FutureStackSolution/LocalPilot/issues) to see if someone else has already reported the problem.
+2.  **Create a Clear Title**: Be concise but descriptive. (e.g., *"Bug: Inline completions don't show up in C# files"*).
+3.  **Provide Context**:
+    - Your **Visual Studio version** (e.g., VS 2022 v17.10).
+    - Your **Ollama model** and version.
+    - Steps to reproduce the issue.
+4.  **Add Labels**: Use labels like `bug`, `enhancement`, or `question` to help us organize the workflow.
 
----
+#### 💻 Pull Requests
+1. Fork the repository and create your branch from `main`.
+2. Ensure your code builds without errors or warnings.
+3. Submit a Pull Request with a detailed description of your changes.
 
-<div align="center">
-  <em>Powered by [Ollama] — Built for Developers, by Developers.</em>
-</div>
+
+
+
