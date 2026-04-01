@@ -22,14 +22,10 @@
         <Parent guid="guidLocalPilotCmdSet" id="LocalPilotContextMenu"/>
       </Group>
 
-      <!-- New custom group for Other Windows menu placement -->
-      <Group guid="guidLocalPilotCmdSet" id="LocalPilotOtherWindowsGroup" priority="0x0600">
-        <Parent guid="guidSHLMainMenu" id="IDM_VS_WND_OTRWND"/> 
-      </Group>
+      <!-- We can just use the standard group IDG_VS_WND_OTRWND directly for tool window commands in Other Windows -->
     </Groups>
 
     <Menus>
-      <!-- Top-level ⚡ LocalPilot sub-menu under Tools -->
       <Menu guid="guidLocalPilotCmdSet" id="LocalPilotMenu" priority="0x0100" type="Menu">
         <Parent guid="guidLocalPilotCmdSet" id="LocalPilotMenuGroup"/>
         <Strings>
@@ -37,7 +33,6 @@
         </Strings>
       </Menu>
 
-      <!-- ⚡ LocalPilot context menu sub-menu -->
       <Menu guid="guidLocalPilotCmdSet" id="LocalPilotContextMenu" priority="0x0100" type="Menu">
         <Parent guid="guidLocalPilotCmdSet" id="LocalPilotContextGroup"/>
         <Strings>
@@ -47,9 +42,9 @@
     </Menus>
 
     <Buttons>
-      <!-- Optimized and renamed chat command -->
-      <Button guid="guidLocalPilotCmdSet" id="cmdidOpenChat" priority="0x0100" type="Button">
-        <Parent guid="guidLocalPilotCmdSet" id="LocalPilotMenuGroup"/>
+      <Button guid="guidLocalPilotCmdSet" id="cmdidOpenChat" priority="0x0010" type="Button">
+        <!-- Make Other Windows the PRIMARY parent for better discovery -->
+        <Parent guid="guidSHLMainMenu" id="IDG_VS_WND_OTRWND"/>
         <Strings>
           <ButtonText>LocalPilot Chat</ButtonText>
           <ToolTipText>Open the LocalPilot AI Chat panel</ToolTipText>
@@ -108,25 +103,30 @@
   </Commands>
 
   <CommandPlacements>
-    <!-- Explicit placement for Other Windows menu -->
+    <!-- Fallback placement in Tools -->
     <CommandPlacement guid="guidLocalPilotCmdSet" id="cmdidOpenChat" priority="0x0100">
-      <Parent guid="guidLocalPilotCmdSet" id="LocalPilotOtherWindowsGroup"/>
+      <Parent guid="guidLocalPilotCmdSet" id="LocalPilotMenuGroup"/>
+    </CommandPlacement>
+
+    <!-- Placement for Other Windows (v17 style) -->
+    <CommandPlacement guid="guidLocalPilotCmdSet" id="cmdidOpenChat" priority="0x0100">
+      <Parent guid="guidSHLMainMenu" id="IDG_VS_WND_OTRWND"/>
     </CommandPlacement>
   </CommandPlacements>
 
   <Symbols>
-    <!-- Manually define shell IDs to prevent SCT compilation errors -->
+    <!-- We don't need to define IDG_VS_WND_OTRWND or guidSHLMainMenu if they are in headers, 
+         but ensuring the GUID is correct. Standard SHL main menu. -->
     <GuidSymbol name="guidSHLMainMenu" value="{d309f791-903f-11d0-9efc-00a0c911004f}">
-      <IDSymbol name="IDM_VS_WND_OTRWND" value="0x0001" />
+      <IDSymbol name="IDG_VS_WND_OTRWND" value="0x0001" />
     </GuidSymbol>
 
     <GuidSymbol name="guidLocalPilotPackage" value="{5a6b34f5-329a-497a-956a-7f055a948b94}"/>
 
-    <GuidSymbol name="guidLocalPilotCmdSet" value="{E1F2A3B4-C5D6-47E8-F9A0-B1C2D3E4F5A6}">
+    <GuidSymbol name="guidLocalPilotCmdSet" value="{BA6A4123-D789-4B52-A9F0-C1D2E3F4B5A6}">
       <IDSymbol name="LocalPilotMenuGroup"         value="0x1020"/>
       <IDSymbol name="LocalPilotContextGroup"      value="0x1021"/>
       <IDSymbol name="LocalPilotMenu"              value="0x1022"/>
-      <IDSymbol name="LocalPilotOtherWindowsGroup" value="0x1023"/>
       <IDSymbol name="LocalPilotContextMenu"       value="0x1024"/>
       <IDSymbol name="LocalPilotContextInnerGroup" value="0x1025"/>
       <IDSymbol name="cmdidOpenChat"               value="0x0100"/>

@@ -73,11 +73,6 @@ Simply type in any code file. LocalPilot will display a translucent suggestion.
 *   **[Tab]**: Accept the suggestion.
 *   **[Esc]**: Dismiss.
 
-### 💬 Chat Assistant
-Open the chat view via **View** > **Other Windows** > **LocalPilot Chat**.
-*   Query the model about your selection or start a wide-ranging coding discussion.
-*   Use the **Quick Actions** button below the chat box for automated task handling.
-
 ### ⚡ Smart Context Menu
 Highlight any code, right-click, and select **LocalPilot** to:
 -   **Explain Code**: Understand complex logic instantly.

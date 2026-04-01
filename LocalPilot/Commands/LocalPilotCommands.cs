@@ -13,7 +13,7 @@ namespace LocalPilot.Commands
     internal sealed class LocalPilotCommands
     {
         // ── GUIDs (must match .vsct) ──────────────────────────────────────────
-        public static readonly Guid CommandSetGuid = new Guid("E1F2A3B4-C5D6-47E8-F9A0-B1C2D3E4F5A6");
+        public static readonly Guid CommandSetGuid = new Guid("BA6A4123-D789-4B52-A9F0-C1D2E3F4B5A6");
 
         public const int CmdIdOpenChat        = 0x0100;
         public const int CmdIdExplainCode     = 0x0101;

@@ -29,6 +29,9 @@ namespace LocalPilot
     [ProvideAutoLoad(
         Microsoft.VisualStudio.Shell.Interop.UIContextGuids80.SolutionExists,
         PackageAutoLoadFlags.BackgroundLoad)]
+    [ProvideAutoLoad(
+        Microsoft.VisualStudio.Shell.Interop.UIContextGuids80.NoSolution,
+        PackageAutoLoadFlags.BackgroundLoad)]
 
     public sealed class LocalPilotPackage : AsyncPackage
     {
