@@ -20,6 +20,7 @@ namespace LocalPilot.Chat
         private readonly OllamaService _ollama;
         private readonly List<ChatMessage> _history = new List<ChatMessage>();
         private CancellationTokenSource _cts;
+        private readonly SemaphoreSlim _streamSemaphore = new SemaphoreSlim(1, 1);
         private RichTextBox _streamingBlock;    // current AI message being streamed
 
         // VS theme-aware colours (Dynamically linked to VS Theme)
@@ -103,10 +104,15 @@ namespace LocalPilot.Chat
         }
 
         // ── Send message ──────────────────────────────────────────────────────
-        private async void BtnSend_Click(object sender, RoutedEventArgs e)
-            => await SendMessageAsync(TxtInput.Text.Trim());
+        private void BtnSend_Click(object sender, RoutedEventArgs e)
+        {
+            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+            {
+                await SendMessageAsync(TxtInput.Text.Trim());
+            });
+        }
 
-        private async void TxtInput_KeyDown(object sender, KeyEventArgs e)
+        private void TxtInput_KeyDown(object sender, KeyEventArgs e)
         {
             if (e.Key == Key.Return)
             {
@@ -122,7 +128,10 @@ namespace LocalPilot.Chat
                 {
                     // Enter only: Send
                     e.Handled = true;
-                    await SendMessageAsync(TxtInput.Text.Trim());
+                    _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+                    {
+                        await SendMessageAsync(TxtInput.Text.Trim());
+                    });
                 }
             }
         }
@@ -139,23 +148,26 @@ namespace LocalPilot.Chat
             await StreamResponseAsync();
         }
 
-        private async void QuickAction_Click(object sender, RoutedEventArgs e)
+        private void QuickAction_Click(object sender, RoutedEventArgs e)
         {
-            var btn = (Button)sender;
-            var action = btn.Tag?.ToString() ?? string.Empty;
+            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+            {
+                var btn = (Button)sender;
+                var action = btn.Tag?.ToString() ?? string.Empty;
 
-            // Try to get editor selection
-            string selectedCode = TryGetEditorSelection();
+                // Try to get editor selection
+                string selectedCode = await TryGetEditorSelectionAsync();
 
-            string prompt = BuildActionPrompt(action, selectedCode);
-            if (string.IsNullOrEmpty(prompt)) return;
+                string prompt = BuildActionPrompt(action, selectedCode);
+                if (string.IsNullOrEmpty(prompt)) return;
 
-            AppendUserBubble($"/{action}" + (string.IsNullOrEmpty(selectedCode)
-                                              ? string.Empty
-                                              : $"\n```\n{selectedCode}\n```"));
+                AppendUserBubble($"/{action}" + (string.IsNullOrEmpty(selectedCode)
+                                                  ? string.Empty
+                                                  : $"\n```\n{selectedCode}\n```"));
 
-            _history.Add(new ChatMessage { Role = "user", Content = prompt });
-            await StreamResponseAsync();
+                _history.Add(new ChatMessage { Role = "user", Content = prompt });
+                await StreamResponseAsync();
+            });
         }
 
         private string BuildActionPrompt(string action, string code)
@@ -175,8 +187,9 @@ namespace LocalPilot.Chat
             };
         }
 
-        private string TryGetEditorSelection()
+        private async Task<string> TryGetEditorSelectionAsync()
         {
+            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
             try
             {
                 var dte = Microsoft.VisualStudio.Shell.Package.GetGlobalService(
@@ -192,38 +205,43 @@ namespace LocalPilot.Chat
         // ── Streaming response ────────────────────────────────────────────────
         private async Task StreamResponseAsync()
         {
+            // Signal cancellation to any currently running stream
             _cts?.Cancel();
-            _cts = new CancellationTokenSource();
-            var token = _cts.Token;
 
-            // Use model from settings directly
-            string model = LocalPilotSettings.Instance.ChatModel;
-
-            SetStreaming(true);
-
-            var sb = new StringBuilder();
-
+            // Wait for any previous stream to clean up and release the semaphore
+            await _streamSemaphore.WaitAsync();
             try
             {
-                var options = new OllamaOptions
-                {
-                    Temperature = LocalPilotSettings.Instance.Temperature,
-                    NumPredict = LocalPilotSettings.Instance.MaxChatTokens
-                };
+                _cts?.Dispose();
+                _cts = new CancellationTokenSource();
+                var token = _cts.Token;
 
-                int tokenCount = 0;
-                // Buffer for incoming text to avoid hammering the UI thread for every character
-                await foreach (var chunk in _ollama.StreamChatAsync(model, _history, options, token).ConfigureAwait(false))
-                {
-                    sb.Append(chunk);
-                    tokenCount++;
+                string model = LocalPilotSettings.Instance.ChatModel;
+                SetStreaming(true);
 
-                    // UI Batching: Update UI only every 5 tokens to keep rendering smooth on high-performance streams
-                    if (tokenCount % 5 == 0 || tokenCount == 1)
+                var sb = new StringBuilder();
+                try
+                {
+                    var options = new OllamaOptions
                     {
-                        var currentText = sb.ToString();
-                        await Dispatcher.BeginInvoke(new Action(() =>
+                        Temperature = LocalPilotSettings.Instance.Temperature,
+                        NumPredict = LocalPilotSettings.Instance.MaxChatTokens
+                    };
+
+                    int tokenCount = 0;
+                    // Buffer for incoming text to avoid hammering the UI thread
+                    await foreach (var chunk in _ollama.StreamChatAsync(model, _history, options, token).ConfigureAwait(false))
+                    {
+                        sb.Append(chunk);
+                        tokenCount++;
+
+                        // UI Batching: Update UI less frequently (every 12 tokens) to maintain responsiveness
+                        // Rapid re-rendering of large Markdown blocks is the primary cause of UI hangs
+                        if (tokenCount % 12 == 0 || tokenCount == 1)
                         {
+                            var currentText = sb.ToString();
+                            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync(token);
+
                             if (_streamingBlock == null && !string.IsNullOrEmpty(currentText))
                                 _streamingBlock = AppendAIBubble(string.Empty);
 
@@ -232,44 +250,33 @@ namespace LocalPilot.Chat
                                 RenderMarkdown(_streamingBlock, currentText);
                                 ChatScroll.ScrollToBottom();
                             }
-                        }));
+                        }
                     }
                 }
-
-                // Done — add to history
-                var reply = sb.ToString();
-                Dispatcher.Invoke(() => 
+                catch (OperationCanceledException) { /* Handle naturally in finally */ }
+                catch (Exception ex)
                 {
-                    _history.Add(new ChatMessage { Role = "assistant", Content = reply });
-                    TrimHistory();
-                });
-            }
-            catch (OperationCanceledException)
-            {
-                Dispatcher.Invoke(() =>
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    AppendAIBubble($"❌ Error: {ex.Message}");
+                }
+                finally
                 {
-                    if (_streamingBlock != null && string.IsNullOrEmpty(sb.ToString()))
-                        RenderMarkdown(_streamingBlock, "_[Stopped]_");
-                });
-            }
-            catch (Exception ex)
-            {
-                Dispatcher.Invoke(() =>
-                    AppendAIBubble($"❌ Error: {ex.Message}"));
-            }
-            finally
-            {
-                string finalMd = sb.ToString();
-                Dispatcher.Invoke(() => 
-                {
+                    string finalMd = sb.ToString();
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                     if (_streamingBlock != null)
                     {
                         var container = (StackPanel)_streamingBlock.Parent;
                         RenderFullMarkdown(container, finalMd);
+                        _history.Add(new ChatMessage { Role = "assistant", Content = finalMd });
+                        TrimHistory();
                     }
                     SetStreaming(false);
                     _streamingBlock = null;
-                });
+                }
+            }
+            finally
+            {
+                _streamSemaphore.Release();
             }
         }
 
@@ -511,7 +518,12 @@ namespace LocalPilot.Chat
                     copyBtn.Click += (s, e) => {
                         Clipboard.SetText(cleanCode);
                         copyBtn.Content = "✓ Copied";
-                        Task.Delay(1500).ContinueWith(_ => Dispatcher.Invoke(() => copyBtn.Content = "📋 Copy Code"));
+                        _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+                        {
+                            await Task.Delay(1500);
+                            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                            copyBtn.Content = "📋 Copy Code";
+                        });
                     };
                     grid.Children.Add(copyBtn);
                     container.Children.Add(grid);
@@ -661,8 +673,9 @@ namespace LocalPilot.Chat
 
         public void FireQuickAction(string action)
         {
-            Dispatcher.Invoke(() =>
+            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
             {
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                 var mockBtn = new Button { Tag = action };
                 QuickAction_Click(mockBtn, new RoutedEventArgs());
             });
