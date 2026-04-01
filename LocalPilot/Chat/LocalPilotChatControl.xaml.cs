@@ -1,3 +1,7 @@
+using LocalPilot.Services;
+using LocalPilot.Settings;
+using Microsoft.VisualStudio.PlatformUI;
+using Microsoft.VisualStudio.Shell;
 using System;
 using System.Collections.Generic;
 using System.Text;
@@ -6,12 +10,8 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
-using System.Windows.Media;
 using System.Windows.Input;
-using Microsoft.VisualStudio.Shell;
-using Microsoft.VisualStudio.PlatformUI;
-using LocalPilot.Services;
-using LocalPilot.Settings;
+using System.Windows.Media;
 
 namespace LocalPilot.Chat
 {

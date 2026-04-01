@@ -1,3 +1,6 @@
+using LocalPilot.Services;
+using LocalPilot.Settings;
+using Microsoft.VisualStudio.Shell;
 using System;
 using System.Collections.Generic;
 using System.Threading;
@@ -5,11 +8,6 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
-using System.Windows.Media.Animation;
-using Microsoft.VisualStudio.Shell;
-using Microsoft.VisualStudio.PlatformUI;
-using LocalPilot.Services;
-using LocalPilot.Settings;
 
 namespace LocalPilot.Options
 {
