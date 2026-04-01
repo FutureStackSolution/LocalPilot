@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="LocalPilot/Assets/Logo_Concept_Minimalist.png" alt="LocalPilot Logo" width="120" />
+  <img src="LocalPilot/Assets/Logo_Concept_Minimalist.png" alt="LocalPilot Logo" width="120" height="120" />
   <h1>LocalPilot</h1>
   <p align="center">
     <strong>The Privacy-First AI Pair Programmer for Visual Studio.</strong><br />
@@ -29,7 +29,7 @@
 **LocalPilot** is a powerful Visual Studio extension that integrates local Large Language Models (LLMs) via [Ollama](https://ollama.com). It provides a seamless, high-performance coding experience without the need for cloud-based subscriptions or data privacy concerns.
 
 <p align="center">
-  <img src="LocalPilot/Assets/Showcase_Mockup.png" width="800" alt="LocalPilot Showcase" />
+  <img src="LocalPilot/Assets/Showcase_Mockup.png" width="800" height="450" alt="LocalPilot Showcase" />
 </p>
 
 ---
@@ -39,33 +39,42 @@
 <table>
   <tr>
     <td width="50%" valign="top">
-      <h3>✨ Ghost-Text Completions</h3>
-      Predictive code suggestions provided in real-time as you type, perfectly integrated into the Visual Studio editor.
-      <br/><br/>
-      <img src="LocalPilot/Assets/QuickActions.png" width="100%" alt="Ghost Text" />
-    </td>
-    <td width="50%" valign="top">
       <h3>💬 Advanced Chat Panel</h3>
       A dedicated side panel for complex reasoning, code generation, and deep-dive technical discussions.
-      <br/><br/>
-      <img src="LocalPilot/Assets/ChatInterface.png" width="100%" alt="Chat Interface" />
+      <p align="center">
+        <img src="LocalPilot/Assets/ChatInterface.png" width="300" height="450" alt="Chat Interface" />
+      </p>
+    </td>
+    <td width="50%" valign="top">
+      <h3>⚡ Contextual Quick Actions</h3>
+      Instant access to Refactor, Explain, or Document code directly from your right-click context menu.
+      <p align="center">
+        <img src="LocalPilot/Assets/QuickActions.png" width="300" height="400" alt="Quick Actions" />
+      </p>
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <h3>⚡ Contextual Quick Actions</h3>
-      Instant access to Refactor, Explain, or Document code directly from your right-click context menu.
+      <h3>🛠️ Flexible Configuration</h3>
+      Easily manage your Ollama connection and assign different models for chat and autocomplete tasks.
+      <p align="center">
+        <img src="LocalPilot/Assets/LocalPilotConfiguration.png" width="350" height="300" alt="Configuration" />
+      </p>
     </td>
     <td width="50%" valign="top">
-      <h3>🛠️ Dual-Model Architecture</h3>
-      Use specialized models: a fast one for completions and a powerful one for chat and reasoning.
+      <h3>✨ Ghost-Text & Performance</h3>
+      <ul style="list-style-type: none; padding-left: 0;">
+        <li>🚀 <strong>Real-time Suggestions</strong>: Zero-latency inline code completions.</li>
+        <li>🏠 <strong>100% Local</strong>: Your code never leaves your workstation.</li>
+        <li>⚡ <strong>Optimized</strong>: Designed for minimal impact on IDE performance.</li>
+      </ul>
+      <br/>
+      <div align="center">
+         <img src="LocalPilot/Assets/Logo_Concept_Minimalist.png" width="100" height="100" alt="LocalPilot Logo" />
+      </div>
     </td>
   </tr>
 </table>
-
-<p align="center">
-  <img src="LocalPilot/Assets/LocalPilotConfiguration.png" width="600" alt="Local Pilot Configuration" />
-</p>
 
 
 
