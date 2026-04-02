@@ -1,8 +1,11 @@
+using Community.VisualStudio.Toolkit;
 using LocalPilot.Chat;
 using LocalPilot.Settings;
+using LocalPilot.Services;
 using Microsoft.VisualStudio.Shell;
 using System;
 using System.ComponentModel.Design;
+using System.Linq;
 using System.Threading.Tasks;
 
 namespace LocalPilot.Commands
@@ -81,38 +84,16 @@ namespace LocalPilot.Commands
             });
         }
 
-        private void ExplainCode(object sender, EventArgs e)
-        {
-            OpenChatWithAction("explain");
-        }
-
-        private void RefactorCode(object sender, EventArgs e)
-        {
-            OpenChatWithAction("refactor");
-        }
-
-        private void GenerateDoc(object sender, EventArgs e)
-        {
-            OpenChatWithAction("document");
-        }
-
-        private void ReviewCode(object sender, EventArgs e)
-        {
-            OpenChatWithAction("review");
-        }
-
-        private void FixCode(object sender, EventArgs e)
-        {
-            OpenChatWithAction("fix");
-        }
-
-        private void GenerateTest(object sender, EventArgs e)
-        {
-            OpenChatWithAction("test");
-        }
+        private void ExplainCode(object sender, EventArgs e) => _ = OpenChatWithActionAsync("explain");
+        private void RefactorCode(object sender, EventArgs e) => _ = OpenChatWithActionAsync("refactor");
+        private void GenerateDoc(object sender, EventArgs e) => _ = OpenChatWithActionAsync("document");
+        private void ReviewCode(object sender, EventArgs e) => _ = OpenChatWithActionAsync("review");
+        private void FixCode(object sender, EventArgs e) => _ = OpenChatWithActionAsync("fix");
+        private void GenerateTest(object sender, EventArgs e) => _ = OpenChatWithActionAsync("test");
 
         private void OpenOptions(object sender, EventArgs e)
         {
+            ThreadHelper.ThrowIfNotOnUIThread();
             _ = _package.JoinableTaskFactory.RunAsync(async () =>
             {
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
@@ -121,23 +102,59 @@ namespace LocalPilot.Commands
             });
         }
 
-        private void OpenChatWithAction(string action)
+        private async Task OpenChatWithActionAsync(string action)
         {
-            _ = _package.JoinableTaskFactory.RunAsync(async () =>
-            {
-                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                
-                // Show the window and get the instance directly from the returned Task
-                var win = await _package.ShowToolWindowAsync(
-                    typeof(LocalPilotChatWindow), 0, true, _package.DisposalToken)
-                    as LocalPilotChatWindow;
+            LocalPilotLogger.Log($"[Commands] OpenChatWithActionAsync started for action: {action}");
+            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
 
-                if (win?.Content is LocalPilotChatControl ctrl)
+            string selectedCode = string.Empty;
+            try
+            {
+                // Primary: Immediate DTE Selection capture on UI thread
+                var dte = await _package.GetServiceAsync(typeof(EnvDTE.DTE)) as EnvDTE.DTE;
+                
+                // 1. Check ActiveDocument Selection
+                if (dte?.ActiveDocument?.Selection is EnvDTE.TextSelection sel1 && !string.IsNullOrWhiteSpace(sel1.Text))
                 {
-                    // Fire quick action — find the shown window and trigger
-                    ctrl.FireQuickAction(action);
+                    selectedCode = sel1.Text;
+                    LocalPilotLogger.Log("[Commands] Captured code via ActiveDocument.Selection");
                 }
-            });
+                
+                // 2. Check ActiveWindow directly (works for split editors or non-document views)
+                if (string.IsNullOrWhiteSpace(selectedCode))
+                {
+                    if (dte?.ActiveWindow?.Object is EnvDTE.TextSelection sel2 && !string.IsNullOrWhiteSpace(sel2.Text))
+                    {
+                        selectedCode = sel2.Text;
+                        LocalPilotLogger.Log("[Commands] Captured code via ActiveWindow.Object");
+                    }
+                }
+
+                // 3. Toolkit attempt (capture snapshot-based selection)
+                if (string.IsNullOrWhiteSpace(selectedCode))
+                {
+                    var docView = await VS.Documents.GetActiveDocumentViewAsync();
+                    if (docView?.TextView?.Selection != null && docView.TextView.Selection.SelectedSpans.Count > 0)
+                    {
+                        selectedCode = docView.TextView.Selection.SelectedSpans[0].GetText();
+                        LocalPilotLogger.Log("[Commands] Captured code via Toolkit TextView");
+                    }
+                }
+            }
+            catch { /* Best effort */ }
+
+            LocalPilotLogger.Log($"[Commands] Final captured code length: {selectedCode?.Length ?? 0}");
+
+            // Ensure window is visible
+            var win = await _package.ShowToolWindowAsync(
+                typeof(LocalPilotChatWindow), 0, true, _package.DisposalToken)
+                as LocalPilotChatWindow;
+
+            if (win?.Content is LocalPilotChatControl ctrl)
+            {
+                // Pass the code. If we found nothing but whitespace, pass null to trigger the panel's internal retry.
+                ctrl.FireQuickAction(action, string.IsNullOrWhiteSpace(selectedCode) ? null : selectedCode);
+            }
         }
     }
 }

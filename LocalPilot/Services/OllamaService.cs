@@ -39,6 +39,7 @@ namespace LocalPilot.Services
             try
             {
                 var response = await _httpClient.GetAsync($"{_baseUrl}/api/tags", ct);
+                LocalPilotLogger.Log($"[Ollama] Fetching models from {_baseUrl}/api/tags. Success: {response.IsSuccessStatusCode}");
                 if (!response.IsSuccessStatusCode) return names;
 
                 var json = await response.Content.ReadAsStringAsync();
@@ -137,12 +138,16 @@ namespace LocalPilot.Services
                 options = options ?? new OllamaOptions()
             };
 
+            string jsonPayload = JsonConvert.SerializeObject(payload);
+            LocalPilotLogger.Log($"[Ollama] StreamChatAsync starting for model: {model}");
+            LocalPilotLogger.Log($"[Ollama] Input Payload: {jsonPayload}");
+
             HttpResponseMessage response = null;
             string errorDetails = null;
             try
             {
                 var request = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/api/chat");
-                request.Content = new StringContent(JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
+                request.Content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
 
                 response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
                 response.EnsureSuccessStatusCode();
@@ -150,6 +155,7 @@ namespace LocalPilot.Services
             catch (Exception ex)
             {
                 errorDetails = ex.Message;
+                LocalPilotLogger.LogError("Ollama Service Connection Error", ex);
             }
 
             if (errorDetails != null)
@@ -158,6 +164,7 @@ namespace LocalPilot.Services
                 yield break;
             }
 
+            var fullResponse = new StringBuilder();
             using (response)
             {
                 using (var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false))
@@ -171,10 +178,17 @@ namespace LocalPilot.Services
                         
                         var token = obj["message"]?["content"]?.ToString() ?? string.Empty;
                         if (!string.IsNullOrEmpty(token))
+                        {
+                            fullResponse.Append(token);
                             yield return token;
+                        }
 
                         if (obj["done"]?.Value<bool>() == true)
+                        {
+                            LocalPilotLogger.Log($"[Ollama] Finished streaming from model: {model}");
+                            LocalPilotLogger.Log($"[Ollama] Full Output Response: {fullResponse.ToString()}");
                             break;
+                        }
                     }
                 }
             }

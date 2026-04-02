@@ -48,6 +48,7 @@ namespace LocalPilot.Settings
         // ── UI Preferences ────────────────────────────────────────────────────
         public string AccentColor        { get; set; } = "#7C6AF7";    // purple
         public bool   ShowStatusBar      { get; set; } = true;
+        public bool   EnableLogging      { get; set; } = false;
 
         // ── Singleton ─────────────────────────────────────────────────────────
         private static LocalPilotSettings _instance;

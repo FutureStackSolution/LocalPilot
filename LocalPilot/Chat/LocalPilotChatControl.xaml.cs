@@ -2,6 +2,7 @@ using LocalPilot.Services;
 using LocalPilot.Settings;
 using Microsoft.VisualStudio.PlatformUI;
 using Microsoft.VisualStudio.Shell;
+using Microsoft.VisualStudio.Threading;
 using System;
 using System.Collections.Generic;
 using System.Text;
@@ -12,6 +13,8 @@ using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
+using Community.VisualStudio.Toolkit;
+using System.Linq;
 
 namespace LocalPilot.Chat
 {
@@ -21,25 +24,28 @@ namespace LocalPilot.Chat
         private readonly List<ChatMessage> _history = new List<ChatMessage>();
         private CancellationTokenSource _cts;
         private readonly SemaphoreSlim _streamSemaphore = new SemaphoreSlim(1, 1);
-        private RichTextBox _streamingBlock;    // current AI message being streamed
+        private int _lastStreamId = 0; // Class-level ID to track active stream
 
-        // VS theme-aware colours (Dynamically linked to VS Theme)
         private Brush ThemeWindowBg => (Brush)this.Resources["LpWindowBgBrush"];
         private Brush ThemeWindowFg => (Brush)this.Resources["LpWindowFgBrush"];
         private Brush ThemeSurface  => (Brush)this.Resources["LpMenuBgBrush"];
         private Brush ThemeBorder   => (Brush)this.Resources["LpMenuBorderBrush"];
 
-        // Fixed accent/code colours — look fine on both light and dark themes
+        // Design tokens for rendering logic
+        private static readonly FontFamily UIFont      = new FontFamily("Segoe UI");
+        private static readonly FontFamily ConsoleFont = new FontFamily("Consolas");
         private static readonly SolidColorBrush BrushAccent = new SolidColorBrush(Color.FromRgb(0x7C, 0x6A, 0xF7));
         private static readonly SolidColorBrush BrushCode   = new SolidColorBrush(Color.FromRgb(0xCE, 0x91, 0x78));
-        private static readonly FontFamily ConsoleFont = new FontFamily("Consolas");
-        private static readonly FontFamily UIFont      = new FontFamily("Segoe UI");
 
         public LocalPilotChatControl()
         {
             InitializeComponent();
             _ollama = new OllamaService(LocalPilotSettings.Instance.OllamaBaseUrl);
-            UpdateBrushes(); // Initialize brushes immediately for first-time command awareness
+            UpdateBrushes();
+            
+            // Initialize history immediately to prevent race conditions during async loading
+            if (_history.Count == 0) ShowWelcomeMessage();
+            
             Loaded += OnLoaded;
             Unloaded += OnUnloaded;
         }
@@ -47,7 +53,14 @@ namespace LocalPilot.Chat
         private void OnLoaded(object sender, RoutedEventArgs e)
         {
             UpdateBrushes();
-            ShowWelcomeMessage();
+            
+            // Only show welcome if history was cleared or never initialized.
+            // This prevents clearing history when Right-Click actions fire before Load is fully complete.
+            if (_history.Count == 0) 
+            {
+                ShowWelcomeMessage();
+            }
+            
             VSColorTheme.ThemeChanged += OnThemeChanged;
         }
 
@@ -144,38 +157,66 @@ namespace LocalPilot.Chat
             if (string.IsNullOrWhiteSpace(text)) return;
 
             TxtInput.Clear();
-            AppendUserBubble(text);
+            
+            // Context injection: automatically include selection if user didn't provide any block
+            string selection = await TryGetEditorSelectionAsync();
+            string finalPrompt = text;
+            string displayMessage = text;
 
-            _history.Add(new ChatMessage { Role = "user", Content = text });
+            if (!string.IsNullOrWhiteSpace(selection) && !text.Contains("```"))
+            {
+                // Concatenate selection to provide implicit context
+                finalPrompt = $"Context code selected by user:\n```\n{selection}\n```\n\nUser question: {text}";
+                displayMessage = $"{text}\n\n*(using current editor selection)*";
+            }
+
+            AppendUserBubble(displayMessage);
+            _history.Add(new ChatMessage { Role = "user", Content = finalPrompt });
 
             await StreamResponseAsync(LocalPilotSettings.Instance.ChatModel);
         }
 
         private void QuickAction_Click(object sender, RoutedEventArgs e)
         {
+            var btn = (Button)sender;
+            var action = btn.Tag?.ToString() ?? string.Empty;
+            _ = HandleQuickActionAsync(action);
+        }
+
+        private async Task HandleQuickActionAsync(string action, string preCapturedSelection = null)
+        {
+            LocalPilotLogger.Log($"[Chat] Handling Quick Action: {action} (Pre-captured: {!string.IsNullOrWhiteSpace(preCapturedSelection)})");
+            if (string.IsNullOrEmpty(action)) return;
+
+            // Start the process in a JoinableTask to allow background/UI thread switching without deadlocks
             _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
             {
-                var btn = (Button)sender;
-                var action = btn.Tag?.ToString() ?? string.Empty;
-
-                // Try to get editor selection
-                string selectedCode = await TryGetEditorSelectionAsync();
+                // Capture selection using multiple strategies
+                string selectedCode = !string.IsNullOrWhiteSpace(preCapturedSelection) 
+                                        ? preCapturedSelection 
+                                        : await TryGetEditorSelectionAsync();
 
                 if (string.IsNullOrWhiteSpace(selectedCode))
                 {
                     await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                    AppendAIBubble("⚠️ No code selected. Please select some code in the editor first to use this quick action.");
+                    AppendAIBubble("⚠️ **No code selected**. I couldn't find any code highlighted in your editor. Please select some code and try the action again.");
                     return;
                 }
 
                 string prompt = BuildActionPrompt(action, selectedCode);
                 if (string.IsNullOrEmpty(prompt)) return;
 
-                AppendUserBubble($"/{action}\n```\n{selectedCode}\n```");
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                AppendUserBubble($"⚡ **{action.ToUpper()}**\n```\n{selectedCode}\n```");
+
+                // History cleanup
+                if (_history.Count > 0 && _history[_history.Count - 1].Role == "user")
+                {
+                    _history.RemoveAt(_history.Count - 1);
+                }
 
                 _history.Add(new ChatMessage { Role = "user", Content = prompt });
                 
-                // Use action-specific model if configured
                 string model = GetActionModel(action);
                 await StreamResponseAsync(model);
             });
@@ -213,15 +254,41 @@ namespace LocalPilot.Chat
 
         private async Task<string> TryGetEditorSelectionAsync()
         {
-            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+            LocalPilotLogger.Log("[Chat] TryGetEditorSelectionAsync starting...");
             try
             {
-                var dte = Microsoft.VisualStudio.Shell.Package.GetGlobalService(
-                              typeof(EnvDTE.DTE)) as EnvDTE.DTE;
-                if (dte?.ActiveDocument == null) return string.Empty;
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
 
-                var sel = dte.ActiveDocument.Selection as EnvDTE.TextSelection;
-                return sel?.Text ?? string.Empty;
+                var dte = Microsoft.VisualStudio.Shell.Package.GetGlobalService(typeof(EnvDTE.DTE)) as EnvDTE.DTE;
+
+                // 1. DTE ActiveWindow
+                if (dte?.ActiveWindow?.Document?.Selection is EnvDTE.TextSelection sel1 && !string.IsNullOrWhiteSpace(sel1.Text))
+                {
+                    LocalPilotLogger.Log("[Chat] Found selection via DTE.ActiveWindow");
+                    return sel1.Text;
+                }
+
+                // 2. DTE ActiveDocument
+                if (dte?.ActiveDocument?.Selection is EnvDTE.TextSelection sel2 && !string.IsNullOrWhiteSpace(sel2.Text))
+                {
+                    LocalPilotLogger.Log("[Chat] Found selection via DTE.ActiveDocument");
+                    return sel2.Text;
+                }
+
+                // 3. Toolkit fallback
+                try
+                {
+                    var docView = await VS.Documents.GetActiveDocumentViewAsync();
+                    if (docView?.TextView?.Selection != null)
+                    {
+                        var selection = docView.TextView.Selection.SelectedSpans.Count > 0 
+                                        ? docView.TextView.Selection.SelectedSpans[0].GetText() 
+                                        : string.Empty;
+                        if (!string.IsNullOrEmpty(selection)) return selection;
+                    }
+                } catch { /* ignore toolkit failures */ }
+                
+                return string.Empty;
             }
             catch { return string.Empty; }
         }
@@ -244,9 +311,31 @@ namespace LocalPilot.Chat
                     model = LocalPilotSettings.Instance.ChatModel;
                 
                 _ollama.UpdateBaseUrl(LocalPilotSettings.Instance.OllamaBaseUrl);
+                
+                int myStreamId = ++_lastStreamId;
                 SetStreaming(true);
 
+                // Early Connectivity Check: Fast-fail if Ollama is not running
+                try
+                {
+                    using (var earlyCts = new CancellationTokenSource(TimeSpan.FromSeconds(3)))
+                    {
+                        bool isOllamaUp = await _ollama.IsAvailableAsync(earlyCts.Token);
+                        if (!isOllamaUp)
+                        {
+                            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                            AppendAIBubble("❌ **Connection Error**: Could not reach local Ollama.\n\nPlease check if Ollama is running at: " + LocalPilotSettings.Instance.OllamaBaseUrl);
+                            if (myStreamId == _lastStreamId) SetStreaming(false);
+                            return;
+                        }
+                    }
+                }
+                catch { /* Quiet failure: the main streaming call below will catch and report deeper issues */ }
+
+                string finalMd = string.Empty;
                 var sb = new StringBuilder();
+                RichTextBox localStreamingBlock = null;
+
                 try
                 {
                     var options = new OllamaOptions
@@ -257,42 +346,43 @@ namespace LocalPilot.Chat
 
                     int tokenCount = 0;
                     int batchSize = 12;
+                    var uiBuffer = new StringBuilder();
 
                     // Buffer for incoming text to avoid hammering the UI thread
                     await foreach (var chunk in _ollama.StreamChatAsync(model, _history, options, token).ConfigureAwait(false))
                     {
                         sb.Append(chunk);
+                        uiBuffer.Append(chunk);
                         tokenCount++;
 
-                        // UI Batching: Update UI less frequently as the message grows
-                        // This prevents O(N^2) rendering from hanging the UI thread
                         if (tokenCount % batchSize == 0 || tokenCount == 1)
                         {
-                            // Dynamic batching: Increase batch size for very long messages
                             if (tokenCount > 500) batchSize = 24;
                             if (tokenCount > 2000) batchSize = 48;
 
-                            var currentText = sb.ToString();
-                            
-                            // Switch to UI thread and check for cancellation immediately
+                            var batchContent = uiBuffer.ToString();
+                            uiBuffer.Clear();
+
                             await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync(token);
                             token.ThrowIfCancellationRequested();
 
-                            if (_streamingBlock == null && !string.IsNullOrEmpty(currentText))
-                                _streamingBlock = AppendAIBubble(string.Empty);
+                            if (localStreamingBlock == null && !string.IsNullOrEmpty(batchContent))
+                                localStreamingBlock = AppendAIBubble(string.Empty);
 
-                            if (_streamingBlock != null)
+                            if (localStreamingBlock != null)
                             {
-                                RenderMarkdown(_streamingBlock, currentText);
-                                ChatScroll.ScrollToBottom();
+                                AppendToRichTextBox(localStreamingBlock, batchContent);
+                                ChatScroll.ScrollToEnd();
                             }
-                            
-                            // Yield back to the UI thread to allow 'Stop' button and other messages to process
                             await Task.Yield();
                         }
                     }
+                    finalMd = sb.ToString();
                 }
-                catch (OperationCanceledException) { /* Handle naturally in finally */ }
+                catch (OperationCanceledException) 
+                { 
+                    finalMd = sb.ToString(); 
+                }
                 catch (Exception ex)
                 {
                     await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
@@ -300,22 +390,26 @@ namespace LocalPilot.Chat
                 }
                 finally
                 {
-                    string finalMd = sb.ToString();
-                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                    if (_streamingBlock != null)
-                    {
-                        var container = (StackPanel)_streamingBlock.Parent;
-                        RenderFullMarkdown(container, finalMd);
-                        _history.Add(new ChatMessage { Role = "assistant", Content = finalMd });
-                        TrimHistory();
-                    }
-                    SetStreaming(false);
-                    _streamingBlock = null;
+                    _streamSemaphore.Release();
                 }
+
+                // Phase 2: Final UI Cleanup (Outside Semaphore to avoid deadlocks)
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                if (!string.IsNullOrEmpty(finalMd) && localStreamingBlock != null)
+                {
+                    var container = (StackPanel)localStreamingBlock.Parent;
+                    RenderFullMarkdown(container, finalMd);
+                    _history.Add(new ChatMessage { Role = "assistant", Content = finalMd });
+                    TrimHistory();
+                }
+                
+                if (myStreamId == _lastStreamId) SetStreaming(false);
             }
-            finally
+            catch (Exception ex)
             {
-                _streamSemaphore.Release();
+                System.Diagnostics.Debug.WriteLine($"[LocalPilot] StreamResponseAsync setup failed: {ex.Message}");
+                // No need for SetStreaming(false) here as the inner catches handle common cases,
+                // but a global protector or the ID check is safe.
             }
         }
 
@@ -355,7 +449,7 @@ namespace LocalPilot.Chat
             border.Child = container;
             MessagesContainer.Children.Add(border);
 
-            ChatScroll.ScrollToBottom();
+            ChatScroll.ScrollToEnd();
         }
 
         private RichTextBox AppendAIBubble(string text)
@@ -378,8 +472,11 @@ namespace LocalPilot.Chat
             {
                 // Streaming placeholder
                 var body = CreateRichTextBox();
-                _streamingBlock = body;
                 container.Children.Add(body);
+                border.Child = container;
+                MessagesContainer.Children.Add(border);
+                ChatScroll.ScrollToEnd();
+                return body;
             }
             else
             {
@@ -388,9 +485,9 @@ namespace LocalPilot.Chat
 
             border.Child = container;
             MessagesContainer.Children.Add(border);
-            ChatScroll.ScrollToBottom();
+            ChatScroll.ScrollToEnd();
 
-            return _streamingBlock;
+            return null;
         }
 
         private RichTextBox CreateRichTextBox()
@@ -545,7 +642,7 @@ namespace LocalPilot.Chat
                     };
 
                     // Use common icon style if available
-                    if (Application.Current.Resources.Contains("IconButtonStyle"))
+                    if (Application.Current != null && Application.Current.Resources.Contains("IconButtonStyle"))
                         copyBtn.Style = (Style)Application.Current.Resources["IconButtonStyle"];
                     else
                     {
@@ -669,6 +766,14 @@ namespace LocalPilot.Chat
             rtb.Document.Blocks.Add(para);
         }
 
+        private void AppendToRichTextBox(RichTextBox rtb, string text)
+        {
+            if (rtb.Document.Blocks.FirstBlock is Paragraph p)
+            {
+                p.Inlines.Add(new Run(text) { Foreground = ThemeWindowFg });
+            }
+        }
+
         // Remove unused method — user bubbles now use TextBlock directly
 
         private void SetStreaming(bool streaming)
@@ -714,11 +819,10 @@ namespace LocalPilot.Chat
             _cts?.Cancel();
         }
 
-        public void FireQuickAction(string action)
+        public void FireQuickAction(string action, string capturedSelection = null)
         {
             ThreadHelper.ThrowIfNotOnUIThread();
-            var mockBtn = new Button { Tag = action };
-            QuickAction_Click(mockBtn, new RoutedEventArgs());
+            _ = HandleQuickActionAsync(action, capturedSelection);
         }
 
         private void BtnQuickActions_Click(object sender, RoutedEventArgs e)
