@@ -324,42 +324,42 @@
                         <Button.ContextMenu>
                             <ContextMenu Style="{StaticResource ThemedContextMenuStyle}"
                                          Grid.IsSharedSizeScope="True">
-                                <MenuItem Style="{StaticResource ThemedMenuItemStyle}"
+                                <MenuItem x:Name="MenuExplain" Style="{StaticResource ThemedMenuItemStyle}"
                                           Header="Explain Code" Tag="explain" Click="MenuQuickAction_Click">
                                     <MenuItem.Icon>
                                         <TextBlock Text="&#xE946;" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center"
                                                    Foreground="{DynamicResource LpWindowFgBrush}"/>
                                     </MenuItem.Icon>
                                 </MenuItem>
-                                <MenuItem Style="{StaticResource ThemedMenuItemStyle}"
+                                <MenuItem x:Name="MenuRefactor" Style="{StaticResource ThemedMenuItemStyle}"
                                           Header="Refactor Code" Tag="refactor" Click="MenuQuickAction_Click">
                                     <MenuItem.Icon>
                                         <TextBlock Text="&#xE70F;" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center"
                                                    Foreground="{DynamicResource LpWindowFgBrush}"/>
                                     </MenuItem.Icon>
                                 </MenuItem>
-                                <MenuItem Style="{StaticResource ThemedMenuItemStyle}"
+                                <MenuItem x:Name="MenuDoc" Style="{StaticResource ThemedMenuItemStyle}"
                                           Header="Generate Documentation" Tag="document" Click="MenuQuickAction_Click">
                                     <MenuItem.Icon>
                                         <TextBlock Text="&#xE8B5;" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center"
                                                    Foreground="{DynamicResource LpWindowFgBrush}"/>
                                     </MenuItem.Icon>
                                 </MenuItem>
-                                <MenuItem Style="{StaticResource ThemedMenuItemStyle}"
+                                <MenuItem x:Name="MenuReview" Style="{StaticResource ThemedMenuItemStyle}"
                                           Header="Code Review" Tag="review" Click="MenuQuickAction_Click">
                                     <MenuItem.Icon>
                                         <TextBlock Text="&#xE928;" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center"
                                                    Foreground="{DynamicResource LpWindowFgBrush}"/>
                                     </MenuItem.Icon>
                                 </MenuItem>
-                                <MenuItem Style="{StaticResource ThemedMenuItemStyle}"
+                                <MenuItem x:Name="MenuFix" Style="{StaticResource ThemedMenuItemStyle}"
                                           Header="Fix Issues" Tag="fix" Click="MenuQuickAction_Click">
                                     <MenuItem.Icon>
                                         <TextBlock Text="&#xEA8A;" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center"
                                                    Foreground="{DynamicResource LpWindowFgBrush}"/>
                                     </MenuItem.Icon>
                                 </MenuItem>
-                                <MenuItem Style="{StaticResource ThemedMenuItemStyle}"
+                                <MenuItem x:Name="MenuTest" Style="{StaticResource ThemedMenuItemStyle}"
                                           Header="Generate Unit Tests" Tag="test" Click="MenuQuickAction_Click">
                                     <MenuItem.Icon>
                                         <TextBlock Text="&#xEBE8;" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center"

@@ -84,8 +84,29 @@ namespace LocalPilot.Completion
 
                 var snapshot = _view.TextBuffer.CurrentSnapshot;
                 var caretPos = _view.Caret.Position.BufferPosition.Position;
-                var prefix = snapshot.GetText(0, caretPos);
-                var suffix = snapshot.GetText(caretPos, snapshot.Length - caretPos);
+                
+                // Respect context lines before/after from settings
+                var beforeLines = LocalPilotSettings.Instance.ContextLinesBefore;
+                var afterLines = LocalPilotSettings.Instance.ContextLinesAfter;
+
+                int startPos = Math.Max(0, caretPos);
+                int linesFound = 0;
+                while (startPos > 0 && linesFound < beforeLines)
+                {
+                    startPos--;
+                    if (snapshot[startPos] == '\n') linesFound++;
+                }
+
+                int endPos = caretPos;
+                linesFound = 0;
+                while (endPos < snapshot.Length && linesFound < afterLines)
+                {
+                    if (snapshot[endPos] == '\n') linesFound++;
+                    endPos++;
+                }
+
+                var prefix = snapshot.GetText(startPos, caretPos - startPos);
+                var suffix = snapshot.GetText(caretPos, endPos - caretPos);
                 var fileExt = System.IO.Path.GetExtension(_document?.FilePath ?? ".cs");
                 var filePath = _document?.FilePath ?? "untitled";
 
@@ -100,6 +121,7 @@ namespace LocalPilot.Completion
                         Stop = new System.Collections.Generic.List<string> { "\n\n\n", "</MID>" }
                     };
 
+                    _ollama.UpdateBaseUrl(LocalPilotSettings.Instance.OllamaBaseUrl);
                     string result = string.Empty;
                     await foreach (var chunk in _ollama.StreamCompletionAsync(
                         LocalPilotSettings.Instance.CompletionModel, prompt, opts, token).ConfigureAwait(false))
@@ -110,13 +132,13 @@ namespace LocalPilot.Completion
                     return result.Trim();
                 }, token);
 
-                if (string.IsNullOrWhiteSpace(completionText) || token.IsCancellationRequested) return;
+                if (!LocalPilotSettings.Instance.EnableInlineCompletion || token.IsCancellationRequested) return;
 
                 // 3. Return to UI thread only to render
                 await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory
                       .SwitchToMainThreadAsync(CancellationToken.None);
 
-                if (!token.IsCancellationRequested)
+                if (!token.IsCancellationRequested && LocalPilotSettings.Instance.ShowCompletionGhost)
                     _ghostAdornment?.ShowGhost(completionText);
             }
             catch (OperationCanceledException) { /* user typed again — expected */ }

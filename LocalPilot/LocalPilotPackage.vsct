@@ -49,6 +49,7 @@
           <ButtonText>LocalPilot Chat</ButtonText>
           <ToolTipText>Open the LocalPilot AI Chat panel</ToolTipText>
         </Strings>
+        <CommandFlag>DynamicVisibility</CommandFlag>
       </Button>
 
       <Button guid="guidLocalPilotCmdSet" id="cmdidExplainCode" priority="0x0101" type="Button">
@@ -56,6 +57,7 @@
         <Strings>
           <ButtonText>Explain Code</ButtonText>
         </Strings>
+        <CommandFlag>DynamicVisibility</CommandFlag>
       </Button>
 
       <Button guid="guidLocalPilotCmdSet" id="cmdidRefactorCode" priority="0x0102" type="Button">
@@ -63,6 +65,7 @@
         <Strings>
           <ButtonText>Refactor Code</ButtonText>
         </Strings>
+        <CommandFlag>DynamicVisibility</CommandFlag>
       </Button>
 
       <Button guid="guidLocalPilotCmdSet" id="cmdidGenerateDoc" priority="0x0103" type="Button">
@@ -70,6 +73,7 @@
         <Strings>
           <ButtonText>Generate Documentation</ButtonText>
         </Strings>
+        <CommandFlag>DynamicVisibility</CommandFlag>
       </Button>
 
       <Button guid="guidLocalPilotCmdSet" id="cmdidReviewCode" priority="0x0104" type="Button">
@@ -77,6 +81,7 @@
         <Strings>
           <ButtonText>Review Code</ButtonText>
         </Strings>
+        <CommandFlag>DynamicVisibility</CommandFlag>
       </Button>
 
       <Button guid="guidLocalPilotCmdSet" id="cmdidFixCode" priority="0x0105" type="Button">
@@ -84,6 +89,7 @@
         <Strings>
           <ButtonText>Fix Code</ButtonText>
         </Strings>
+        <CommandFlag>DynamicVisibility</CommandFlag>
       </Button>
 
       <Button guid="guidLocalPilotCmdSet" id="cmdidGenerateTest" priority="0x0106" type="Button">
@@ -91,6 +97,7 @@
         <Strings>
           <ButtonText>Generate Unit Tests</ButtonText>
         </Strings>
+        <CommandFlag>DynamicVisibility</CommandFlag>
       </Button>
 
       <Button guid="guidLocalPilotCmdSet" id="cmdidOpenOptions" priority="0x0107" type="Button">

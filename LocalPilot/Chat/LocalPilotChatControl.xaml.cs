@@ -39,6 +39,7 @@ namespace LocalPilot.Chat
         {
             InitializeComponent();
             _ollama = new OllamaService(LocalPilotSettings.Instance.OllamaBaseUrl);
+            UpdateBrushes(); // Initialize brushes immediately for first-time command awareness
             Loaded += OnLoaded;
             Unloaded += OnUnloaded;
         }
@@ -61,29 +62,31 @@ namespace LocalPilot.Chat
 
         private void UpdateBrushes()
         {
-            // Update local StaticResources with current VS theme colors
-            // This bypasses the XAML compiler's inability to resolve VsBrushes directly
             try
             {
-                SetResourceBrush("LpWindowBgBrush",      VsBrushes.ToolWindowBackgroundKey);
-                SetResourceBrush("LpWindowFgBrush",      VsBrushes.ToolWindowTextKey);
-                SetResourceBrush("LpMenuBgBrush",        VsBrushes.ToolWindowBackgroundKey); // Blend with window
-                SetResourceBrush("LpMenuBorderBrush",    VsBrushes.ToolWindowBorderKey);
-                SetResourceBrush("LpMutedFgBrush",       VsBrushes.GrayTextKey);
+                // Dynamic VS Theme linkage
+                SetResourceBrush("LpWindowBgBrush",   VsBrushes.ToolWindowBackgroundKey,  Brushes.White);
+                SetResourceBrush("LpWindowFgBrush",   VsBrushes.ToolWindowTextKey,        Brushes.Black);
+                SetResourceBrush("LpMenuBgBrush",     VsBrushes.ToolWindowBackgroundKey,  Brushes.White);
+                SetResourceBrush("LpMenuBorderBrush", VsBrushes.ToolWindowBorderKey,      Brushes.Gray);
+                SetResourceBrush("LpMutedFgBrush",    VsBrushes.GrayTextKey,              Brushes.DarkGray);
                 
-                // Refresh specific elements that might need it
                 ChatScroll.Background = (Brush)this.Resources["LpWindowBgBrush"];
             }
-            catch { /* Fallback to hex colors already in XAML */ }
+            catch { /* Fallback to XAML defaults if shell is busy */ }
         }
 
-        private void SetResourceBrush(string key, object vsKey)
+        private void SetResourceBrush(string key, object vsKey, Brush fallback)
         {
             var brush = Application.Current.FindResource(vsKey) as Brush;
             if (brush != null)
             {
-                if (brush.CanFreeze) brush.Freeze(); // Enterprise optimization: Freeze brush for performance
+                if (brush.CanFreeze) brush.Freeze(); 
                 this.Resources[key] = brush;
+            }
+            else if (fallback != null)
+            {
+                this.Resources[key] = fallback;
             }
         }
 
@@ -145,7 +148,7 @@ namespace LocalPilot.Chat
 
             _history.Add(new ChatMessage { Role = "user", Content = text });
 
-            await StreamResponseAsync();
+            await StreamResponseAsync(LocalPilotSettings.Instance.ChatModel);
         }
 
         private void QuickAction_Click(object sender, RoutedEventArgs e)
@@ -158,16 +161,37 @@ namespace LocalPilot.Chat
                 // Try to get editor selection
                 string selectedCode = await TryGetEditorSelectionAsync();
 
+                if (string.IsNullOrWhiteSpace(selectedCode))
+                {
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    AppendAIBubble("⚠️ No code selected. Please select some code in the editor first to use this quick action.");
+                    return;
+                }
+
                 string prompt = BuildActionPrompt(action, selectedCode);
                 if (string.IsNullOrEmpty(prompt)) return;
 
-                AppendUserBubble($"/{action}" + (string.IsNullOrEmpty(selectedCode)
-                                                  ? string.Empty
-                                                  : $"\n```\n{selectedCode}\n```"));
+                AppendUserBubble($"/{action}\n```\n{selectedCode}\n```");
 
                 _history.Add(new ChatMessage { Role = "user", Content = prompt });
-                await StreamResponseAsync();
+                
+                // Use action-specific model if configured
+                string model = GetActionModel(action);
+                await StreamResponseAsync(model);
             });
+        }
+
+        private string GetActionModel(string action)
+        {
+            var s = LocalPilotSettings.Instance;
+            return action switch
+            {
+                "explain"  => s.ExplainModel,
+                "refactor" => s.RefactorModel,
+                "document" => s.DocModel,
+                "review"   => s.ReviewModel,
+                _          => s.ChatModel
+            };
         }
 
         private string BuildActionPrompt(string action, string code)
@@ -179,8 +203,8 @@ namespace LocalPilot.Chat
             {
                 "explain"  => $"Explain the following code clearly and concisely:{codeBlock}",
                 "refactor" => $"Refactor the following code to improve readability, performance and best practices. Show the improved version:{codeBlock}",
-                "document" => $"Generate complete XML documentation comments for the following code:{codeBlock}",
-                "review"   => $"Review the following code for bugs, security issues, and improvements:{codeBlock}",
+                "document" => $"Add XML documentation comments (summary, params, returns) for the following code and return only the documented code block:{codeBlock}",
+                "review"   => $"Perform a rigorous security and quality review of the following code. Identify potential bugs, performance bottlenecks, and security vulnerabilities. Provide specific, actionable suggestions for improvement:{codeBlock}",
                 "fix"      => $"Identify and fix all issues in the following code:{codeBlock}",
                 "test"     => $"Write comprehensive unit tests using xUnit for the following code:{codeBlock}",
                 _          => string.Empty
@@ -203,7 +227,7 @@ namespace LocalPilot.Chat
         }
 
         // ── Streaming response ────────────────────────────────────────────────
-        private async Task StreamResponseAsync()
+        private async Task StreamResponseAsync(string model)
         {
             // Signal cancellation to any currently running stream
             _cts?.Cancel();
@@ -216,7 +240,10 @@ namespace LocalPilot.Chat
                 _cts = new CancellationTokenSource();
                 var token = _cts.Token;
 
-                string model = LocalPilotSettings.Instance.ChatModel;
+                if (string.IsNullOrEmpty(model))
+                    model = LocalPilotSettings.Instance.ChatModel;
+                
+                _ollama.UpdateBaseUrl(LocalPilotSettings.Instance.OllamaBaseUrl);
                 SetStreaming(true);
 
                 var sb = new StringBuilder();
@@ -390,12 +417,12 @@ namespace LocalPilot.Chat
         /// </summary>
         private ContextMenu BuildRichTextBoxContextMenu()
         {
-            Brush menuBg     = new SolidColorBrush(Color.FromRgb(0x1B, 0x1B, 0x1C));
-            Brush menuBorder = new SolidColorBrush(Color.FromRgb(0x33, 0x33, 0x37));
-            Brush itemFg     = new SolidColorBrush(Color.FromRgb(0xF1, 0xF1, 0xF1));
-            Brush hoverBg    = new SolidColorBrush(Color.FromRgb(0x3E, 0x3E, 0x40));
+            Brush menuBg     = ThemeSurface;
+            Brush menuBorder = ThemeBorder;
+            Brush itemFg     = ThemeWindowFg;
+            Brush hoverBg    = BrushAccent;
             Brush hoverFg    = Brushes.White;
-            Brush sepColor   = new SolidColorBrush(Color.FromRgb(0x33, 0x33, 0x37));
+            Brush sepColor   = ThemeBorder;
 
             ContextMenu MakeMenu()
             {
@@ -696,11 +723,33 @@ namespace LocalPilot.Chat
 
         private void BtnQuickActions_Click(object sender, RoutedEventArgs e)
         {
-            if (BtnQuickActions.ContextMenu != null)
+            var menu = BtnQuickActions.ContextMenu;
+            if (menu == null) return;
+
+            var s = LocalPilotSettings.Instance;
+
+            // In WPF, items in a ContextMenu are not generated as fields for the UserControl.
+            // We find them by name or tag to safely toggle visibility.
+            foreach (var item in menu.Items)
             {
-                BtnQuickActions.ContextMenu.PlacementTarget = BtnQuickActions;
-                BtnQuickActions.ContextMenu.IsOpen = true;
+                if (item is MenuItem mi)
+                {
+                    string action = mi.Tag?.ToString();
+                    mi.Visibility = action switch
+                    {
+                        "explain"  => s.EnableExplain  ? Visibility.Visible : Visibility.Collapsed,
+                        "refactor" => s.EnableRefactor ? Visibility.Visible : Visibility.Collapsed,
+                        "document" => s.EnableDocGen   ? Visibility.Visible : Visibility.Collapsed,
+                        "review"   => s.EnableReview   ? Visibility.Visible : Visibility.Collapsed,
+                        "fix"      => s.EnableFix      ? Visibility.Visible : Visibility.Collapsed,
+                        "test"     => s.EnableUnitTest ? Visibility.Visible : Visibility.Collapsed,
+                        _          => Visibility.Visible
+                    };
+                }
             }
+
+            menu.PlacementTarget = BtnQuickActions;
+            menu.IsOpen = true;
         }
 
         private void MenuQuickAction_Click(object sender, RoutedEventArgs e)
