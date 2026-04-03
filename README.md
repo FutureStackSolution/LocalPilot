@@ -165,7 +165,16 @@ Since **LocalPilot** runs Large Language Models (LLMs) **entirely on your local 
 
 ## 📜 Release History
 
-### 🚀 v1.1 - The Stability Update (latest)
+### 🚀 v1.2 - The Aesthetic & Intelligence Update (latest)
+**"A major leap in visual fidelity and user experience refinement."**
+
+- **✨ High-Fidelity Syntax Highlighting**: New theme-aware code renderer with a custom regex engine for premium visualization of methods, types, and strings.
+- **🎨 Theme-Aware Palette**: Deep integration with VS Dark and Light themes—colors automatically adapt to your environment for maximum readability.
+- **🖼️ Minimalist Branding**: Refined the chat interface by removing redundant text labels, focusing purely on a clean, icon-centric AI persona.
+- **🧠 Intelligent Status Tracking**: Resolved the "sticky thinking" bug; the AI now correctly transitions from "thinking" to "worked for X.Xs" without clutter.
+- **🛡️ Robust Stream Rendering**: Hardened the UI update loop against rapid-fire AI streaming, preventing flickering and ensuring smooth output.
+
+### 🔨 v1.1 - The Stability Update
 **"The production-ready overhaul focusing on reliability and UX."**
 
 - **✅ Selection Deadlock Fix**: Fundamental refactor of selection capture to prevent UI thread hangs during Quick Actions.
