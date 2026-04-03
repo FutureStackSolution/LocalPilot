@@ -1,6 +1,7 @@
 using LocalPilot.Services;
 using LocalPilot.Settings;
 using Microsoft.VisualStudio.Shell;
+using Microsoft.VisualStudio.Threading;
 using System;
 using System.Collections.Generic;
 using System.Threading;
@@ -79,6 +80,7 @@ namespace LocalPilot.Options
             ChkUnitTest.IsChecked     = s.EnableUnitTest;
             ChkEnableChat.IsChecked   = s.EnableChatPanel;
             ChkStatusBar.IsChecked    = s.ShowStatusBar;
+            ChkEnableLogging.IsChecked = s.EnableLogging;
 
             TxtChatHistory.Text       = s.ChatHistoryMaxItems.ToString();
 
@@ -126,6 +128,7 @@ namespace LocalPilot.Options
             s.EnableUnitTest         = ChkUnitTest.IsChecked       == true;
             s.EnableChatPanel        = ChkEnableChat.IsChecked     == true;
             s.ShowStatusBar          = ChkStatusBar.IsChecked      == true;
+            s.EnableLogging          = ChkEnableLogging.IsChecked == true;
 
             s.CompletionModel = (CmbCompletionModel.SelectedItem as ComboBoxItem)?.Content?.ToString()
                                 ?? CmbCompletionModel.Text;
@@ -241,6 +244,26 @@ namespace LocalPilot.Options
         {
             SaveToast.Visibility = Visibility.Collapsed;
             SaveToast.Opacity    = 0;
+        }
+
+        private void BtnOpenLog_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                string path = LocalPilotLogger.GetLogPath();
+                if (System.IO.File.Exists(path))
+                {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true });
+                }
+                else
+                {
+                    MessageBox.Show("No log file found yet. Try performing an action with logging enabled first.", "LocalPilot", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Could not open log: {ex.Message}", "LocalPilot", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
         }
 
         /// <summary>

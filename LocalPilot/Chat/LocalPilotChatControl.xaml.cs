@@ -2,6 +2,7 @@ using LocalPilot.Services;
 using LocalPilot.Settings;
 using Microsoft.VisualStudio.PlatformUI;
 using Microsoft.VisualStudio.Shell;
+using Microsoft.VisualStudio.Threading;
 using System;
 using System.Collections.Generic;
 using System.Text;
@@ -12,6 +13,8 @@ using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
+using Community.VisualStudio.Toolkit;
+using System.Linq;
 
 namespace LocalPilot.Chat
 {
@@ -20,25 +23,28 @@ namespace LocalPilot.Chat
         private readonly OllamaService _ollama;
         private readonly List<ChatMessage> _history = new List<ChatMessage>();
         private CancellationTokenSource _cts;
-        private readonly SemaphoreSlim _streamSemaphore = new SemaphoreSlim(1, 1);
-        private RichTextBox _streamingBlock;    // current AI message being streamed
+        private int _lastStreamId = 0; // Class-level ID to track active stream
 
-        // VS theme-aware colours (Dynamically linked to VS Theme)
         private Brush ThemeWindowBg => (Brush)this.Resources["LpWindowBgBrush"];
         private Brush ThemeWindowFg => (Brush)this.Resources["LpWindowFgBrush"];
         private Brush ThemeSurface  => (Brush)this.Resources["LpMenuBgBrush"];
         private Brush ThemeBorder   => (Brush)this.Resources["LpMenuBorderBrush"];
 
-        // Fixed accent/code colours — look fine on both light and dark themes
+        // Design tokens for rendering logic
+        private static readonly FontFamily UIFont      = new FontFamily("Segoe UI");
+        private static readonly FontFamily ConsoleFont = new FontFamily("Consolas");
         private static readonly SolidColorBrush BrushAccent = new SolidColorBrush(Color.FromRgb(0x7C, 0x6A, 0xF7));
         private static readonly SolidColorBrush BrushCode   = new SolidColorBrush(Color.FromRgb(0xCE, 0x91, 0x78));
-        private static readonly FontFamily ConsoleFont = new FontFamily("Consolas");
-        private static readonly FontFamily UIFont      = new FontFamily("Segoe UI");
 
         public LocalPilotChatControl()
         {
             InitializeComponent();
             _ollama = new OllamaService(LocalPilotSettings.Instance.OllamaBaseUrl);
+            UpdateBrushes();
+            
+            // Initialize history immediately to prevent race conditions during async loading
+            if (_history.Count == 0) ShowWelcomeMessage();
+            
             Loaded += OnLoaded;
             Unloaded += OnUnloaded;
         }
@@ -46,44 +52,52 @@ namespace LocalPilot.Chat
         private void OnLoaded(object sender, RoutedEventArgs e)
         {
             UpdateBrushes();
-            ShowWelcomeMessage();
+            
+            // Only show welcome if history was cleared or never initialized.
+            // This prevents clearing history when Right-Click actions fire before Load is fully complete.
+            if (_history.Count == 0) 
+            {
+                ShowWelcomeMessage();
+            }
+            
             VSColorTheme.ThemeChanged += OnThemeChanged;
         }
 
         private void OnUnloaded(object sender, RoutedEventArgs e)
         {
             VSColorTheme.ThemeChanged -= OnThemeChanged;
-            _cts?.Cancel();
-            _cts?.Dispose();
+            _cts?.Cancel(); // Signal cancellation but do not dispose, to prevent crashes on subsequent activations.
         }
 
         private void OnThemeChanged(ThemeChangedEventArgs e) => UpdateBrushes();
 
         private void UpdateBrushes()
         {
-            // Update local StaticResources with current VS theme colors
-            // This bypasses the XAML compiler's inability to resolve VsBrushes directly
             try
             {
-                SetResourceBrush("LpWindowBgBrush",      VsBrushes.ToolWindowBackgroundKey);
-                SetResourceBrush("LpWindowFgBrush",      VsBrushes.ToolWindowTextKey);
-                SetResourceBrush("LpMenuBgBrush",        VsBrushes.ToolWindowBackgroundKey); // Blend with window
-                SetResourceBrush("LpMenuBorderBrush",    VsBrushes.ToolWindowBorderKey);
-                SetResourceBrush("LpMutedFgBrush",       VsBrushes.GrayTextKey);
+                // Dynamic VS Theme linkage
+                SetResourceBrush("LpWindowBgBrush",   VsBrushes.ToolWindowBackgroundKey,  Brushes.White);
+                SetResourceBrush("LpWindowFgBrush",   VsBrushes.ToolWindowTextKey,        Brushes.Black);
+                SetResourceBrush("LpMenuBgBrush",     VsBrushes.ToolWindowBackgroundKey,  Brushes.White);
+                SetResourceBrush("LpMenuBorderBrush", VsBrushes.ToolWindowBorderKey,      Brushes.Gray);
+                SetResourceBrush("LpMutedFgBrush",    VsBrushes.GrayTextKey,              Brushes.DarkGray);
                 
-                // Refresh specific elements that might need it
                 ChatScroll.Background = (Brush)this.Resources["LpWindowBgBrush"];
             }
-            catch { /* Fallback to hex colors already in XAML */ }
+            catch { /* Fallback to XAML defaults if shell is busy */ }
         }
 
-        private void SetResourceBrush(string key, object vsKey)
+        private void SetResourceBrush(string key, object vsKey, Brush fallback)
         {
             var brush = Application.Current.FindResource(vsKey) as Brush;
             if (brush != null)
             {
-                if (brush.CanFreeze) brush.Freeze(); // Enterprise optimization: Freeze brush for performance
+                if (brush.CanFreeze) brush.Freeze(); 
                 this.Resources[key] = brush;
+            }
+            else if (fallback != null)
+            {
+                this.Resources[key] = fallback;
             }
         }
 
@@ -141,33 +155,98 @@ namespace LocalPilot.Chat
             if (string.IsNullOrWhiteSpace(text)) return;
 
             TxtInput.Clear();
-            AppendUserBubble(text);
+            
+            // Context injection: automatically include selection if user didn't provide any block
+            string selection = await TryGetEditorSelectionAsync();
+            string finalPrompt = text;
+            string displayMessage = text;
 
-            _history.Add(new ChatMessage { Role = "user", Content = text });
+            if (!string.IsNullOrWhiteSpace(selection) && !text.Contains("```"))
+            {
+                // Concatenate selection to provide implicit context
+                finalPrompt = $"Context code selected by user:\n```\n{selection}\n```\n\nUser question: {text}";
+                displayMessage = $"{text}\n\n*(using current editor selection)*";
+            }
 
-            await StreamResponseAsync();
+            AppendUserBubble(displayMessage);
+            _history.Add(new ChatMessage { Role = "user", Content = finalPrompt });
+
+            await StreamResponseAsync(LocalPilotSettings.Instance.ChatModel);
         }
 
         private void QuickAction_Click(object sender, RoutedEventArgs e)
         {
-            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+            var btn = (Button)sender;
+            var action = btn.Tag?.ToString() ?? string.Empty;
+            _ = HandleQuickActionAsync(action);
+        }
+
+        private async Task HandleQuickActionAsync(string action, string preCapturedSelection = null)
+        {
+            if (string.IsNullOrEmpty(action)) return;
+            LocalPilotLogger.Log($"[Chat] Handling Quick Action: {action}");
+
+            // Execute the action logic in a background-friendly way
+            _ = Task.Run(async () =>
             {
-                var btn = (Button)sender;
-                var action = btn.Tag?.ToString() ?? string.Empty;
+                try 
+                {
+                    // 1. Resolve Selection
+                    string selectedCode = preCapturedSelection;
+                    if (string.IsNullOrWhiteSpace(selectedCode))
+                    {
+                        selectedCode = await TryGetEditorSelectionAsync().ConfigureAwait(false);
+                    }
 
-                // Try to get editor selection
-                string selectedCode = await TryGetEditorSelectionAsync();
+                    if (string.IsNullOrWhiteSpace(selectedCode))
+                    {
+                        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                        AppendAIBubble("⚠️ **No code selected**. I couldn't find any code highlighted in your editor. Please select some code and try the action again.");
+                        return;
+                    }
 
-                string prompt = BuildActionPrompt(action, selectedCode);
-                if (string.IsNullOrEmpty(prompt)) return;
+                    // 2. Prepare Prompt
+                    string prompt = BuildActionPrompt(action, selectedCode);
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    
+                    // 3. UI Update: Show the user's request
+                    AppendUserBubble($"⚡ **{action.ToUpper()}**\n```\n{selectedCode}\n```");
 
-                AppendUserBubble($"/{action}" + (string.IsNullOrEmpty(selectedCode)
-                                                  ? string.Empty
-                                                  : $"\n```\n{selectedCode}\n```"));
-
-                _history.Add(new ChatMessage { Role = "user", Content = prompt });
-                await StreamResponseAsync();
+                    // Phase 3: Create a thread-safe snapshot of history for the background task
+                    List<ChatMessage> historySnapshot;
+                    lock (_history)
+                    {
+                        if (_history.Count > 0 && _history[_history.Count - 1].Role == "user")
+                            _history.RemoveAt(_history.Count - 1);
+                        
+                        _history.Add(new ChatMessage { Role = "user", Content = prompt });
+                        historySnapshot = new List<ChatMessage>(_history);
+                    }
+                    
+                    // 4. Trigger AI Stream
+                    string model = GetActionModel(action);
+                    await StreamResponseAsync(model, historySnapshot).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    LocalPilotLogger.LogError($"Critical error in HandleQuickAction (action: {action})", ex);
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    AppendAIBubble($"❌ A critical error occurred: {ex.Message}");
+                }
             });
+        }
+
+        private string GetActionModel(string action)
+        {
+            var s = LocalPilotSettings.Instance;
+            return action switch
+            {
+                "explain"  => s.ExplainModel,
+                "refactor" => s.RefactorModel,
+                "document" => s.DocModel,
+                "review"   => s.ReviewModel,
+                _          => s.ChatModel
+            };
         }
 
         private string BuildActionPrompt(string action, string code)
@@ -179,8 +258,8 @@ namespace LocalPilot.Chat
             {
                 "explain"  => $"Explain the following code clearly and concisely:{codeBlock}",
                 "refactor" => $"Refactor the following code to improve readability, performance and best practices. Show the improved version:{codeBlock}",
-                "document" => $"Generate complete XML documentation comments for the following code:{codeBlock}",
-                "review"   => $"Review the following code for bugs, security issues, and improvements:{codeBlock}",
+                "document" => $"Add XML documentation comments (summary, params, returns) for the following code and return only the documented code block:{codeBlock}",
+                "review"   => $"Perform a rigorous security and quality review of the following code. Identify potential bugs, performance bottlenecks, and security vulnerabilities. Provide specific, actionable suggestions for improvement:{codeBlock}",
                 "fix"      => $"Identify and fix all issues in the following code:{codeBlock}",
                 "test"     => $"Write comprehensive unit tests using xUnit for the following code:{codeBlock}",
                 _          => string.Empty
@@ -189,37 +268,96 @@ namespace LocalPilot.Chat
 
         private async Task<string> TryGetEditorSelectionAsync()
         {
-            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+            LocalPilotLogger.Log("[Chat] TryGetEditorSelectionAsync starting...");
             try
             {
-                var dte = Microsoft.VisualStudio.Shell.Package.GetGlobalService(
-                              typeof(EnvDTE.DTE)) as EnvDTE.DTE;
-                if (dte?.ActiveDocument == null) return string.Empty;
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
 
-                var sel = dte.ActiveDocument.Selection as EnvDTE.TextSelection;
-                return sel?.Text ?? string.Empty;
+                var dte = Microsoft.VisualStudio.Shell.Package.GetGlobalService(typeof(EnvDTE.DTE)) as EnvDTE.DTE;
+
+                // 1. DTE ActiveWindow
+                if (dte?.ActiveWindow?.Document?.Selection is EnvDTE.TextSelection sel1 && !string.IsNullOrWhiteSpace(sel1.Text))
+                {
+                    LocalPilotLogger.Log("[Chat] Found selection via DTE.ActiveWindow");
+                    return sel1.Text;
+                }
+
+                // 2. DTE ActiveDocument
+                if (dte?.ActiveDocument?.Selection is EnvDTE.TextSelection sel2 && !string.IsNullOrWhiteSpace(sel2.Text))
+                {
+                    LocalPilotLogger.Log("[Chat] Found selection via DTE.ActiveDocument");
+                    return sel2.Text;
+                }
+
+                // 3. Toolkit fallback
+                try
+                {
+                    var docView = await VS.Documents.GetActiveDocumentViewAsync();
+                    if (docView?.TextView?.Selection != null)
+                    {
+                        var selection = docView.TextView.Selection.SelectedSpans.Count > 0 
+                                        ? docView.TextView.Selection.SelectedSpans[0].GetText() 
+                                        : string.Empty;
+                        if (!string.IsNullOrEmpty(selection)) return selection;
+                    }
+                } catch { /* ignore toolkit failures */ }
+                
+                return string.Empty;
             }
             catch { return string.Empty; }
         }
 
         // ── Streaming response ────────────────────────────────────────────────
-        private async Task StreamResponseAsync()
+        private async Task StreamResponseAsync(string model, List<ChatMessage> historyContext = null)
         {
             // Signal cancellation to any currently running stream
             _cts?.Cancel();
 
-            // Wait for any previous stream to clean up and release the semaphore
-            await _streamSemaphore.WaitAsync();
+            _lastStreamId++;
+            int myStreamId = _lastStreamId;
+            
             try
             {
-                _cts?.Dispose();
+                // We do NOT dispose the old _cts here. Disposal while a token is being monitored
+                // by the JTF or a background HttpClient request can cause hard hangs/crashes in VS.
                 _cts = new CancellationTokenSource();
                 var token = _cts.Token;
 
-                string model = LocalPilotSettings.Instance.ChatModel;
+                if (string.IsNullOrEmpty(model))
+                    model = LocalPilotSettings.Instance.ChatModel;
+
+                // Use provided context or fall back to current history (safely copied)
+                var activeHistory = historyContext ?? new List<ChatMessage>(_history);
+                
+                _ollama.UpdateBaseUrl(LocalPilotSettings.Instance.OllamaBaseUrl);
                 SetStreaming(true);
 
+                LocalPilotLogger.Log($"[Chat] StreamResponseAsync setup (ID: {myStreamId}, Model: {model}, History: {activeHistory.Count})");
+
+                // Early Connectivity Check: Fast-fail if Ollama is not running (with strict timeout)
+                try
+                {
+                    using (var earlyCts = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+                    {
+                        await Task.Yield(); // Ensure we yield once to let any pending UI tasks through
+                        bool isOllamaUp = await _ollama.IsAvailableAsync(earlyCts.Token).ConfigureAwait(false);
+                        if (!isOllamaUp)
+                        {
+                            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                            AppendAIBubble("❌ **Connection Error**: Could not reach local Ollama.\n\nPlease check if Ollama is running at: " + LocalPilotSettings.Instance.OllamaBaseUrl);
+                            return;
+                        }
+                    }
+                }
+                catch { /* Silent failure: the main streaming call below will handle deeper issues */ }
+
+                await Task.Yield(); // Yield again before starting the main loop
+                string finalMd = string.Empty;
                 var sb = new StringBuilder();
+                RichTextBox localStreamingBlock = null;
+                StackPanel localContainer = null;
+                bool forceFullMarkdown = false;
+
                 try
                 {
                     var options = new OllamaOptions
@@ -230,65 +368,88 @@ namespace LocalPilot.Chat
 
                     int tokenCount = 0;
                     int batchSize = 12;
+                    var uiBuffer = new StringBuilder();
 
                     // Buffer for incoming text to avoid hammering the UI thread
-                    await foreach (var chunk in _ollama.StreamChatAsync(model, _history, options, token).ConfigureAwait(false))
+                    await foreach (var chunk in _ollama.StreamChatAsync(model, activeHistory, options, token).ConfigureAwait(false))
                     {
                         sb.Append(chunk);
+                        uiBuffer.Append(chunk);
                         tokenCount++;
 
-                        // UI Batching: Update UI less frequently as the message grows
-                        // This prevents O(N^2) rendering from hanging the UI thread
                         if (tokenCount % batchSize == 0 || tokenCount == 1)
                         {
-                            // Dynamic batching: Increase batch size for very long messages
                             if (tokenCount > 500) batchSize = 24;
                             if (tokenCount > 2000) batchSize = 48;
 
-                            var currentText = sb.ToString();
-                            
-                            // Switch to UI thread and check for cancellation immediately
+                            var batchContent = uiBuffer.ToString();
+                            uiBuffer.Clear();
+
                             await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync(token);
                             token.ThrowIfCancellationRequested();
 
-                            if (_streamingBlock == null && !string.IsNullOrEmpty(currentText))
-                                _streamingBlock = AppendAIBubble(string.Empty);
-
-                            if (_streamingBlock != null)
+                            if (localStreamingBlock == null && !string.IsNullOrEmpty(batchContent))
                             {
-                                RenderMarkdown(_streamingBlock, currentText);
-                                ChatScroll.ScrollToBottom();
+                                localStreamingBlock = AppendAIBubble(string.Empty);
+                                localContainer = (StackPanel)localStreamingBlock.Parent;
                             }
-                            
-                            // Yield back to the UI thread to allow 'Stop' button and other messages to process
+
+                            if (localContainer != null)
+                            {
+                                // LIVE MARKDOWN UPDATE:
+                                // To provide a 'premium' live feel, we re-render the whole bubble intermittently.
+                                string currentMd = sb.ToString();
+
+                                // Once we detect a code block or complex markdown, we stay in 'full' mode 
+                                // to avoid disappearing controls and NullReferences.
+                                if (forceFullMarkdown || currentMd.Contains("```") || currentMd.Contains("#"))
+                                {
+                                    forceFullMarkdown = true;
+                                    RenderFullMarkdown(localContainer, currentMd);
+                                }
+                                else
+                                {
+                                    // Fast-path for simple streaming text (Header-free and Code-free)
+                                    RenderMarkdown(localStreamingBlock, currentMd);
+                                }
+                                
+                                ChatScroll.ScrollToEnd();
+                            }
                             await Task.Yield();
                         }
                     }
+                    finalMd = sb.ToString();
                 }
-                catch (OperationCanceledException) { /* Handle naturally in finally */ }
+                catch (OperationCanceledException) 
+                { 
+                    finalMd = sb.ToString(); 
+                    LocalPilotLogger.Log($"[Chat] Stream cancelled (ID: {myStreamId})");
+                }
                 catch (Exception ex)
                 {
+                    LocalPilotLogger.LogError($"[Chat] Connection error during stream (ID: {myStreamId})", ex);
                     await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                     AppendAIBubble($"❌ Error: {ex.Message}");
                 }
-                finally
+
+                // Phase 2: Final UI Cleanup (Outside the loop to avoid partial renders)
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                if (!string.IsNullOrEmpty(finalMd) && localContainer != null)
                 {
-                    string finalMd = sb.ToString();
-                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                    if (_streamingBlock != null)
-                    {
-                        var container = (StackPanel)_streamingBlock.Parent;
-                        RenderFullMarkdown(container, finalMd);
-                        _history.Add(new ChatMessage { Role = "assistant", Content = finalMd });
-                        TrimHistory();
-                    }
-                    SetStreaming(false);
-                    _streamingBlock = null;
+                    RenderFullMarkdown(localContainer, finalMd);
+                    _history.Add(new ChatMessage { Role = "assistant", Content = finalMd });
+                    TrimHistory();
                 }
+            }
+            catch (Exception ex)
+            {
+                LocalPilotLogger.LogError($"[Chat] Critical failure in StreamResponseAsync (ID: {myStreamId})", ex);
             }
             finally
             {
-                _streamSemaphore.Release();
+                // Always unlock UI if this is still the most recent requested session
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                if (myStreamId == _lastStreamId) SetStreaming(false);
             }
         }
 
@@ -328,7 +489,7 @@ namespace LocalPilot.Chat
             border.Child = container;
             MessagesContainer.Children.Add(border);
 
-            ChatScroll.ScrollToBottom();
+            ChatScroll.ScrollToEnd();
         }
 
         private RichTextBox AppendAIBubble(string text)
@@ -351,8 +512,11 @@ namespace LocalPilot.Chat
             {
                 // Streaming placeholder
                 var body = CreateRichTextBox();
-                _streamingBlock = body;
                 container.Children.Add(body);
+                border.Child = container;
+                MessagesContainer.Children.Add(border);
+                ChatScroll.ScrollToEnd();
+                return body;
             }
             else
             {
@@ -361,9 +525,9 @@ namespace LocalPilot.Chat
 
             border.Child = container;
             MessagesContainer.Children.Add(border);
-            ChatScroll.ScrollToBottom();
+            ChatScroll.ScrollToEnd();
 
-            return _streamingBlock;
+            return null;
         }
 
         private RichTextBox CreateRichTextBox()
@@ -390,12 +554,12 @@ namespace LocalPilot.Chat
         /// </summary>
         private ContextMenu BuildRichTextBoxContextMenu()
         {
-            Brush menuBg     = new SolidColorBrush(Color.FromRgb(0x1B, 0x1B, 0x1C));
-            Brush menuBorder = new SolidColorBrush(Color.FromRgb(0x33, 0x33, 0x37));
-            Brush itemFg     = new SolidColorBrush(Color.FromRgb(0xF1, 0xF1, 0xF1));
-            Brush hoverBg    = new SolidColorBrush(Color.FromRgb(0x3E, 0x3E, 0x40));
+            Brush menuBg     = ThemeSurface;
+            Brush menuBorder = ThemeBorder;
+            Brush itemFg     = ThemeWindowFg;
+            Brush hoverBg    = BrushAccent;
             Brush hoverFg    = Brushes.White;
-            Brush sepColor   = new SolidColorBrush(Color.FromRgb(0x33, 0x33, 0x37));
+            Brush sepColor   = ThemeBorder;
 
             ContextMenu MakeMenu()
             {
@@ -474,79 +638,100 @@ namespace LocalPilot.Chat
 
         private void RenderFullMarkdown(StackPanel container, string md)
         {
+            if (string.IsNullOrEmpty(md)) return;
             container.Children.Clear();
-            var parts = md.Split(new[] { "```" }, StringSplitOptions.None);
 
-            for (int i = 0; i < parts.Length; i++)
+            // Regex designed to capture code fences and everything in between
+            // This handles ```lang ... ``` blocks properly
+            var regex = new System.Text.RegularExpressions.Regex(@"```([\s\S]*?)```");
+            var matches = regex.Matches(md);
+            int lastIndex = 0;
+
+            foreach (System.Text.RegularExpressions.Match match in matches)
             {
-                if (i % 2 == 1)
+                // 1. Render text BEFORE the code block
+                string textPart = md.Substring(lastIndex, match.Index - lastIndex);
+                if (!string.IsNullOrWhiteSpace(textPart))
                 {
-                    // Code block with Copy button
-                    var codePart = parts[i];
-                    var nl = codePart.IndexOf('\n');
-                    string lang = string.Empty;
-                    if (nl >= 0)
-                    {
-                        lang = codePart.Substring(0, nl).Trim();
-                        codePart = codePart.Substring(nl + 1);
-                    }
-                    string cleanCode = codePart.TrimEnd();
+                    var rtb = CreateRichTextBox();
+                    RenderMarkdown(rtb, textPart);
+                    container.Children.Add(rtb);
+                }
 
-                    var grid = new Grid { Margin = new Thickness(0, 8, 0, 8) };
-                    var codeBorder = new Border {
-                        Background = new SolidColorBrush(Color.FromArgb(0x06, 0x00, 0x00, 0x00)),
-                        BorderBrush = new SolidColorBrush(Color.FromArgb(0x10, 0x7C, 0x6A, 0xF7)),
-                        BorderThickness = new Thickness(1),
-                        CornerRadius = new CornerRadius(8),
-                        Padding = new Thickness(10)
-                    };
-                    
-                    var codeRtb = CreateRichTextBox();
-                    HighlightCode((Paragraph)codeRtb.Document.Blocks.FirstBlock, cleanCode);
-                    codeBorder.Child = codeRtb;
-                    grid.Children.Add(codeBorder);
+                // 2. Render THE CODE BLOCK itself
+                string rawCode = match.Groups[1].Value;
+                
+                // Strip optional language tag (like csharp, python) from the first line
+                string cleanCode = rawCode;
+                int firstNewline = rawCode.IndexOf('\n');
+                if (firstNewline >= 0)
+                {
+                    string firstLine = rawCode.Substring(0, firstNewline).Trim();
+                    if (!string.IsNullOrEmpty(firstLine) && !firstLine.Contains(" "))
+                        cleanCode = rawCode.Substring(firstNewline + 1).Trim();
+                }
+                cleanCode = cleanCode.Trim();
 
-                    var copyBtn = new Button {
-                        Content = "📋 Copy Code",
-                        HorizontalAlignment = HorizontalAlignment.Right,
-                        VerticalAlignment = VerticalAlignment.Top,
-                        Margin = new Thickness(0, 4, 4, 0),
-                        Padding = new Thickness(6, 2, 6, 2),
-                        FontSize = 9,
-                        Cursor = Cursors.Hand,
-                        ToolTip = "Copy this code block"
-                    };
-
-                    // Use common icon style if available
-                    if (Application.Current.Resources.Contains("IconButtonStyle"))
-                        copyBtn.Style = (Style)Application.Current.Resources["IconButtonStyle"];
-                    else
-                    {
-                        copyBtn.Background = new SolidColorBrush(Color.FromArgb(0x60, 0x00, 0x00, 0x00));
-                        copyBtn.Foreground = Brushes.White;
-                        copyBtn.BorderThickness = new Thickness(0);
-                    }
-
-                    copyBtn.Click += (s, e) => {
-                        Clipboard.SetText(cleanCode);
-                        copyBtn.Content = "✓ Copied";
-                        _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
-                        {
-                            await Task.Delay(1500);
-                            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                            copyBtn.Content = "📋 Copy Code";
-                        });
-                    };
-                    grid.Children.Add(copyBtn);
-                    container.Children.Add(grid);
+                var grid = new Grid { Margin = new Thickness(0, 8, 0, 8) };
+                var codeBorder = new Border {
+                    Background = new SolidColorBrush(Color.FromArgb(0x06, 0x00, 0x00, 0x00)),
+                    BorderBrush = new SolidColorBrush(Color.FromArgb(0x10, 0x7C, 0x6A, 0xF7)),
+                    BorderThickness = new Thickness(1),
+                    CornerRadius = new CornerRadius(8),
+                    Padding = new Thickness(10)
+                };
+                
+                var codeRtb = CreateRichTextBox();
+                if (codeRtb.Document.Blocks.FirstBlock is Paragraph p)
+                {
+                    HighlightCode(p, cleanCode);
                 }
                 else
                 {
-                    // Plain text
-                    if (string.IsNullOrWhiteSpace(parts[i])) continue;
-                    var rtb = CreateRichTextBox();
-                    RenderMarkdown(rtb, parts[i]);
-                    container.Children.Add(rtb);
+                    SetRichText(codeRtb, cleanCode);
+                }
+                
+                codeBorder.Child = codeRtb;
+                grid.Children.Add(codeBorder);
+
+                var copyBtn = new Button {
+                    Content = "📋 Copy Code",
+                    HorizontalAlignment = HorizontalAlignment.Right,
+                    VerticalAlignment = VerticalAlignment.Top,
+                    Margin = new Thickness(0, 4, 4, 0),
+                    Padding = new Thickness(6, 2, 6, 2),
+                    FontSize = 9,
+                    Cursor = Cursors.Hand,
+                    ToolTip = "Copy this code block",
+                    Background = new SolidColorBrush(Color.FromArgb(0x40, 0x00, 0x00, 0x00)),
+                    Foreground = Brushes.White,
+                    BorderThickness = new Thickness(0)
+                };
+
+                copyBtn.Click += (s, e) => {
+                    Clipboard.SetText(cleanCode);
+                    copyBtn.Content = "✓ Copied";
+                    _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () => {
+                        await Task.Delay(1500);
+                        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                        copyBtn.Content = "📋 Copy Code";
+                    });
+                };
+
+                grid.Children.Add(copyBtn);
+                container.Children.Add(grid);
+                lastIndex = match.Index + match.Length;
+            }
+
+            // 3. Render any text AFTER the last code block
+            if (lastIndex < md.Length)
+            {
+                var textTail = md.Substring(lastIndex);
+                if (!string.IsNullOrWhiteSpace(textTail))
+                {
+                    var rtbTail = CreateRichTextBox();
+                    RenderMarkdown(rtbTail, textTail);
+                    container.Children.Add(rtbTail);
                 }
             }
         }
@@ -555,41 +740,78 @@ namespace LocalPilot.Chat
         private void RenderMarkdown(RichTextBox rtb, string md)
         {
             if (string.IsNullOrEmpty(md)) return;
-
-            // Enterprise Optimization: Only update if the content has actually changed
-            // This avoids unnecessary WPF layout passes
             rtb.Document.Blocks.Clear();
 
-            var paragraph = new Paragraph { Margin = new Thickness(0) };
-            
-            // Split on code fences - use a more stable approach for streaming
-            var parts = md.Split(new[] { "```" }, StringSplitOptions.None);
-
-            for (int i = 0; i < parts.Length; i++)
+            var lines = md.Split(new[] { "\n", "\r\n" }, StringSplitOptions.None);
+            foreach (var line in lines)
             {
-                if (i % 2 == 1)
+                var trimmed = line.Trim();
+                if (string.IsNullOrEmpty(trimmed)) 
                 {
-                    // Code block with Basic Syntax Highlighting
-                    var code = parts[i];
-                    var nl = code.IndexOf('\n');
-                    if (nl >= 0) code = code.Substring(nl + 1);
+                    rtb.Document.Blocks.Add(new Paragraph { Margin = new Thickness(0, 0, 0, 8) });
+                    continue;
+                }
 
-                    HighlightCode(paragraph, code.TrimEnd());
+                var paragraph = new Paragraph { Margin = new Thickness(0, 0, 0, 4) };
+
+                // 1. Headings (# ## ###)
+                if (trimmed.StartsWith("#"))
+                {
+                    int level = 0;
+                    while (level < trimmed.Length && trimmed[level] == '#') level++;
+                    
+                    var headerText = trimmed.Substring(level).Trim();
+                    var run = new Run(headerText) 
+                    { 
+                        FontSize = level == 1 ? 20 : (level == 2 ? 18 : 16),
+                        FontWeight = FontWeights.Bold,
+                        Foreground = ThemeWindowFg
+                    };
+                    paragraph.Inlines.Add(run);
+                    paragraph.Margin = new Thickness(0, 8, 0, 4);
+                }
+                // 2. Lists (- * 1.)
+                else if (trimmed.StartsWith("-") || trimmed.StartsWith("*") || (trimmed.Length > 2 && char.IsDigit(trimmed[0]) && trimmed[1] == '.'))
+                {
+                    paragraph.Margin = new Thickness(12, 0, 0, 2);
+                    RenderInlineMarkdown(paragraph, trimmed);
+                }
+                // 3. Normal Paragraph
+                else
+                {
+                    RenderInlineMarkdown(paragraph, line);
+                }
+
+                rtb.Document.Blocks.Add(paragraph);
+            }
+        }
+
+        private void RenderInlineMarkdown(Paragraph p, string text)
+        {
+            // Simple Inline parsing for **Bold** and `Code`
+            var tokens = System.Text.RegularExpressions.Regex.Split(text, @"(\*\*|`)").Where(t => !string.IsNullOrEmpty(t)).ToList();
+            bool isBold = false;
+            bool isCode = false;
+
+            foreach (var token in tokens)
+            {
+                if (token == "**") { isBold = !isBold; continue; }
+                if (token == "`") { isCode = !isCode; continue; }
+
+                var run = new Run(token);
+                if (isBold) run.FontWeight = FontWeights.Bold;
+                if (isCode)
+                {
+                    run.FontFamily = ConsoleFont;
+                    run.Foreground = BrushAccent;
+                    run.Background = new SolidColorBrush(Color.FromArgb(0x0F, 0x7C, 0x6A, 0xF7));
                 }
                 else
                 {
-                    // Plain text with **bold** support
-                    var segments = parts[i].Split(new[] { "**" }, StringSplitOptions.None);
-                    for (int j = 0; j < segments.Length; j++)
-                    {
-                        var run = new Run(segments[j]) { Foreground = ThemeWindowFg };
-                        if (j % 2 == 1) run.FontWeight = FontWeights.Bold;
-                        paragraph.Inlines.Add(run);
-                    }
+                    run.Foreground = ThemeWindowFg;
                 }
+                p.Inlines.Add(run);
             }
-
-            rtb.Document.Blocks.Add(paragraph);
         }
 
         private static readonly string[] Keywords = {
@@ -642,18 +864,35 @@ namespace LocalPilot.Chat
             rtb.Document.Blocks.Add(para);
         }
 
+        private void AppendToRichTextBox(RichTextBox rtb, string text)
+        {
+            if (rtb.Document.Blocks.FirstBlock is Paragraph p)
+            {
+                p.Inlines.Add(new Run(text) { Foreground = ThemeWindowFg });
+            }
+        }
+
         // Remove unused method — user bubbles now use TextBlock directly
 
         private void SetStreaming(bool streaming)
         {
-            StreamingBar.Visibility = streaming ? Visibility.Visible : Visibility.Collapsed;
-            
-            // Lock all interaction during streaming to prevent action queuing
-            BtnSend.IsEnabled           = !streaming;
-            BtnClear.IsEnabled          = !streaming;
-            BtnQuickActions.IsEnabled    = !streaming;
-            TxtInput.IsEnabled          = !streaming;
-            TxtInput.Opacity           = streaming ? 0.6 : 1.0;
+            // Ensure we are on the UI thread before touching any WPF controls.
+            // This is critical now that most logic runs on a background Task.Run.
+            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+            {
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                
+                StreamingBar.Visibility = streaming ? Visibility.Visible : Visibility.Collapsed;
+                
+                // Lock all interaction during streaming to prevent action queuing
+                BtnSend.IsEnabled           = !streaming;
+                BtnClear.IsEnabled          = !streaming;
+                BtnQuickActions.IsEnabled    = !streaming;
+                TxtInput.IsEnabled          = !streaming;
+                TxtInput.Opacity           = streaming ? 0.6 : 1.0;
+
+                if (!streaming) TxtInput.Focus();
+            });
         }
 
         private void TrimHistory()
@@ -687,20 +926,41 @@ namespace LocalPilot.Chat
             _cts?.Cancel();
         }
 
-        public void FireQuickAction(string action)
+        public void FireQuickAction(string action, string capturedSelection = null)
         {
             ThreadHelper.ThrowIfNotOnUIThread();
-            var mockBtn = new Button { Tag = action };
-            QuickAction_Click(mockBtn, new RoutedEventArgs());
+            _ = HandleQuickActionAsync(action, capturedSelection);
         }
 
         private void BtnQuickActions_Click(object sender, RoutedEventArgs e)
         {
-            if (BtnQuickActions.ContextMenu != null)
+            var menu = BtnQuickActions.ContextMenu;
+            if (menu == null) return;
+
+            var s = LocalPilotSettings.Instance;
+
+            // In WPF, items in a ContextMenu are not generated as fields for the UserControl.
+            // We find them by name or tag to safely toggle visibility.
+            foreach (var item in menu.Items)
             {
-                BtnQuickActions.ContextMenu.PlacementTarget = BtnQuickActions;
-                BtnQuickActions.ContextMenu.IsOpen = true;
+                if (item is MenuItem mi)
+                {
+                    string action = mi.Tag?.ToString();
+                    mi.Visibility = action switch
+                    {
+                        "explain"  => s.EnableExplain  ? Visibility.Visible : Visibility.Collapsed,
+                        "refactor" => s.EnableRefactor ? Visibility.Visible : Visibility.Collapsed,
+                        "document" => s.EnableDocGen   ? Visibility.Visible : Visibility.Collapsed,
+                        "review"   => s.EnableReview   ? Visibility.Visible : Visibility.Collapsed,
+                        "fix"      => s.EnableFix      ? Visibility.Visible : Visibility.Collapsed,
+                        "test"     => s.EnableUnitTest ? Visibility.Visible : Visibility.Collapsed,
+                        _          => Visibility.Visible
+                    };
+                }
             }
+
+            menu.PlacementTarget = BtnQuickActions;
+            menu.IsOpen = true;
         }
 
         private void MenuQuickAction_Click(object sender, RoutedEventArgs e)

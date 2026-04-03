@@ -7,7 +7,7 @@
   </p>
 
   <p align="center">
-    <a href="https://marketplace.visualstudio.com/items?itemName=FutureStackSolution.LocalPilot">
+    <a href="https://marketplace.visualstudio.com/items?itemName=FutureStackSolution.LocalPilotFSS">
       <img src="https://img.shields.io/visual-studio-marketplace/v/FutureStackSolution.LocalPilot?color=blue&label=VS%20Marketplace" alt="VS Marketplace" />
     </a>
     <a href="https://github.com/FutureStackSolution/LocalPilot/blob/main/LICENSE">
@@ -102,7 +102,7 @@ You must have **Ollama** installed and running on your machine.
   ```
 
 ### 2️⃣ Installation
-1. Visit the **[Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=FutureStackSolution.LocalPilot)**.
+1. Visit the **[Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=FutureStackSolution.LocalPilotFSS)**.
 2. Click **Download**, or search for "LocalPilot" within the Visual Studio Extension Manager:
    - *Extensions > Manage Extensions > Online*
 3. Restart Visual Studio to complete the installation.
@@ -160,4 +160,23 @@ Since **LocalPilot** runs Large Language Models (LLMs) **entirely on your local 
 
 > [!IMPORTANT]
 > LocalPilot is designed for efficiency, but because it performs all AI processing locally, it requires capable hardware. If suggestions feel slow, consider using a smaller, quantized model (e.g., `phi3:mini` or `starcoder2:3b`) in the settings.
+
+---
+
+## 📜 Release History
+
+### 🚀 v1.1 - The Stability Update (latest)
+**"The production-ready overhaul focusing on reliability and UX."**
+
+- **✅ Selection Deadlock Fix**: Fundamental refactor of selection capture to prevent UI thread hangs during Quick Actions.
+- **✅ Live Markdown Engine**: New incremental renderer provides a premium "typing" experience with real-time headers and list formatting.
+- **✅ Hardened Container Logic**: Resolved critical `NullReferenceException` and `ObjectDisposedException` errors during intensive AI streaming.
+- **✅ Thread-Safe Diagnostics**: Refactored the internal logger to be non-blocking and safe for background AI operations.
+- **✅ Pro Marketplace Branding**: Formally aligned all project identifiers with the official `FutureStackSolution` namespace.
+
+### ✨ v1.0 - Initial Release
+- **Inline Ghost-Text**: Real-time code completions via Ollama.
+- **Interactive Chat Panel**: Full technical discussion window.
+- **Context Menu Actions**: Explain, Document, and Refactor support.
+- **Native VS Support**: Full theme awareness for Light and Dark modes.
 

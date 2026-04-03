@@ -4,9 +4,9 @@
   xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
     <Metadata>
         <Identity Id="LocalPilot.d17a707d-703b-4fcd-a6f6-2ad5518c660b"
-                  Version="1.0"
+                  Version="1.1"
                   Language="en-US"
-                  Publisher="FutureStack Solution" />
+                  Publisher="FutureStackSolution" />
         <DisplayName>LocalPilot — AI Coding Assistant (Ollama)</DisplayName>
         <Description xml:space="preserve">
             A GitHub Copilot-style AI coding assistant for Visual Studio that runs 100% locally

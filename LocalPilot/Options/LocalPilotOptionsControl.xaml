@@ -8,6 +8,8 @@
              FontFamily="Segoe UI" FontSize="13">
 
     <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter"/>
+
         <!-- Theme Colors (Fixed Light Theme for VS Options dialog consistency) -->
         <SolidColorBrush x:Key="LpWindowBgBrush"      Color="#FFFFFF"/>
         <SolidColorBrush x:Key="LpWindowFgBrush"      Color="#1E1E1E"/>
@@ -353,6 +355,11 @@
 
             <CheckBox x:Name="ChkStatusBar" Content="Show LocalPilot status in the status bar"
                       Style="{DynamicResource LpCheckStyle}"/>
+            <CheckBox x:Name="ChkEnableLogging" Content="Enable Diagnostic Logging (to Output window)"
+                      Style="{DynamicResource LpCheckStyle}" ToolTip="Log extension activity to the 'LocalPilot' pane in the Output Window"/>
+            <Button x:Name="BtnOpenLog" Content="📂  Open Log File" Style="{DynamicResource LpSecondaryBtn}"
+                    HorizontalAlignment="Left" Click="BtnOpenLog_Click" Margin="0,2,0,10"
+                    Visibility="{Binding IsChecked, ElementName=ChkEnableLogging, Converter={StaticResource BooleanToVisibilityConverter}}"/>
 
             <!-- ═══ Section 7: Advanced ═════════════════════════════════════ -->
             <TextBlock Text="🛠️  Advanced Generation Settings" Style="{DynamicResource LpSectionHeader}"/>
