@@ -123,45 +123,53 @@ namespace LocalPilot.Services
         /// </summary>
         public async Task<string> SearchContextAsync(OllamaService ollama, string query, int topN = 5)
         {
+            if (string.IsNullOrWhiteSpace(query)) return string.Empty;
+
             var queryVector = await ollama.GetEmbeddingsAsync(LocalPilotSettings.Instance.ChatModel, query);
             if (queryVector == null || _index.Count == 0) return string.Empty;
 
-            // 1. Semantic Similarity Match
+            // 1. Semantic Similarity Match with Dynamic Boosting
             var results = _index
                 .Select(c => 
                 {
                     double score = CosineSimilarity(queryVector, c.Vector);
                     
-                    // Boost score if filename is explicitly mentioned in the query
+                    // POWER BOOST: If the query mentions the filename, give it a massive priority bump (+0.4)
                     if (query.IndexOf(c.FilePath, StringComparison.OrdinalIgnoreCase) >= 0)
-                        score += 0.3; 
+                    {
+                        score += 0.4; 
+                    }
                         
                     return new { Chunk = c, Score = score };
                 })
+                .Where(r => r.Score > 0.35) // Optimized sensitivity threshold (V2.0)
                 .OrderByDescending(r => r.Score)
                 .Take(topN)
                 .ToList();
 
-            if (!results.Any()) return string.Empty;
+            if (!results.Any()) 
+            {
+                // Hallucination Guard: Inform the AI that it needs to be careful
+                return "\n[ZERO_LOCAL_CONTEXT_MATCHES]\nNOTE: I could not find any specific code in the current project that relates to this query. Please answer based on general knowledge but warn the user that this feature was not found in their solution.\n";
+            }
 
             var sb = new System.Text.StringBuilder();
-            sb.AppendLine("\n--- PROJECT_SOURCE_CONTEXT ---");
-            sb.AppendLine("Use these actual file snippets from the current solution to build your answer:");
+            sb.AppendLine("\n[STUDYING RELEVANT PROJECT CONTEXT...]");
+            sb.AppendLine("The following snippets from the current solution are highly relevant to the query:");
             foreach (var r in results)
             {
-                if (r.Score < 0.45) continue; // Noise threshold
                 sb.AppendLine($"<file path=\"{r.Chunk.FilePath}\">");
                 sb.AppendLine(r.Chunk.Content);
                 sb.AppendLine("</file>");
             }
-            sb.AppendLine("--- END_SOURCE_CONTEXT ---");
+            sb.AppendLine("\n[END OF PROJECT CONTEXT]");
             return sb.ToString();
         }
 
         private bool IsRelevantFile(string path)
         {
             var ext = Path.GetExtension(path).ToLower();
-            string[] allowed = { ".cs", ".xaml", ".json", ".xml", ".css", ".js", ".md" };
+            string[] allowed = { ".cs", ".xaml", ".json", ".xml", ".css", ".js", ".md", ".csproj", ".sln", ".slnx", ".vsixmanifest" };
             return allowed.Contains(ext) && !path.Contains("\\obj\\") && !path.Contains("\\bin\\");
         }
 

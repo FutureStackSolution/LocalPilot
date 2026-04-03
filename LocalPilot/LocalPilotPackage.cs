@@ -54,12 +54,15 @@ namespace LocalPilot
             {
                 try
                 {
-                    await Task.Delay(2000); // Wait for the core UI to settle
+                    // v2.0 Enterprise Intelligence: Wait for VS Solution to fully stabilize
+                    await Task.Delay(10000, cancellationToken).ConfigureAwait(false); 
+                    
                     var ollama = new OllamaService(settings.OllamaBaseUrl);
-                    await ProjectContextService.Instance.IndexSolutionAsync(ollama);
+                    LocalPilotLogger.Log("[Autopilot] Indexing project context in background...");
+                    await ProjectContextService.Instance.IndexSolutionAsync(ollama, cancellationToken);
                 }
-                catch { /* Silent failure for background indexing */ }
-            });
+                catch { /* Quiet skip - background indexing is best-effort */ }
+            }, cancellationToken);
 
             await JoinableTaskFactory.SwitchToMainThreadAsync(cancellationToken);
         }
