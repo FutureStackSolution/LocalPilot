@@ -355,6 +355,8 @@ namespace LocalPilot.Chat
                 string finalMd = string.Empty;
                 var sb = new StringBuilder();
                 RichTextBox localStreamingBlock = null;
+                StackPanel localContainer = null;
+                bool forceFullMarkdown = false;
 
                 try
                 {
@@ -387,11 +389,30 @@ namespace LocalPilot.Chat
                             token.ThrowIfCancellationRequested();
 
                             if (localStreamingBlock == null && !string.IsNullOrEmpty(batchContent))
-                                localStreamingBlock = AppendAIBubble(string.Empty);
-
-                            if (localStreamingBlock != null)
                             {
-                                AppendToRichTextBox(localStreamingBlock, batchContent);
+                                localStreamingBlock = AppendAIBubble(string.Empty);
+                                localContainer = (StackPanel)localStreamingBlock.Parent;
+                            }
+
+                            if (localContainer != null)
+                            {
+                                // LIVE MARKDOWN UPDATE:
+                                // To provide a 'premium' live feel, we re-render the whole bubble intermittently.
+                                string currentMd = sb.ToString();
+
+                                // Once we detect a code block or complex markdown, we stay in 'full' mode 
+                                // to avoid disappearing controls and NullReferences.
+                                if (forceFullMarkdown || currentMd.Contains("```") || currentMd.Contains("#"))
+                                {
+                                    forceFullMarkdown = true;
+                                    RenderFullMarkdown(localContainer, currentMd);
+                                }
+                                else
+                                {
+                                    // Fast-path for simple streaming text (Header-free and Code-free)
+                                    RenderMarkdown(localStreamingBlock, currentMd);
+                                }
+                                
                                 ChatScroll.ScrollToEnd();
                             }
                             await Task.Yield();
@@ -413,10 +434,9 @@ namespace LocalPilot.Chat
 
                 // Phase 2: Final UI Cleanup (Outside the loop to avoid partial renders)
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                if (!string.IsNullOrEmpty(finalMd) && localStreamingBlock != null)
+                if (!string.IsNullOrEmpty(finalMd) && localContainer != null)
                 {
-                    var container = (StackPanel)localStreamingBlock.Parent;
-                    RenderFullMarkdown(container, finalMd);
+                    RenderFullMarkdown(localContainer, finalMd);
                     _history.Add(new ChatMessage { Role = "assistant", Content = finalMd });
                     TrimHistory();
                 }
@@ -618,86 +638,100 @@ namespace LocalPilot.Chat
 
         private void RenderFullMarkdown(StackPanel container, string md)
         {
+            if (string.IsNullOrEmpty(md)) return;
             container.Children.Clear();
-            var parts = md.Split(new[] { "```" }, StringSplitOptions.None);
 
-            for (int i = 0; i < parts.Length; i++)
+            // Regex designed to capture code fences and everything in between
+            // This handles ```lang ... ``` blocks properly
+            var regex = new System.Text.RegularExpressions.Regex(@"```([\s\S]*?)```");
+            var matches = regex.Matches(md);
+            int lastIndex = 0;
+
+            foreach (System.Text.RegularExpressions.Match match in matches)
             {
-                if (i % 2 == 1)
+                // 1. Render text BEFORE the code block
+                string textPart = md.Substring(lastIndex, match.Index - lastIndex);
+                if (!string.IsNullOrWhiteSpace(textPart))
                 {
-                    // Code block with Copy button
-                    var codePart = parts[i];
-                    var nl = codePart.IndexOf('\n');
-                    string lang = string.Empty;
-                    if (nl >= 0)
-                    {
-                        lang = codePart.Substring(0, nl).Trim();
-                        codePart = codePart.Substring(nl + 1);
-                    }
-                    string cleanCode = codePart.TrimEnd();
+                    var rtb = CreateRichTextBox();
+                    RenderMarkdown(rtb, textPart);
+                    container.Children.Add(rtb);
+                }
 
-                    var grid = new Grid { Margin = new Thickness(0, 8, 0, 8) };
-                    var codeBorder = new Border {
-                        Background = new SolidColorBrush(Color.FromArgb(0x06, 0x00, 0x00, 0x00)),
-                        BorderBrush = new SolidColorBrush(Color.FromArgb(0x10, 0x7C, 0x6A, 0xF7)),
-                        BorderThickness = new Thickness(1),
-                        CornerRadius = new CornerRadius(8),
-                        Padding = new Thickness(10)
-                    };
-                    
-                    var codeRtb = CreateRichTextBox();
-                    if (codeRtb.Document.Blocks.FirstBlock is Paragraph p)
-                    {
-                        HighlightCode(p, cleanCode);
-                    }
-                    else
-                    {
-                        SetRichText(codeRtb, cleanCode);
-                    }
-                    codeBorder.Child = codeRtb;
-                    grid.Children.Add(codeBorder);
+                // 2. Render THE CODE BLOCK itself
+                string rawCode = match.Groups[1].Value;
+                
+                // Strip optional language tag (like csharp, python) from the first line
+                string cleanCode = rawCode;
+                int firstNewline = rawCode.IndexOf('\n');
+                if (firstNewline >= 0)
+                {
+                    string firstLine = rawCode.Substring(0, firstNewline).Trim();
+                    if (!string.IsNullOrEmpty(firstLine) && !firstLine.Contains(" "))
+                        cleanCode = rawCode.Substring(firstNewline + 1).Trim();
+                }
+                cleanCode = cleanCode.Trim();
 
-                    var copyBtn = new Button {
-                        Content = "📋 Copy Code",
-                        HorizontalAlignment = HorizontalAlignment.Right,
-                        VerticalAlignment = VerticalAlignment.Top,
-                        Margin = new Thickness(0, 4, 4, 0),
-                        Padding = new Thickness(6, 2, 6, 2),
-                        FontSize = 9,
-                        Cursor = Cursors.Hand,
-                        ToolTip = "Copy this code block"
-                    };
-
-                    // Use common icon style if available
-                    if (Application.Current != null && Application.Current.Resources.Contains("IconButtonStyle"))
-                        copyBtn.Style = (Style)Application.Current.Resources["IconButtonStyle"];
-                    else
-                    {
-                        copyBtn.Background = new SolidColorBrush(Color.FromArgb(0x60, 0x00, 0x00, 0x00));
-                        copyBtn.Foreground = Brushes.White;
-                        copyBtn.BorderThickness = new Thickness(0);
-                    }
-
-                    copyBtn.Click += (s, e) => {
-                        Clipboard.SetText(cleanCode);
-                        copyBtn.Content = "✓ Copied";
-                        _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
-                        {
-                            await Task.Delay(1500);
-                            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                            copyBtn.Content = "📋 Copy Code";
-                        });
-                    };
-                    grid.Children.Add(copyBtn);
-                    container.Children.Add(grid);
+                var grid = new Grid { Margin = new Thickness(0, 8, 0, 8) };
+                var codeBorder = new Border {
+                    Background = new SolidColorBrush(Color.FromArgb(0x06, 0x00, 0x00, 0x00)),
+                    BorderBrush = new SolidColorBrush(Color.FromArgb(0x10, 0x7C, 0x6A, 0xF7)),
+                    BorderThickness = new Thickness(1),
+                    CornerRadius = new CornerRadius(8),
+                    Padding = new Thickness(10)
+                };
+                
+                var codeRtb = CreateRichTextBox();
+                if (codeRtb.Document.Blocks.FirstBlock is Paragraph p)
+                {
+                    HighlightCode(p, cleanCode);
                 }
                 else
                 {
-                    // Plain text
-                    if (string.IsNullOrWhiteSpace(parts[i])) continue;
-                    var rtb = CreateRichTextBox();
-                    RenderMarkdown(rtb, parts[i]);
-                    container.Children.Add(rtb);
+                    SetRichText(codeRtb, cleanCode);
+                }
+                
+                codeBorder.Child = codeRtb;
+                grid.Children.Add(codeBorder);
+
+                var copyBtn = new Button {
+                    Content = "📋 Copy Code",
+                    HorizontalAlignment = HorizontalAlignment.Right,
+                    VerticalAlignment = VerticalAlignment.Top,
+                    Margin = new Thickness(0, 4, 4, 0),
+                    Padding = new Thickness(6, 2, 6, 2),
+                    FontSize = 9,
+                    Cursor = Cursors.Hand,
+                    ToolTip = "Copy this code block",
+                    Background = new SolidColorBrush(Color.FromArgb(0x40, 0x00, 0x00, 0x00)),
+                    Foreground = Brushes.White,
+                    BorderThickness = new Thickness(0)
+                };
+
+                copyBtn.Click += (s, e) => {
+                    Clipboard.SetText(cleanCode);
+                    copyBtn.Content = "✓ Copied";
+                    _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () => {
+                        await Task.Delay(1500);
+                        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                        copyBtn.Content = "📋 Copy Code";
+                    });
+                };
+
+                grid.Children.Add(copyBtn);
+                container.Children.Add(grid);
+                lastIndex = match.Index + match.Length;
+            }
+
+            // 3. Render any text AFTER the last code block
+            if (lastIndex < md.Length)
+            {
+                var textTail = md.Substring(lastIndex);
+                if (!string.IsNullOrWhiteSpace(textTail))
+                {
+                    var rtbTail = CreateRichTextBox();
+                    RenderMarkdown(rtbTail, textTail);
+                    container.Children.Add(rtbTail);
                 }
             }
         }
@@ -706,41 +740,78 @@ namespace LocalPilot.Chat
         private void RenderMarkdown(RichTextBox rtb, string md)
         {
             if (string.IsNullOrEmpty(md)) return;
-
-            // Enterprise Optimization: Only update if the content has actually changed
-            // This avoids unnecessary WPF layout passes
             rtb.Document.Blocks.Clear();
 
-            var paragraph = new Paragraph { Margin = new Thickness(0) };
-            
-            // Split on code fences - use a more stable approach for streaming
-            var parts = md.Split(new[] { "```" }, StringSplitOptions.None);
-
-            for (int i = 0; i < parts.Length; i++)
+            var lines = md.Split(new[] { "\n", "\r\n" }, StringSplitOptions.None);
+            foreach (var line in lines)
             {
-                if (i % 2 == 1)
+                var trimmed = line.Trim();
+                if (string.IsNullOrEmpty(trimmed)) 
                 {
-                    // Code block with Basic Syntax Highlighting
-                    var code = parts[i];
-                    var nl = code.IndexOf('\n');
-                    if (nl >= 0) code = code.Substring(nl + 1);
+                    rtb.Document.Blocks.Add(new Paragraph { Margin = new Thickness(0, 0, 0, 8) });
+                    continue;
+                }
 
-                    HighlightCode(paragraph, code.TrimEnd());
+                var paragraph = new Paragraph { Margin = new Thickness(0, 0, 0, 4) };
+
+                // 1. Headings (# ## ###)
+                if (trimmed.StartsWith("#"))
+                {
+                    int level = 0;
+                    while (level < trimmed.Length && trimmed[level] == '#') level++;
+                    
+                    var headerText = trimmed.Substring(level).Trim();
+                    var run = new Run(headerText) 
+                    { 
+                        FontSize = level == 1 ? 20 : (level == 2 ? 18 : 16),
+                        FontWeight = FontWeights.Bold,
+                        Foreground = ThemeWindowFg
+                    };
+                    paragraph.Inlines.Add(run);
+                    paragraph.Margin = new Thickness(0, 8, 0, 4);
+                }
+                // 2. Lists (- * 1.)
+                else if (trimmed.StartsWith("-") || trimmed.StartsWith("*") || (trimmed.Length > 2 && char.IsDigit(trimmed[0]) && trimmed[1] == '.'))
+                {
+                    paragraph.Margin = new Thickness(12, 0, 0, 2);
+                    RenderInlineMarkdown(paragraph, trimmed);
+                }
+                // 3. Normal Paragraph
+                else
+                {
+                    RenderInlineMarkdown(paragraph, line);
+                }
+
+                rtb.Document.Blocks.Add(paragraph);
+            }
+        }
+
+        private void RenderInlineMarkdown(Paragraph p, string text)
+        {
+            // Simple Inline parsing for **Bold** and `Code`
+            var tokens = System.Text.RegularExpressions.Regex.Split(text, @"(\*\*|`)").Where(t => !string.IsNullOrEmpty(t)).ToList();
+            bool isBold = false;
+            bool isCode = false;
+
+            foreach (var token in tokens)
+            {
+                if (token == "**") { isBold = !isBold; continue; }
+                if (token == "`") { isCode = !isCode; continue; }
+
+                var run = new Run(token);
+                if (isBold) run.FontWeight = FontWeights.Bold;
+                if (isCode)
+                {
+                    run.FontFamily = ConsoleFont;
+                    run.Foreground = BrushAccent;
+                    run.Background = new SolidColorBrush(Color.FromArgb(0x0F, 0x7C, 0x6A, 0xF7));
                 }
                 else
                 {
-                    // Plain text with **bold** support
-                    var segments = parts[i].Split(new[] { "**" }, StringSplitOptions.None);
-                    for (int j = 0; j < segments.Length; j++)
-                    {
-                        var run = new Run(segments[j]) { Foreground = ThemeWindowFg };
-                        if (j % 2 == 1) run.FontWeight = FontWeights.Bold;
-                        paragraph.Inlines.Add(run);
-                    }
+                    run.Foreground = ThemeWindowFg;
                 }
+                p.Inlines.Add(run);
             }
-
-            rtb.Document.Blocks.Add(paragraph);
         }
 
         private static readonly string[] Keywords = {
