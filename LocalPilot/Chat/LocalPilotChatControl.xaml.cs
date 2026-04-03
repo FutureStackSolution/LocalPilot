@@ -199,6 +199,17 @@ namespace LocalPilot.Chat
             
             // Context injection: automatically include selection if user didn't provide any block
             string selection = await TryGetEditorSelectionAsync();
+
+            // 🧠 MANUAL INTENT DETECTION: Enable Diff/Apply if user types "refactor" or "fix"
+            string lowered = text.ToLowerInvariant();
+            if (lowered.Contains("refactor"))      _currentAction = "refactor";
+            else if (lowered.Contains("fix"))     _currentAction = "fix";
+            else if (lowered.Contains("document"))_currentAction = "document";
+            else                                  _currentAction = null;
+
+            if (_currentAction == "refactor" || _currentAction == "fix")
+                _lastAuthoringCode = selection;
+
             string finalPrompt = text;
             string displayMessage = text;
 
@@ -479,7 +490,12 @@ namespace LocalPilot.Chat
                                     RenderMarkdown(localStreamingBlock, currentMd);
                                 }
                                 
-                                ChatScroll.ScrollToEnd();
+                                // Robust Scroll: Ensure we reach the true bottom after layout refresh (VSTHRD010 safe)
+                                _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+                                {
+                                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                                    ChatScroll.ScrollToEnd();
+                                });
                             }
                             await Task.Yield();
                         }
@@ -590,7 +606,11 @@ namespace LocalPilot.Chat
             bubbleContainer.Children.Add(border);
             MessagesContainer.Children.Add(bubbleContainer);
 
-            ChatScroll.ScrollToEnd();
+            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+            {
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                ChatScroll.ScrollToEnd();
+            });
         }
 
         private RichTextBox AppendAIBubble(string text)
@@ -643,7 +663,11 @@ namespace LocalPilot.Chat
                 border.Child = container;
                 bubbleContainer.Children.Add(border);
                 MessagesContainer.Children.Add(bubbleContainer);
-                ChatScroll.ScrollToEnd();
+                _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+                {
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    ChatScroll.ScrollToEnd();
+                });
                 return body;
             }
             else
@@ -654,7 +678,11 @@ namespace LocalPilot.Chat
             border.Child = container;
             bubbleContainer.Children.Add(border);
             MessagesContainer.Children.Add(bubbleContainer);
-            ChatScroll.ScrollToEnd();
+            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+            {
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                ChatScroll.ScrollToEnd();
+            });
 
             return null;
         }
