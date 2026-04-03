@@ -365,6 +365,7 @@ namespace LocalPilot.Chat
                 await Task.Yield(); // Yield again before starting the main loop
                 string finalMd = string.Empty;
                 var sb = new StringBuilder();
+                var stopwatch = System.Diagnostics.Stopwatch.StartNew();
                 RichTextBox localStreamingBlock = null;
                 StackPanel localContainer = null;
                 bool forceFullMarkdown = false;
@@ -461,10 +462,38 @@ namespace LocalPilot.Chat
                 }
 
                 // Phase 2: Final UI Cleanup (Outside the loop to avoid partial renders)
+                stopwatch.Stop();
+                double seconds = stopwatch.Elapsed.TotalSeconds;
+
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                 if (!string.IsNullOrEmpty(finalMd) && localContainer != null)
                 {
                     RenderFullMarkdown(localContainer, finalMd);
+                    
+                    // Update Header Metric (Prestige Style) - Robust WPF Tree Traversal
+                    try 
+                    {
+                        var border = System.Windows.Media.VisualTreeHelper.GetParent(localContainer) as System.Windows.FrameworkElement;
+                        var bubbleContainer = System.Windows.Media.VisualTreeHelper.GetParent(border) as System.Windows.Controls.StackPanel;
+                        var header = bubbleContainer?.Children[0] as System.Windows.Controls.StackPanel;
+                        
+                        if (header?.Children.Count > 1 && header.Children[1] is System.Windows.Controls.TextBlock metric)
+                        {
+                            if (seconds >= 60)
+                            {
+                                int mins = (int)seconds / 60;
+                                double secs = seconds % 60;
+                                metric.Text = $"worked for {mins}m {secs:F1}s";
+                            }
+                            else
+                            {
+                                metric.Text = $"worked for {seconds:F1}s";
+                            }
+                            metric.FontWeight = System.Windows.FontWeights.Bold;
+                            metric.Foreground = (System.Windows.Media.Brush)this.Resources["LpAccentBrush"];
+                        }
+                    } catch { /* Handle edge cases where UI structure changed during stream */ }
+
                     _history.Add(new ChatMessage { Role = "assistant", Content = finalMd });
                     TrimHistory();
                 }
@@ -530,17 +559,27 @@ namespace LocalPilot.Chat
         {
             var bubbleContainer = new StackPanel { Margin = new Thickness(8, 8, 0, 8) };
 
-            // 🤖 Role Header (Left-Aligned)
-            var header = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(4,0,0,2) };
-            header.Children.Add(new TextBlock { Text = "\uE99A", FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 10, Foreground = (Brush)this.Resources["LpAccentBrush"], Margin = new Thickness(0,0,4,0) });
-            header.Children.Add(new TextBlock { Text = "LOCALPILOT", FontSize = 9, FontWeight = FontWeights.Bold, Foreground = (Brush)this.Resources["LpAccentBrush"], VerticalAlignment = VerticalAlignment.Center });
+            // 🤖 Role Header (Left-Aligned - Branded Prestige Style)
+            var header = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(4,0,0,5) };
+            
+            // Integrated Official Brand Logo
+            try {
+                var logoBrush = new Image { 
+                    Source = new System.Windows.Media.Imaging.BitmapImage(new Uri("pack://application:,,,/LocalPilot;component/Assets/Logo_Concept_Minimalist.png")),
+                    Width = 14, Height = 14, Margin = new Thickness(0,0,6,0),
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                header.Children.Add(logoBrush);
+            } catch { /* Handle missing asset gracefully */ }
+
+            header.Children.Add(new TextBlock { Text = "(thinking...)", FontSize = 9, FontWeight = FontWeights.Normal, Foreground = (Brush)this.Resources["LpMutedFgBrush"], VerticalAlignment = VerticalAlignment.Center });
             bubbleContainer.Children.Add(header);
 
             var border = new Border
             {
                 Background   = ThemeWindowBg,
-                BorderBrush  = ThemeBorder,
-                BorderThickness = new Thickness(1),
+                BorderBrush  = Brushes.Transparent, // Removed border for AI (Antigravity Style)
+                BorderThickness = new Thickness(0),
                 CornerRadius = new CornerRadius(12, 12, 12, 2),
                 Padding      = new Thickness(14, 10, 14, 10),
                 Margin       = new Thickness(0, 0, 40, 0),
