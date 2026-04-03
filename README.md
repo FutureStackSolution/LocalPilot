@@ -124,8 +124,13 @@ Simply start typing in any supported file. LocalPilot will provide translucent "
 - **`Tab`**: Accept the suggestion.
 - **`Esc`**: Dismiss the suggestion.
 
+### 💬 Chat Assistant
+The dedicated AI chat panel can be summoned at any time:
+- **Global Shortcut**: Press **`Alt + L`** to toggle the chat window.
+- **LocalPilot Menu**: Access Chat and Settings directly from the top-level **LocalPilot** menu in Visual Studio.
+
 ### ⚡ Contextual Actions
-Right-click on any code selection to access the **LocalPilot** menu:
+Right-click on any code selection or use the **LocalPilot** menu to access:
 - **Explain Code**: Breakdown complex logic.
 - **Generate Docs**: Auto-generate XML/docstring comments.
 - **Refactor**: Suggest improvements for readability and performance.
@@ -165,7 +170,18 @@ Since **LocalPilot** runs Large Language Models (LLMs) **entirely on your local 
 
 ## 📜 Release History
 
-### 🚀 v1.1 - The Stability Update (latest)
+### 🚀 v1.2 - The Aesthetic & Intelligence Update (latest)
+**"A major leap in visual fidelity and user experience refinement."**
+
+- **✨ High-Fidelity Syntax Highlighting**: New theme-aware code renderer with a custom regex engine for premium visualization of methods, types, and strings.
+- **🎨 Theme-Aware Palette**: Deep integration with VS Dark and Light themes—colors automatically adapt to your environment for maximum readability.
+- **⌨️ Global Access Shortcut**: Added **`Alt + L`** as the universal command to instantly summon the AI Chat panel.
+- **📂 Dedicated Top-Level Menu**: A new **LocalPilot** menu is now available directly in the Visual Studio menu bar for rapid access to chat and settings.
+- **🖼️ Minimalist Branding**: Refined the chat interface by removing redundant text labels, focusing purely on a clean, icon-centric AI persona.
+- **🧠 Intelligent Status Tracking**: Resolved the "sticky thinking" bug; the AI now correctly transitions from "thinking" to "worked for X.Xs" without clutter.
+- **🛡️ Robust Stream Rendering**: Hardened the UI update loop against rapid-fire AI streaming, preventing flickering and ensuring smooth output.
+
+### 🔨 v1.1 - The Stability Update
 **"The production-ready overhaul focusing on reliability and UX."**
 
 - **✅ Selection Deadlock Fix**: Fundamental refactor of selection capture to prevent UI thread hangs during Quick Actions.
