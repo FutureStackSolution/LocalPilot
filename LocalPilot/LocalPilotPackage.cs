@@ -1,6 +1,7 @@
 using LocalPilot.Chat;
 using LocalPilot.Commands;
 using LocalPilot.Options;
+using LocalPilot.Services;
 using LocalPilot.Settings;
 using Microsoft.VisualStudio.Shell;
 using System;
@@ -47,6 +48,18 @@ namespace LocalPilot
 
             // Register all commands
             await LocalPilotCommands.InitializeAsync(this);
+
+            // Auto-Index Project Context in background (v1.3)
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(2000); // Wait for the core UI to settle
+                    var ollama = new OllamaService(settings.OllamaBaseUrl);
+                    await ProjectContextService.Instance.IndexSolutionAsync(ollama);
+                }
+                catch { /* Silent failure for background indexing */ }
+            });
 
             await JoinableTaskFactory.SwitchToMainThreadAsync(cancellationToken);
         }
