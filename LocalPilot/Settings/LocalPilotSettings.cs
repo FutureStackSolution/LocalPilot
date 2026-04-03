@@ -34,7 +34,6 @@ namespace LocalPilot.Settings
         public int    ContextLinesAfter  { get; set; } = 10;
 
         // ── Chat panel ─────────────────────────────────────────────────────────
-        public bool   EnableChatPanel    { get; set; } = true;
         public int    ChatHistoryMaxItems { get; set; } = 50;
 
         // ── Code Actions ──────────────────────────────────────────────────────

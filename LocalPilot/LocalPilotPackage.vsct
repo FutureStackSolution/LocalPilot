@@ -26,8 +26,8 @@
     </Groups>
 
     <Menus>
-      <Menu guid="guidLocalPilotCmdSet" id="LocalPilotMenu" priority="0x0100" type="Menu">
-        <Parent guid="guidLocalPilotCmdSet" id="LocalPilotMenuGroup"/>
+      <Menu guid="guidLocalPilotCmdSet" id="LocalPilotMenu" priority="0x0600" type="Menu">
+        <Parent guid="guidSHLMainMenu" id="IDG_VS_MM_MAINMENU"/>
         <Strings>
           <ButtonText>LocalPilot</ButtonText>
         </Strings>
@@ -43,13 +43,11 @@
 
     <Buttons>
       <Button guid="guidLocalPilotCmdSet" id="cmdidOpenChat" priority="0x0010" type="Button">
-        <!-- Make Other Windows the PRIMARY parent for better discovery -->
-        <Parent guid="guidSHLMainMenu" id="IDG_VS_WND_OTRWND"/>
+        <Parent guid="guidLocalPilotCmdSet" id="LocalPilotMenu"/> 
         <Strings>
           <ButtonText>LocalPilot Chat</ButtonText>
           <ToolTipText>Open the LocalPilot AI Chat panel</ToolTipText>
         </Strings>
-        <CommandFlag>DynamicVisibility</CommandFlag>
       </Button>
 
       <Button guid="guidLocalPilotCmdSet" id="cmdidExplainCode" priority="0x0101" type="Button">
@@ -110,23 +108,24 @@
   </Commands>
 
   <CommandPlacements>
-    <!-- Fallback placement in Tools -->
+    <!-- 1. PLACEMENT: Top-Level LocalPilot Menu (Prime Discovery) -->
+    <CommandPlacement guid="guidLocalPilotCmdSet" id="cmdidOpenChat" priority="0x0010">
+      <Parent guid="guidLocalPilotCmdSet" id="LocalPilotMenu"/>
+    </CommandPlacement>
+    
+    <!-- 2. PLACEMENT: Tools Group (Legacy Support) -->
     <CommandPlacement guid="guidLocalPilotCmdSet" id="cmdidOpenChat" priority="0x0100">
       <Parent guid="guidLocalPilotCmdSet" id="LocalPilotMenuGroup"/>
     </CommandPlacement>
 
-    <!-- Placement for Other Windows (v17 style) -->
-    <CommandPlacement guid="guidLocalPilotCmdSet" id="cmdidOpenChat" priority="0x0100">
-      <Parent guid="guidSHLMainMenu" id="IDG_VS_WND_OTRWND"/>
-    </CommandPlacement>
   </CommandPlacements>
 
   <Symbols>
-    <!-- We don't need to define IDG_VS_WND_OTRWND or guidSHLMainMenu if they are in headers, 
-         but ensuring the GUID is correct. Standard SHL main menu. -->
+    <!-- Standard Visual Studio Symbols -->
     <GuidSymbol name="guidSHLMainMenu" value="{d309f791-903f-11d0-9efc-00a0c911004f}">
-      <IDSymbol name="IDG_VS_WND_OTRWND" value="0x0001" />
+      <IDSymbol name="IDG_VS_MM_MAINMENU" value="0x0001" />
     </GuidSymbol>
+    <GuidSymbol name="guidVSStd97"     value="{5efc7975-14bc-11cf-9b2b-00aa00573819}"/>
 
     <GuidSymbol name="guidLocalPilotPackage" value="{5a6b34f5-329a-497a-956a-7f055a948b94}"/>
 
@@ -155,4 +154,10 @@
       <IDSymbol name="bmpTest"     value="6"/>
     </GuidSymbol>
   </Symbols>
+
+  <!-- Global Hotkeys for summoned AI -->
+  <KeyBindings>
+    <KeyBinding guid="guidLocalPilotCmdSet" id="cmdidOpenChat" editor="guidVSStd97" key1="L" mod1="Alt"/>
+  </KeyBindings>
+
 </CommandTable>

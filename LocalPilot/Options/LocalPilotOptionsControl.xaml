@@ -344,11 +344,6 @@
                 <CheckBox x:Name="ChkUnitTest" Content="Generate Unit Test" Style="{DynamicResource LpCheckStyle}"/>
             </UniformGrid>
 
-            <!-- ═══ Section 5: Chat Panel ════════════════════════════════════ -->
-            <TextBlock Text="💬  Chat Panel" Style="{DynamicResource LpSectionHeader}"/>
-
-            <CheckBox x:Name="ChkEnableChat" Content="Enable LocalPilot Chat Panel"
-                      Style="{DynamicResource LpCheckStyle}"/>
 
             <!-- ═══ Section 6: UI ════════════════════════════════════════════ -->
             <TextBlock Text="🎨  Interface" Style="{DynamicResource LpSectionHeader}"/>
