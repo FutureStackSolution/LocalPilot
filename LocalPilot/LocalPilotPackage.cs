@@ -1,6 +1,7 @@
 using LocalPilot.Chat;
 using LocalPilot.Commands;
 using LocalPilot.Options;
+using LocalPilot.Services;
 using LocalPilot.Settings;
 using Microsoft.VisualStudio.Shell;
 using System;
@@ -47,6 +48,21 @@ namespace LocalPilot
 
             // Register all commands
             await LocalPilotCommands.InitializeAsync(this);
+
+            // Auto-Index Project Context in background (v1.3)
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    // v2.0 Enterprise Intelligence: Wait for VS Solution to fully stabilize
+                    await Task.Delay(10000, cancellationToken).ConfigureAwait(false); 
+                    
+                    var ollama = new OllamaService(settings.OllamaBaseUrl);
+                    LocalPilotLogger.Log("[Autopilot] Indexing project context in background...");
+                    await ProjectContextService.Instance.IndexSolutionAsync(ollama, cancellationToken);
+                }
+                catch { /* Quiet skip - background indexing is best-effort */ }
+            }, cancellationToken);
 
             await JoinableTaskFactory.SwitchToMainThreadAsync(cancellationToken);
         }

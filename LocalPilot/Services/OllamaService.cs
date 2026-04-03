@@ -64,6 +64,40 @@ namespace LocalPilot.Services
             }
             catch { return false; }
         }
+        // ── Semantic Embeddings (New in v1.2) ──────────────────────────────────
+        /// <summary>
+        /// Generates a vector embedding for the given text using Ollama.
+        /// This is the heart of semantic search and project context.
+        /// </summary>
+        public async Task<float[]> GetEmbeddingsAsync(string model, string prompt, CancellationToken ct = default)
+        {
+            try
+            {
+                var payload = new
+                {
+                    model,
+                    prompt
+                };
+
+                var body = JsonConvert.SerializeObject(payload);
+                var content = new StringContent(body, Encoding.UTF8, "application/json");
+
+                var response = await _httpClient.PostAsync($"{_baseUrl}/api/embeddings", content, ct).ConfigureAwait(false);
+                if (!response.IsSuccessStatusCode) return null;
+
+                var json = await response.Content.ReadAsStringAsync();
+                var obj = JObject.Parse(json);
+                var embeddingArray = obj["embedding"] as JArray;
+                
+                if (embeddingArray == null) return null;
+                return embeddingArray.ToObject<float[]>();
+            }
+            catch (Exception ex)
+            {
+                LocalPilotLogger.LogError($"[Ollama] Embedding failed: {ex.Message}", ex);
+                return null;
+            }
+        }
 
         // ── Code completion (generate endpoint) ───────────────────────────────
         /// <summary>Yields tokens one by one as they stream from Ollama.</summary>

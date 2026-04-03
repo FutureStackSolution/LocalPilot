@@ -78,7 +78,6 @@ namespace LocalPilot.Options
             ChkReview.IsChecked       = s.EnableReview;
             ChkFix.IsChecked          = s.EnableFix;
             ChkUnitTest.IsChecked     = s.EnableUnitTest;
-            ChkEnableChat.IsChecked   = s.EnableChatPanel;
             ChkStatusBar.IsChecked    = s.ShowStatusBar;
             ChkEnableLogging.IsChecked = s.EnableLogging;
 
@@ -126,7 +125,6 @@ namespace LocalPilot.Options
             s.EnableReview           = ChkReview.IsChecked         == true;
             s.EnableFix              = ChkFix.IsChecked            == true;
             s.EnableUnitTest         = ChkUnitTest.IsChecked       == true;
-            s.EnableChatPanel        = ChkEnableChat.IsChecked     == true;
             s.ShowStatusBar          = ChkStatusBar.IsChecked      == true;
             s.EnableLogging          = ChkEnableLogging.IsChecked == true;
 

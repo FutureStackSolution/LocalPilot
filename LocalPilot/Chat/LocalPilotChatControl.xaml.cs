@@ -66,7 +66,8 @@ namespace LocalPilot.Chat
         private void OnUnloaded(object sender, RoutedEventArgs e)
         {
             VSColorTheme.ThemeChanged -= OnThemeChanged;
-            _cts?.Cancel(); // Signal cancellation but do not dispose, to prevent crashes on subsequent activations.
+            // No longer canceling _cts here to allow background AI streaming to finish 
+            // even if the user switches tabs or focuses the editor.
         }
 
         private void OnThemeChanged(ThemeChangedEventArgs e) => UpdateBrushes();
@@ -81,6 +82,14 @@ namespace LocalPilot.Chat
                 SetResourceBrush("LpMenuBgBrush",     VsBrushes.ToolWindowBackgroundKey,  Brushes.White);
                 SetResourceBrush("LpMenuBorderBrush", VsBrushes.ToolWindowBorderKey,      Brushes.Gray);
                 SetResourceBrush("LpMutedFgBrush",    VsBrushes.GrayTextKey,              Brushes.DarkGray);
+                
+                // 🎨 Theme-Aware Accent & Bubble Tinting
+                var accentBrush = (Brush)Application.Current.FindResource(VsBrushes.ControlLinkTextKey) ?? BrushAccent;
+                this.Resources["LpAccentBrush"] = accentBrush;
+                
+                var accentColor = (accentBrush as SolidColorBrush)?.Color ?? Color.FromRgb(0x7C, 0x6A, 0xF7);
+                var tintColor = Color.FromArgb(0x18, accentColor.R, accentColor.G, accentColor.B);
+                this.Resources["LpUserBubbleBgBrush"] = new SolidColorBrush(tintColor);
                 
                 ChatScroll.Background = (Brush)this.Resources["LpWindowBgBrush"];
             }
@@ -108,9 +117,11 @@ namespace LocalPilot.Chat
             _history.Add(new ChatMessage
             {
                 Role    = "system",
-                Content = "You are LocalPilot, an expert AI coding assistant. " +
-                          "Help the user write, explain, refactor, document and debug code. " +
-                          "Be concise, precise, and always use proper code formatting."
+                Content = "You are LocalPilot, a world-class AI pair programmer for Visual Studio. " +
+                          "Your goal is to help the user write, explain, and refactor production-ready, high-performance code. " +
+                          "RULES: 1. Be extremely concise and skip pleasantries. 2. Use professional, clean markdown formatting. " +
+                          "3. Always prioritize the provided <PROJECT_SOURCE_CONTEXT> if available. " +
+                          "4. If you don't know the answer from the context, admit it instead of hallucinating."
             });
 
             // Modern introductory text is now partly in XAML, but we can add a greet
@@ -273,17 +284,17 @@ namespace LocalPilot.Chat
             {
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
 
-                var dte = Microsoft.VisualStudio.Shell.Package.GetGlobalService(typeof(EnvDTE.DTE)) as EnvDTE.DTE;
+                var dte = Microsoft.VisualStudio.Shell.Package.GetGlobalService(typeof(global::EnvDTE.DTE)) as global::EnvDTE.DTE;
 
                 // 1. DTE ActiveWindow
-                if (dte?.ActiveWindow?.Document?.Selection is EnvDTE.TextSelection sel1 && !string.IsNullOrWhiteSpace(sel1.Text))
+                if (dte?.ActiveWindow?.Document?.Selection is global::EnvDTE.TextSelection sel1 && !string.IsNullOrWhiteSpace(sel1.Text))
                 {
                     LocalPilotLogger.Log("[Chat] Found selection via DTE.ActiveWindow");
                     return sel1.Text;
                 }
 
                 // 2. DTE ActiveDocument
-                if (dte?.ActiveDocument?.Selection is EnvDTE.TextSelection sel2 && !string.IsNullOrWhiteSpace(sel2.Text))
+                if (dte?.ActiveDocument?.Selection is global::EnvDTE.TextSelection sel2 && !string.IsNullOrWhiteSpace(sel2.Text))
                 {
                     LocalPilotLogger.Log("[Chat] Found selection via DTE.ActiveDocument");
                     return sel2.Text;
@@ -354,6 +365,7 @@ namespace LocalPilot.Chat
                 await Task.Yield(); // Yield again before starting the main loop
                 string finalMd = string.Empty;
                 var sb = new StringBuilder();
+                var stopwatch = System.Diagnostics.Stopwatch.StartNew();
                 RichTextBox localStreamingBlock = null;
                 StackPanel localContainer = null;
                 bool forceFullMarkdown = false;
@@ -369,6 +381,23 @@ namespace LocalPilot.Chat
                     int tokenCount = 0;
                     int batchSize = 12;
                     var uiBuffer = new StringBuilder();
+
+                    // 1. PROJECT CONTEXT INTEGRATION (New in v1.2) - History-Aware Search
+                    // Retrieve top semantically relevant chunks based on recent conversation flow
+                    var contextHistory = activeHistory.Skip(Math.Max(0, activeHistory.Count - 3)).Select(m => m.Content);
+                    string searchQuery = string.Join(" ", contextHistory);
+                    
+                    string projectContext = await ProjectContextService.Instance.SearchContextAsync(_ollama, searchQuery, topN: 5);
+                    
+                    if (!string.IsNullOrEmpty(projectContext))
+                    {
+                        // Add as a 'Fresh Grounding' message right before the user's latest turn
+                        activeHistory.Add(new ChatMessage 
+                        { 
+                            Role = "system", 
+                            Content = projectContext 
+                        });
+                    }
 
                     // Buffer for incoming text to avoid hammering the UI thread
                     await foreach (var chunk in _ollama.StreamChatAsync(model, activeHistory, options, token).ConfigureAwait(false))
@@ -433,10 +462,38 @@ namespace LocalPilot.Chat
                 }
 
                 // Phase 2: Final UI Cleanup (Outside the loop to avoid partial renders)
+                stopwatch.Stop();
+                double seconds = stopwatch.Elapsed.TotalSeconds;
+
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                 if (!string.IsNullOrEmpty(finalMd) && localContainer != null)
                 {
                     RenderFullMarkdown(localContainer, finalMd);
+                    
+                    // Update Header Metric (Prestige Style) - Robust WPF Tree Traversal
+                    try 
+                    {
+                        var border = System.Windows.Media.VisualTreeHelper.GetParent(localContainer) as System.Windows.FrameworkElement;
+                        var bubbleContainer = System.Windows.Media.VisualTreeHelper.GetParent(border) as System.Windows.Controls.StackPanel;
+                        var header = bubbleContainer?.Children[0] as System.Windows.Controls.StackPanel;
+                        
+                        if (header?.Children.Count > 1 && header.Children[1] is System.Windows.Controls.TextBlock metric)
+                        {
+                            if (seconds >= 60)
+                            {
+                                int mins = (int)seconds / 60;
+                                double secs = seconds % 60;
+                                metric.Text = $"worked for {mins}m {secs:F1}s";
+                            }
+                            else
+                            {
+                                metric.Text = $"worked for {seconds:F1}s";
+                            }
+                            metric.FontWeight = System.Windows.FontWeights.Bold;
+                            metric.Foreground = (System.Windows.Media.Brush)this.Resources["LpAccentBrush"];
+                        }
+                    } catch { /* Handle edge cases where UI structure changed during stream */ }
+
                     _history.Add(new ChatMessage { Role = "assistant", Content = finalMd });
                     TrimHistory();
                 }
@@ -456,18 +513,25 @@ namespace LocalPilot.Chat
         // ── UI helpers ────────────────────────────────────────────────────────
         private void AppendUserBubble(string text)
         {
+            var bubbleContainer = new StackPanel { Margin = new Thickness(0, 8, 8, 8) };
+            
+            // 👤 Role Header (Right-Aligned)
+            var header = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0,0,4,2) };
+            header.Children.Add(new TextBlock { Text = "YOU", FontSize = 9, FontWeight = FontWeights.Bold, Foreground = (Brush)this.Resources["LpMutedFgBrush"], VerticalAlignment = VerticalAlignment.Center });
+            header.Children.Add(new TextBlock { Text = "\uE77B", FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 10, Foreground = (Brush)this.Resources["LpMutedFgBrush"], Margin = new Thickness(4,0,0,0) });
+            bubbleContainer.Children.Add(header);
+
             var border = new Border
             {
-                Background      = ThemeSurface,
-                BorderBrush     = new SolidColorBrush(Color.FromArgb(0x20, 0x7C, 0x6A, 0xF7)),
+                Background      = (Brush)this.Resources["LpUserBubbleBgBrush"],
+                BorderBrush     = (Brush)this.Resources["LpAccentBrush"],
+                Opacity         = 0.95, // Slight transparency for a glass feel
                 BorderThickness = new Thickness(1),
                 CornerRadius    = new CornerRadius(12, 12, 2, 12),
                 Padding         = new Thickness(14, 10, 14, 10),
-                Margin          = new Thickness(24, 4, 0, 4),
+                Margin          = new Thickness(40, 0, 0, 0),
                 HorizontalAlignment = HorizontalAlignment.Right
             };
-
-            var container = new StackPanel { Orientation = Orientation.Vertical };
 
             var body = new RichTextBox
             {
@@ -484,24 +548,41 @@ namespace LocalPilot.Chat
             };
             SetRichText(body, text);
 
-            // container.Children.Add(label); // Removed
-            container.Children.Add(body);
-            border.Child = container;
-            MessagesContainer.Children.Add(border);
+            border.Child = body;
+            bubbleContainer.Children.Add(border);
+            MessagesContainer.Children.Add(bubbleContainer);
 
             ChatScroll.ScrollToEnd();
         }
 
         private RichTextBox AppendAIBubble(string text)
         {
+            var bubbleContainer = new StackPanel { Margin = new Thickness(8, 8, 0, 8) };
+
+            // 🤖 Role Header (Left-Aligned - Branded Prestige Style)
+            var header = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(4,0,0,5) };
+            
+            // Integrated Official Brand Logo
+            try {
+                var logoBrush = new Image { 
+                    Source = new System.Windows.Media.Imaging.BitmapImage(new Uri("pack://application:,,,/LocalPilot;component/Assets/Logo_Concept_Minimalist.png")),
+                    Width = 14, Height = 14, Margin = new Thickness(0,0,6,0),
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                header.Children.Add(logoBrush);
+            } catch { /* Handle missing asset gracefully */ }
+
+            header.Children.Add(new TextBlock { Text = "(thinking...)", FontSize = 9, FontWeight = FontWeights.Normal, Foreground = (Brush)this.Resources["LpMutedFgBrush"], VerticalAlignment = VerticalAlignment.Center });
+            bubbleContainer.Children.Add(header);
+
             var border = new Border
             {
                 Background   = ThemeWindowBg,
-                BorderBrush  = ThemeBorder,
-                BorderThickness = new Thickness(1),
+                BorderBrush  = Brushes.Transparent, // Removed border for AI (Antigravity Style)
+                BorderThickness = new Thickness(0),
                 CornerRadius = new CornerRadius(12, 12, 12, 2),
                 Padding      = new Thickness(14, 10, 14, 10),
-                Margin       = new Thickness(0, 4, 8, 4),
+                Margin       = new Thickness(0, 0, 40, 0),
                 HorizontalAlignment = HorizontalAlignment.Left,
                 MaxWidth     = 1600
             };
@@ -510,11 +591,11 @@ namespace LocalPilot.Chat
 
             if (string.IsNullOrEmpty(text))
             {
-                // Streaming placeholder
                 var body = CreateRichTextBox();
                 container.Children.Add(body);
                 border.Child = container;
-                MessagesContainer.Children.Add(border);
+                bubbleContainer.Children.Add(border);
+                MessagesContainer.Children.Add(bubbleContainer);
                 ChatScroll.ScrollToEnd();
                 return body;
             }
@@ -524,7 +605,8 @@ namespace LocalPilot.Chat
             }
 
             border.Child = container;
-            MessagesContainer.Children.Add(border);
+            bubbleContainer.Children.Add(border);
+            MessagesContainer.Children.Add(bubbleContainer);
             ChatScroll.ScrollToEnd();
 
             return null;
@@ -631,25 +713,40 @@ namespace LocalPilot.Chat
             return item;
         }
 
-        private Brush GetVsBrush(Microsoft.VisualStudio.Shell.ThemeResourceKey key)
-        {
-            return (Brush)Application.Current.FindResource(key);
-        }
-
         private void RenderFullMarkdown(StackPanel container, string md)
         {
             if (string.IsNullOrEmpty(md)) return;
             container.Children.Clear();
 
-            // Regex designed to capture code fences and everything in between
-            // This handles ```lang ... ``` blocks properly
+            // 🎨 Theme-Aware Resolution with Safe Fallbacks
+            var accentBrush = (Brush)this.FindResource("LpAccentBrush") ?? BrushAccent;
+            var mutedBrush = (Brush)this.FindResource("LpMutedFgBrush") ?? Brushes.Gray;
+
+            // 1. PROJECT CONTEXT INDICATOR (v2.0)
+            if (md.Contains("--- PROJECT_SOURCE_CONTEXT ---"))
+            {
+                var indicator = new Border
+                {
+                    Background = new SolidColorBrush(Color.FromArgb(0x10, 0x00, 0x00, 0x00)),
+                    BorderBrush = accentBrush,
+                    BorderThickness = new Thickness(2, 0, 0, 0),
+                    Padding = new Thickness(10, 6, 10, 6),
+                    Margin = new Thickness(0, 0, 0, 16),
+                    CornerRadius = new CornerRadius(2)
+                };
+                var sp = new StackPanel { Orientation = Orientation.Horizontal };
+                sp.Children.Add(new TextBlock { Text = "\uE945", FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 10, Foreground = accentBrush, Margin = new Thickness(0,0,6,0), VerticalAlignment = VerticalAlignment.Center });
+                sp.Children.Add(new TextBlock { Text = "PROJECT INTELLIGENCE ACTIVE", FontSize = 9, FontWeight = FontWeights.Bold, Foreground = accentBrush, VerticalAlignment = VerticalAlignment.Center });
+                indicator.Child = sp;
+                container.Children.Add(indicator);
+            }
+
             var regex = new System.Text.RegularExpressions.Regex(@"```([\s\S]*?)```");
             var matches = regex.Matches(md);
             int lastIndex = 0;
 
             foreach (System.Text.RegularExpressions.Match match in matches)
             {
-                // 1. Render text BEFORE the code block
                 string textPart = md.Substring(lastIndex, match.Index - lastIndex);
                 if (!string.IsNullOrWhiteSpace(textPart))
                 {
@@ -658,75 +755,89 @@ namespace LocalPilot.Chat
                     container.Children.Add(rtb);
                 }
 
-                // 2. Render THE CODE BLOCK itself
+                // 2. ENTERPRISE CODE BLOCK (v2.0)
                 string rawCode = match.Groups[1].Value;
-                
-                // Strip optional language tag (like csharp, python) from the first line
+                string lang = "CODE";
                 string cleanCode = rawCode;
                 int firstNewline = rawCode.IndexOf('\n');
                 if (firstNewline >= 0)
                 {
                     string firstLine = rawCode.Substring(0, firstNewline).Trim();
-                    if (!string.IsNullOrEmpty(firstLine) && !firstLine.Contains(" "))
+                    if (!string.IsNullOrEmpty(firstLine) && !firstLine.Contains(" ") && !firstLine.Contains("\n"))
+                    {
+                        lang = firstLine.ToUpper();
                         cleanCode = rawCode.Substring(firstNewline + 1).Trim();
+                    }
                 }
                 cleanCode = cleanCode.Trim();
 
-                var grid = new Grid { Margin = new Thickness(0, 8, 0, 8) };
-                var codeBorder = new Border {
-                    Background = new SolidColorBrush(Color.FromArgb(0x06, 0x00, 0x00, 0x00)),
-                    BorderBrush = new SolidColorBrush(Color.FromArgb(0x10, 0x7C, 0x6A, 0xF7)),
-                    BorderThickness = new Thickness(1),
-                    CornerRadius = new CornerRadius(8),
-                    Padding = new Thickness(10)
-                };
-                
-                var codeRtb = CreateRichTextBox();
-                if (codeRtb.Document.Blocks.FirstBlock is Paragraph p)
-                {
-                    HighlightCode(p, cleanCode);
-                }
-                else
-                {
-                    SetRichText(codeRtb, cleanCode);
-                }
-                
-                codeBorder.Child = codeRtb;
-                grid.Children.Add(codeBorder);
+                var codeGrid = new Grid { Margin = new Thickness(0, 8, 0, 16) };
+                codeGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                codeGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
-                var copyBtn = new Button {
-                    Content = "📋 Copy Code",
-                    HorizontalAlignment = HorizontalAlignment.Right,
-                    VerticalAlignment = VerticalAlignment.Top,
-                    Margin = new Thickness(0, 4, 4, 0),
-                    Padding = new Thickness(6, 2, 6, 2),
-                    FontSize = 9,
-                    Cursor = Cursors.Hand,
-                    ToolTip = "Copy this code block",
-                    Background = new SolidColorBrush(Color.FromArgb(0x40, 0x00, 0x00, 0x00)),
-                    Foreground = Brushes.White,
-                    BorderThickness = new Thickness(0)
+                // 🏗️ Header Bar
+                var headerBar = new Border
+                {
+                    Background = new SolidColorBrush(Color.FromArgb(0x1A, 0x80, 0x80, 0x80)),
+                    BorderBrush = new SolidColorBrush(Color.FromArgb(0x20, 0x80, 0x80, 0x80)),
+                    BorderThickness = new Thickness(1, 1, 1, 0),
+                    CornerRadius = new CornerRadius(6, 6, 0, 0),
+                    Padding = new Thickness(12, 4, 8, 4)
                 };
-
-                copyBtn.Click += (s, e) => {
-                    Clipboard.SetText(cleanCode);
-                    copyBtn.Content = "✓ Copied";
+                var headerStack = new DockPanel { LastChildFill = false };
+                headerStack.Children.Add(new TextBlock { Text = lang, FontSize = 9, FontWeight = FontWeights.Bold, Foreground = mutedBrush, VerticalAlignment = VerticalAlignment.Center });
+                
+                var copyBtn = new Button { 
+                    Style = (Style)this.FindResource("IconButtonStyle"), 
+                    ToolTip = "Copy code to clipboard",
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Padding = new Thickness(6, 2, 6, 2)
+                };
+                DockPanel.SetDock(copyBtn, Dock.Right);
+                var copyStack = new StackPanel { Orientation = Orientation.Horizontal };
+                copyStack.Children.Add(new TextBlock { Text = "\uE8C8", FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 10, Margin = new Thickness(0,0,6,0), VerticalAlignment = VerticalAlignment.Center });
+                var copyText = new TextBlock { Text = "COPY", FontSize = 8, FontWeight = FontWeights.Bold, VerticalAlignment = VerticalAlignment.Center };
+                copyStack.Children.Add(copyText);
+                copyBtn.Content = copyStack;
+                copyBtn.Click += (s, e) => { 
+                    Clipboard.SetText(cleanCode); 
+                    copyText.Text = "COPIED!";
                     _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () => {
-                        await Task.Delay(1500);
+                        await Task.Delay(2000);
                         await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                        copyBtn.Content = "📋 Copy Code";
+                        copyText.Text = "COPY";
                     });
                 };
+                
+                headerStack.Children.Add(copyBtn);
+                headerBar.Child = headerStack;
+                Grid.SetRow(headerBar, 0);
+                codeGrid.Children.Add(headerBar);
 
-                grid.Children.Add(copyBtn);
-                container.Children.Add(grid);
+                // 📝 Code Content
+                var contentBorder = new Border
+                {
+                    Background = new SolidColorBrush(Color.FromArgb(0x0A, 0x00, 0x00, 0x00)),
+                    BorderBrush = new SolidColorBrush(Color.FromArgb(0x20, 0x80, 0x80, 0x80)),
+                    BorderThickness = new Thickness(1),
+                    CornerRadius = new CornerRadius(0, 0, 6, 6),
+                    Padding = new Thickness(12)
+                };
+                var codeRtb = CreateRichTextBox();
+                if (codeRtb.Document.Blocks.FirstBlock is Paragraph p) HighlightCode(p, cleanCode);
+                else SetRichText(codeRtb, cleanCode);
+                
+                contentBorder.Child = codeRtb;
+                Grid.SetRow(contentBorder, 1);
+                codeGrid.Children.Add(contentBorder);
+
+                container.Children.Add(codeGrid);
                 lastIndex = match.Index + match.Length;
             }
 
-            // 3. Render any text AFTER the last code block
             if (lastIndex < md.Length)
             {
-                var textTail = md.Substring(lastIndex);
+                string textTail = md.Substring(lastIndex);
                 if (!string.IsNullOrWhiteSpace(textTail))
                 {
                     var rtbTail = CreateRichTextBox();
@@ -919,7 +1030,9 @@ namespace LocalPilot.Chat
             MessagesContainer.Children.Clear();
             _history.Clear();
             ShowWelcomeMessage();
+            AppendAIBubble("Conversation cleared. Project context will still be used if indexed.");
         }
+
 
         private void BtnStop_Click(object sender, RoutedEventArgs e)
         {

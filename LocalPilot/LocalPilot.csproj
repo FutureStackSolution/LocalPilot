@@ -57,6 +57,7 @@
     <!-- Services -->
     <Compile Include="Services\OllamaService.cs" />
     <Compile Include="Services\LocalPilotLogger.cs" />
+    <Compile Include="Services\ProjectContextService.cs" />
     <!-- Settings -->
     <Compile Include="Settings\LocalPilotSettings.cs" />
     <!-- Options -->
@@ -122,7 +123,7 @@
       <Version>17.0.549</Version>
     </PackageReference>
     <PackageReference Include="Microsoft.VisualStudio.SDK" Version="17.0.31902.203" />
-    <PackageReference Include="Microsoft.VSSDK.BuildTools" Version="17.0.31902.203" />
+    <PackageReference Include="Microsoft.VSSDK.BuildTools" Version="17.1.4054" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.1" />
     <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="9.0.0" />
     <PackageReference Include="System.Runtime.CompilerServices.Unsafe" Version="6.1.0" />

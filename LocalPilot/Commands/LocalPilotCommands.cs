@@ -43,7 +43,7 @@ namespace LocalPilot.Commands
             var instance = new LocalPilotCommands(package);
 
             // Tools menu items (Visibility toggled by settings)
-            Register(cmdService, CmdIdOpenChat,     instance.OpenChat,     () => LocalPilotSettings.Instance.EnableChatPanel);
+            Register(cmdService, CmdIdOpenChat,     instance.OpenChat);
             Register(cmdService, CmdIdOpenOptions,  instance.OpenOptions);
 
             // Context menu items (Visibility toggled by settings)
