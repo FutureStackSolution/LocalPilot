@@ -23,6 +23,8 @@ namespace LocalPilot.Chat
         private readonly OllamaService _ollama;
         private readonly List<ChatMessage> _history = new List<ChatMessage>();
         private CancellationTokenSource _cts;
+        private string _lastAuthoringCode = null; // Buffer for original code during Refactor/Fix
+        private string _currentAction = null;     // Tracks active quick action context
         private int _lastStreamId = 0; // Class-level ID to track active stream
 
         private Brush ThemeWindowBg => (Brush)this.Resources["LpWindowBgBrush"];
@@ -90,6 +92,34 @@ namespace LocalPilot.Chat
                 var accentColor = (accentBrush as SolidColorBrush)?.Color ?? Color.FromRgb(0x7C, 0x6A, 0xF7);
                 var tintColor = Color.FromArgb(0x18, accentColor.R, accentColor.G, accentColor.B);
                 this.Resources["LpUserBubbleBgBrush"] = new SolidColorBrush(tintColor);
+
+                // 🌈 Theme-Aware Syntax Palette
+                bool isDark = true;
+                var bgBrush = Application.Current.FindResource(VsBrushes.ToolWindowBackgroundKey) as SolidColorBrush;
+                if (bgBrush != null)
+                {
+                    var c = bgBrush.Color;
+                    isDark = (c.R + c.G + c.B) / 3.0 < 128;
+                }
+
+                if (isDark)
+                {
+                    this.Resources["LpCodeKwBrush"]      = new SolidColorBrush(Color.FromRgb(0x56, 0x9C, 0xD6)); // Blue
+                    this.Resources["LpCodeCommentBrush"] = new SolidColorBrush(Color.FromRgb(0x6A, 0x99, 0x55)); // Green
+                    this.Resources["LpCodeStringBrush"]  = new SolidColorBrush(Color.FromRgb(0xD6, 0x9D, 0x85)); // Orange
+                    this.Resources["LpCodeNumberBrush"]  = new SolidColorBrush(Color.FromRgb(0xB5, 0xCE, 0xA8)); // Light Green
+                    this.Resources["LpCodeTypeBrush"]    = new SolidColorBrush(Color.FromRgb(0x4E, 0xC9, 0xB0)); // Teal
+                    this.Resources["LpCodeMethodBrush"]  = new SolidColorBrush(Color.FromRgb(0xDC, 0xDC, 0xAA)); // Yellow
+                }
+                else
+                {
+                    this.Resources["LpCodeKwBrush"]      = new SolidColorBrush(Color.FromRgb(0x00, 0x00, 0xFF)); // Pure Blue
+                    this.Resources["LpCodeCommentBrush"] = new SolidColorBrush(Color.FromRgb(0x00, 0x80, 0x00)); // Dark Green
+                    this.Resources["LpCodeStringBrush"]  = new SolidColorBrush(Color.FromRgb(0xA3, 0x15, 0x15)); // Dark Red
+                    this.Resources["LpCodeNumberBrush"]  = new SolidColorBrush(Color.FromRgb(0x09, 0x86, 0x58)); // Deep Teal
+                    this.Resources["LpCodeTypeBrush"]    = new SolidColorBrush(Color.FromRgb(0x26, 0x7F, 0x99)); // Blue-Green
+                    this.Resources["LpCodeMethodBrush"]  = new SolidColorBrush(Color.FromRgb(0x79, 0x5E, 0x26)); // Brown
+                }
                 
                 ChatScroll.Background = (Brush)this.Resources["LpWindowBgBrush"];
             }
@@ -195,6 +225,7 @@ namespace LocalPilot.Chat
         private async Task HandleQuickActionAsync(string action, string preCapturedSelection = null)
         {
             if (string.IsNullOrEmpty(action)) return;
+            _currentAction = action;
             LocalPilotLogger.Log($"[Chat] Handling Quick Action: {action}");
 
             // Execute the action logic in a background-friendly way
@@ -208,6 +239,12 @@ namespace LocalPilot.Chat
                     {
                         selectedCode = await TryGetEditorSelectionAsync().ConfigureAwait(false);
                     }
+                    
+                    // Snapshot original for Diff
+                    if (action == "refactor" || action == "fix")
+                        _lastAuthoringCode = selectedCode;
+                    else
+                        _lastAuthoringCode = null;
 
                     if (string.IsNullOrWhiteSpace(selectedCode))
                     {
@@ -268,10 +305,10 @@ namespace LocalPilot.Chat
             return action switch
             {
                 "explain"  => $"Explain the following code clearly and concisely:{codeBlock}",
-                "refactor" => $"Refactor the following code to improve readability, performance and best practices. Show the improved version:{codeBlock}",
+                "refactor" => $"Refactor the following code to improve readability, performance and best practices. RETURN ONLY THE REFACTORED CODE BLOCK without extra explanation if possible:{codeBlock}",
                 "document" => $"Add XML documentation comments (summary, params, returns) for the following code and return only the documented code block:{codeBlock}",
                 "review"   => $"Perform a rigorous security and quality review of the following code. Identify potential bugs, performance bottlenecks, and security vulnerabilities. Provide specific, actionable suggestions for improvement:{codeBlock}",
-                "fix"      => $"Identify and fix all issues in the following code:{codeBlock}",
+                "fix"      => $"Identify and fix all issues in the following code. RETURN ONLY THE FIXED CODE BLOCK without extra explanation if possible:{codeBlock}",
                 "test"     => $"Write comprehensive unit tests using xUnit for the following code:{codeBlock}",
                 _          => string.Empty
             };
@@ -470,29 +507,30 @@ namespace LocalPilot.Chat
                 {
                     RenderFullMarkdown(localContainer, finalMd);
                     
-                    // Update Header Metric (Prestige Style) - Robust WPF Tree Traversal
-                    try 
-                    {
-                        var border = System.Windows.Media.VisualTreeHelper.GetParent(localContainer) as System.Windows.FrameworkElement;
-                        var bubbleContainer = System.Windows.Media.VisualTreeHelper.GetParent(border) as System.Windows.Controls.StackPanel;
-                        var header = bubbleContainer?.Children[0] as System.Windows.Controls.StackPanel;
-                        
-                        if (header?.Children.Count > 1 && header.Children[1] is System.Windows.Controls.TextBlock metric)
+                        // Update Header Metric (Prestige Style) - Robust WPF Tree Traversal
+                        try 
                         {
-                            if (seconds >= 60)
+                            var border = System.Windows.Media.VisualTreeHelper.GetParent(localContainer) as System.Windows.FrameworkElement;
+                            var bubbleContainer = System.Windows.Media.VisualTreeHelper.GetParent(border) as System.Windows.Controls.StackPanel;
+                            var header = bubbleContainer?.Children[0] as System.Windows.Controls.StackPanel;
+                            
+                            var metric = header?.Children.OfType<TextBlock>().FirstOrDefault();
+                            if (metric != null)
                             {
-                                int mins = (int)seconds / 60;
-                                double secs = seconds % 60;
-                                metric.Text = $"worked for {mins}m {secs:F1}s";
+                                if (seconds >= 60)
+                                {
+                                    int mins = (int)seconds / 60;
+                                    double secs = seconds % 60;
+                                    metric.Text = $"worked for {mins}m {secs:F1}s";
+                                }
+                                else
+                                {
+                                    metric.Text = $"worked for {seconds:F1}s";
+                                }
+                                metric.FontWeight = System.Windows.FontWeights.Bold;
+                                metric.Foreground = (System.Windows.Media.Brush)this.Resources["LpAccentBrush"];
                             }
-                            else
-                            {
-                                metric.Text = $"worked for {seconds:F1}s";
-                            }
-                            metric.FontWeight = System.Windows.FontWeights.Bold;
-                            metric.Foreground = (System.Windows.Media.Brush)this.Resources["LpAccentBrush"];
-                        }
-                    } catch { /* Handle edge cases where UI structure changed during stream */ }
+                        } catch { /* Handle edge cases where UI structure changed during stream */ }
 
                     _history.Add(new ChatMessage { Role = "assistant", Content = finalMd });
                     TrimHistory();
@@ -572,7 +610,16 @@ namespace LocalPilot.Chat
                 header.Children.Add(logoBrush);
             } catch { /* Handle missing asset gracefully */ }
 
-            header.Children.Add(new TextBlock { Text = "(thinking...)", FontSize = 9, FontWeight = FontWeights.Normal, Foreground = (Brush)this.Resources["LpMutedFgBrush"], VerticalAlignment = VerticalAlignment.Center });
+            if (string.IsNullOrEmpty(text))
+            {
+                header.Children.Add(new TextBlock { 
+                    Text = "(thinking...)", 
+                    FontSize = 9, 
+                    FontWeight = FontWeights.Normal, 
+                    Foreground = (Brush)this.Resources["LpMutedFgBrush"], 
+                    VerticalAlignment = VerticalAlignment.Center 
+                });
+            }
             bubbleContainer.Children.Add(header);
 
             var border = new Border
@@ -810,6 +857,48 @@ namespace LocalPilot.Chat
                 };
                 
                 headerStack.Children.Add(copyBtn);
+
+                // 🎭 PREVIEW DIFF Button (Only for Refactor/Fix matches)
+                if ((_currentAction == "refactor" || _currentAction == "fix") && !string.IsNullOrEmpty(_lastAuthoringCode))
+                {
+                    var diffBtn = new Button { 
+                        Style = (Style)this.FindResource("IconButtonStyle"), 
+                        ToolTip = "Preview changes in Side-by-Side Diff",
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Padding = new Thickness(6, 2, 6, 2),
+                        Margin = new Thickness(0, 0, 8, 0)
+                    };
+                    DockPanel.SetDock(diffBtn, Dock.Right);
+                    var diffStack = new StackPanel { Orientation = Orientation.Horizontal };
+                    diffStack.Children.Add(new TextBlock { Text = "\uEABE", FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 10, Margin = new Thickness(0,0,6,0), VerticalAlignment = VerticalAlignment.Center });
+                    diffStack.Children.Add(new TextBlock { Text = "PREVIEW DIFF", FontSize = 8, FontWeight = FontWeights.Bold, VerticalAlignment = VerticalAlignment.Center });
+                    diffBtn.Content = diffStack;
+                    
+                    diffBtn.Click += (s, e) => { 
+                        _ = OpenDiffViewAsync(_lastAuthoringCode, cleanCode);
+                    };
+                    headerStack.Children.Add(diffBtn);
+
+                    // 🛠️ APPLY Button (The "Closer")
+                    var applyBtn = new Button { 
+                        Style = (Style)this.FindResource("IconButtonStyle"), 
+                        ToolTip = "Apply these changes to your editor",
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Padding = new Thickness(6, 2, 6, 2),
+                        Margin = new Thickness(0, 0, 8, 0)
+                    };
+                    DockPanel.SetDock(applyBtn, Dock.Right);
+                    var applyStack = new StackPanel { Orientation = Orientation.Horizontal };
+                    applyStack.Children.Add(new TextBlock { Text = "\uE8FB", FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 10, Foreground = accentBrush, Margin = new Thickness(0,0,6,0), VerticalAlignment = VerticalAlignment.Center });
+                    applyStack.Children.Add(new TextBlock { Text = "APPLY", FontSize = 8, FontWeight = FontWeights.Bold, Foreground = accentBrush, VerticalAlignment = VerticalAlignment.Center });
+                    applyBtn.Content = applyStack;
+
+                    applyBtn.Click += (s, e) => { 
+                        _ = ApplyRefactoredCodeAsync(cleanCode);
+                    };
+                    headerStack.Children.Add(applyBtn);
+                }
+
                 headerBar.Child = headerStack;
                 Grid.SetRow(headerBar, 0);
                 codeGrid.Children.Add(headerBar);
@@ -929,42 +1018,74 @@ namespace LocalPilot.Chat
             "public", "private", "protected", "internal", "static", "void", "async", "await", "task",
             "class", "namespace", "using", "var", "string", "int", "bool", "return", "if", "else",
             "foreach", "for", "while", "switch", "case", "break", "new", "try", "catch", "finally",
-            "throw", "override", "virtual", "abstract", "get", "set"
+            "throw", "override", "virtual", "abstract", "get", "set", "interface", "enum", "decimal",
+            "double", "float", "long", "short", "byte", "object", "sealed", "partial", "readonly",
+            "ref", "out", "in", "params", "is", "as", "true", "false", "null", "this", "base",
+            "typeof", "sizeof", "lock", "checked", "unchecked", "unsafe", "stackalloc", "fixed",
+            "extern", "delegate", "event", "struct", "record", "where", "yield"
         };
 
         private void HighlightCode(Paragraph p, string code)
         {
-            // Simple approach: split by non-word chars and match keywords
-            // Or use Regex for a more robust (but still lightweight) approach
-            var lines = code.Split('\n');
-            for (int lineIdx = 0; lineIdx < lines.Length; lineIdx++)
-            {
-                var line = lines[lineIdx];
-                if (line.TrimStart().StartsWith("//"))
-                {
-                    p.Inlines.Add(new Run(line) { Foreground = new SolidColorBrush(Color.FromRgb(0x6A, 0x99, 0x55)), FontFamily = ConsoleFont });
-                }
-                else
-                {
-                    // Tokenize basic parts
-                    var tokens = System.Text.RegularExpressions.Regex.Split(line, @"(\W)");
-                    foreach (var token in tokens)
-                    {
-                        var run = new Run(token) { FontFamily = ConsoleFont, FontSize = 12 };
-                        
-                        if (Array.Exists(Keywords, k => k == token))
-                            run.Foreground = new SolidColorBrush(Color.FromRgb(0x56, 0x9C, 0xD6)); // Blue Key
-                        else if (System.Text.RegularExpressions.Regex.IsMatch(token, @"^\d+$"))
-                            run.Foreground = new SolidColorBrush(Color.FromRgb(0xB5, 0xCE, 0xA8)); // Green Num
-                        else if (token.StartsWith("\"") || token.StartsWith("'"))
-                            run.Foreground = BrushCode; // Orange String
-                        else
-                            run.Foreground = ThemeWindowFg; // Normal
+            if (string.IsNullOrEmpty(code)) return;
+            p.Inlines.Clear();
+            
+            // 🎨 Theme-Aware Syntax Palette (Dynamic lookup from Resources)
+            var brushKw      = (Brush)this.Resources["LpCodeKwBrush"]      ?? new SolidColorBrush(Color.FromRgb(0x56, 0x9C, 0xD6));
+            var brushComment = (Brush)this.Resources["LpCodeCommentBrush"] ?? new SolidColorBrush(Color.FromRgb(0x6A, 0x99, 0x55));
+            var brushStr     = (Brush)this.Resources["LpCodeStringBrush"]  ?? new SolidColorBrush(Color.FromRgb(0xD6, 0x9D, 0x85));
+            var brushNum     = (Brush)this.Resources["LpCodeNumberBrush"]  ?? new SolidColorBrush(Color.FromRgb(0xB5, 0xCE, 0xA8));
+            var brushType    = (Brush)this.Resources["LpCodeTypeBrush"]    ?? new SolidColorBrush(Color.FromRgb(0x4E, 0xC9, 0xB0));
+            var brushMethod  = (Brush)this.Resources["LpCodeMethodBrush"]  ?? new SolidColorBrush(Color.FromRgb(0xDC, 0xDC, 0xAA));
+            var brushNormal  = ThemeWindowFg ?? Brushes.White;
 
-                        p.Inlines.Add(run);
+            var lines = code.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
+            
+            // Enhanced Regex for proper tokenization: 
+            // Groups: 1=Comment, 2=String, 3=Number, 4=TypePre (Upper), 5=MethodPre (word before '('), 6=Word
+            var regex = new System.Text.RegularExpressions.Regex(
+                @"(//.*?$)|("".*?""|'.*?')|(\b\d+\b)|(\b[A-Z]\w*\b)|(\b\w+(?=\s*\())|(\b\w+\b)", 
+                System.Text.RegularExpressions.RegexOptions.Compiled);
+
+            for (int i = 0; i < lines.Length; i++)
+            {
+                var line = lines[i];
+                int lastPos = 0;
+                
+                var matches = regex.Matches(line);
+                foreach (System.Text.RegularExpressions.Match match in matches)
+                {
+                    // Add plain text between matches (operators, spaces, etc.)
+                    if (match.Index > lastPos)
+                    {
+                        p.Inlines.Add(new Run(line.Substring(lastPos, match.Index - lastPos)) { 
+                            Foreground = brushNormal, FontFamily = ConsoleFont, FontSize = 12 
+                        });
                     }
+
+                    var token = match.Value;
+                    var run = new Run(token) { FontFamily = ConsoleFont, FontSize = 12 };
+
+                    if (match.Groups[1].Success)      run.Foreground = brushComment;
+                    else if (match.Groups[2].Success) run.Foreground = brushStr;
+                    else if (match.Groups[3].Success) run.Foreground = brushNum;
+                    else if (match.Groups[5].Success) run.Foreground = brushMethod;
+                    else if (match.Groups[4].Success) run.Foreground = brushType;
+                    else if (Keywords.Contains(token)) run.Foreground = brushKw;
+                    else run.Foreground = brushNormal;
+
+                    p.Inlines.Add(run);
+                    lastPos = match.Index + match.Length;
                 }
-                if (lineIdx < lines.Length - 1) p.Inlines.Add(new LineBreak());
+
+                if (lastPos < line.Length)
+                {
+                    p.Inlines.Add(new Run(line.Substring(lastPos)) { 
+                        Foreground = brushNormal, FontFamily = ConsoleFont, FontSize = 12 
+                    });
+                }
+
+                if (i < lines.Length - 1) p.Inlines.Add(new LineBreak());
             }
         }
 
@@ -1084,6 +1205,63 @@ namespace LocalPilot.Chat
 
             var mockBtn = new Button { Tag = action };
             QuickAction_Click(mockBtn, new RoutedEventArgs());
+        }
+
+        private async Task OpenDiffViewAsync(string leftCode, string rightCode)
+        {
+            try
+            {
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                
+                var diffService = Microsoft.VisualStudio.Shell.Package.GetGlobalService(typeof(Microsoft.VisualStudio.Shell.Interop.SVsDifferenceService)) as Microsoft.VisualStudio.Shell.Interop.IVsDifferenceService;
+                if (diffService == null) return;
+
+                // Create temp files for the comparison
+                string oldPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "LocalPilot_Original.txt");
+                string newPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "LocalPilot_Refactored.txt");
+
+                System.IO.File.WriteAllText(oldPath, leftCode);
+                System.IO.File.WriteAllText(newPath, rightCode);
+
+                diffService.OpenComparisonWindow2(oldPath, newPath, "LocalPilot Refactor: Original vs New", "LocalPilot AI Refactoring", "Original Code", "Improved Code", "Apply AI Refactor", "Close", 0);
+            }
+            catch (Exception ex)
+            {
+                LocalPilotLogger.LogError("Failed to open Diff View", ex);
+            }
+        }
+
+        private async Task ApplyRefactoredCodeAsync(string newCode)
+        {
+            try
+            {
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                
+                var dte = Microsoft.VisualStudio.Shell.Package.GetGlobalService(typeof(EnvDTE.DTE)) as EnvDTE.DTE;
+                
+                // Elite Focus: Ensure the document is active and visible before applying
+                if (dte?.ActiveDocument != null)
+                {
+                    dte.ActiveDocument.Activate();
+                    if (dte.ActiveDocument.Selection is EnvDTE.TextSelection sel)
+                    {
+                        // Lite version of vsInsertFlagsNone = 0
+                        sel.Insert(newCode, 0);
+                        
+                        LocalPilotLogger.Log("[Chat] Successfully applied AI refactor to editor.");
+                        AppendAIBubble("✅ Code successfully updated in your editor!");
+                    }
+                }
+                else
+                {
+                    AppendAIBubble("⚠️ **Editor context lost**. I couldn't find an active document to apply the changes. Please click into your editor and try again.");
+                }
+            }
+            catch (Exception ex)
+            {
+                LocalPilotLogger.LogError("Failed to apply refactored code", ex);
+                AppendAIBubble($"❌ Failed to apply changes: {ex.Message}");
+            }
         }
     }
 }
