@@ -105,55 +105,53 @@ namespace LocalPilot.Commands
         private async Task OpenChatWithActionAsync(string action)
         {
             LocalPilotLogger.Log($"[Commands] OpenChatWithActionAsync started for action: {action}");
-            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-
+            
+            // 1. Capture context immediately on the original thread/context if possible
             string selectedCode = string.Empty;
             try
             {
-                // Primary: Immediate DTE Selection capture on UI thread
-                var dte = await _package.GetServiceAsync(typeof(EnvDTE.DTE)) as EnvDTE.DTE;
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                 
-                // 1. Check ActiveDocument Selection
-                if (dte?.ActiveDocument?.Selection is EnvDTE.TextSelection sel1 && !string.IsNullOrWhiteSpace(sel1.Text))
+                // Primary: Modern Toolkit approach (usually more stable)
+                var docView = await VS.Documents.GetActiveDocumentViewAsync();
+                if (docView?.TextView?.Selection != null && docView.TextView.Selection.SelectedSpans.Count > 0)
                 {
-                    selectedCode = sel1.Text;
-                    LocalPilotLogger.Log("[Commands] Captured code via ActiveDocument.Selection");
-                }
-                
-                // 2. Check ActiveWindow directly (works for split editors or non-document views)
-                if (string.IsNullOrWhiteSpace(selectedCode))
-                {
-                    if (dte?.ActiveWindow?.Object is EnvDTE.TextSelection sel2 && !string.IsNullOrWhiteSpace(sel2.Text))
-                    {
-                        selectedCode = sel2.Text;
-                        LocalPilotLogger.Log("[Commands] Captured code via ActiveWindow.Object");
-                    }
-                }
-
-                // 3. Toolkit attempt (capture snapshot-based selection)
-                if (string.IsNullOrWhiteSpace(selectedCode))
-                {
-                    var docView = await VS.Documents.GetActiveDocumentViewAsync();
-                    if (docView?.TextView?.Selection != null && docView.TextView.Selection.SelectedSpans.Count > 0)
-                    {
-                        selectedCode = docView.TextView.Selection.SelectedSpans[0].GetText();
+                    selectedCode = docView.TextView.Selection.SelectedSpans[0].GetText();
+                    if (!string.IsNullOrWhiteSpace(selectedCode))
                         LocalPilotLogger.Log("[Commands] Captured code via Toolkit TextView");
+                }
+                
+                // Fallback: DTE Selection
+                if (string.IsNullOrWhiteSpace(selectedCode))
+                {
+                    var dte = await _package.GetServiceAsync(typeof(EnvDTE.DTE)) as EnvDTE.DTE;
+                    if (dte?.ActiveDocument?.Selection is EnvDTE.TextSelection sel && !string.IsNullOrWhiteSpace(sel.Text))
+                    {
+                        selectedCode = sel.Text;
+                        LocalPilotLogger.Log("[Commands] Captured code via DTE Selection");
                     }
                 }
             }
-            catch { /* Best effort */ }
+            catch (Exception ex)
+            {
+                LocalPilotLogger.LogError("Failed to capture code selection", ex);
+            }
 
             LocalPilotLogger.Log($"[Commands] Final captured code length: {selectedCode?.Length ?? 0}");
 
-            // Ensure window is visible
+            // 2. Ensure window is visible (This triggers Load events)
+            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
             var win = await _package.ShowToolWindowAsync(
                 typeof(LocalPilotChatWindow), 0, true, _package.DisposalToken)
                 as LocalPilotChatWindow;
 
+            // 3. Dispatch to control
             if (win?.Content is LocalPilotChatControl ctrl)
             {
-                // Pass the code. If we found nothing but whitespace, pass null to trigger the panel's internal retry.
-                ctrl.FireQuickAction(action, string.IsNullOrWhiteSpace(selectedCode) ? null : selectedCode);
+                // Force a small yield to let the window finish its own Load/Layout events 
+                // before we hammer it with a new AI request.
+                await Task.Delay(50).ConfigureAwait(true);
+                ctrl.FireQuickAction(action, selectedCode);
             }
         }
     }

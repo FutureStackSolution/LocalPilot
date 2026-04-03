@@ -38,7 +38,7 @@ namespace LocalPilot.Services
             var names = new List<string>();
             try
             {
-                var response = await _httpClient.GetAsync($"{_baseUrl}/api/tags", ct);
+                var response = await _httpClient.GetAsync($"{_baseUrl}/api/tags", ct).ConfigureAwait(false);
                 LocalPilotLogger.Log($"[Ollama] Fetching models from {_baseUrl}/api/tags. Success: {response.IsSuccessStatusCode}");
                 if (!response.IsSuccessStatusCode) return names;
 
@@ -59,7 +59,7 @@ namespace LocalPilot.Services
         {
             try
             {
-                var resp = await _httpClient.GetAsync($"{_baseUrl}/api/tags", ct);
+                var resp = await _httpClient.GetAsync($"{_baseUrl}/api/tags", ct).ConfigureAwait(false);
                 return resp.IsSuccessStatusCode;
             }
             catch { return false; }

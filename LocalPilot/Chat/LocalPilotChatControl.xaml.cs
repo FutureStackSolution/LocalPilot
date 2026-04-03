@@ -23,7 +23,6 @@ namespace LocalPilot.Chat
         private readonly OllamaService _ollama;
         private readonly List<ChatMessage> _history = new List<ChatMessage>();
         private CancellationTokenSource _cts;
-        private readonly SemaphoreSlim _streamSemaphore = new SemaphoreSlim(1, 1);
         private int _lastStreamId = 0; // Class-level ID to track active stream
 
         private Brush ThemeWindowBg => (Brush)this.Resources["LpWindowBgBrush"];
@@ -67,8 +66,7 @@ namespace LocalPilot.Chat
         private void OnUnloaded(object sender, RoutedEventArgs e)
         {
             VSColorTheme.ThemeChanged -= OnThemeChanged;
-            _cts?.Cancel();
-            _cts?.Dispose();
+            _cts?.Cancel(); // Signal cancellation but do not dispose, to prevent crashes on subsequent activations.
         }
 
         private void OnThemeChanged(ThemeChangedEventArgs e) => UpdateBrushes();
@@ -185,40 +183,56 @@ namespace LocalPilot.Chat
 
         private async Task HandleQuickActionAsync(string action, string preCapturedSelection = null)
         {
-            LocalPilotLogger.Log($"[Chat] Handling Quick Action: {action} (Pre-captured: {!string.IsNullOrWhiteSpace(preCapturedSelection)})");
             if (string.IsNullOrEmpty(action)) return;
+            LocalPilotLogger.Log($"[Chat] Handling Quick Action: {action}");
 
-            // Start the process in a JoinableTask to allow background/UI thread switching without deadlocks
-            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+            // Execute the action logic in a background-friendly way
+            _ = Task.Run(async () =>
             {
-                // Capture selection using multiple strategies
-                string selectedCode = !string.IsNullOrWhiteSpace(preCapturedSelection) 
-                                        ? preCapturedSelection 
-                                        : await TryGetEditorSelectionAsync();
-
-                if (string.IsNullOrWhiteSpace(selectedCode))
+                try 
                 {
+                    // 1. Resolve Selection
+                    string selectedCode = preCapturedSelection;
+                    if (string.IsNullOrWhiteSpace(selectedCode))
+                    {
+                        selectedCode = await TryGetEditorSelectionAsync().ConfigureAwait(false);
+                    }
+
+                    if (string.IsNullOrWhiteSpace(selectedCode))
+                    {
+                        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                        AppendAIBubble("⚠️ **No code selected**. I couldn't find any code highlighted in your editor. Please select some code and try the action again.");
+                        return;
+                    }
+
+                    // 2. Prepare Prompt
+                    string prompt = BuildActionPrompt(action, selectedCode);
                     await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                    AppendAIBubble("⚠️ **No code selected**. I couldn't find any code highlighted in your editor. Please select some code and try the action again.");
-                    return;
+                    
+                    // 3. UI Update: Show the user's request
+                    AppendUserBubble($"⚡ **{action.ToUpper()}**\n```\n{selectedCode}\n```");
+
+                    // Phase 3: Create a thread-safe snapshot of history for the background task
+                    List<ChatMessage> historySnapshot;
+                    lock (_history)
+                    {
+                        if (_history.Count > 0 && _history[_history.Count - 1].Role == "user")
+                            _history.RemoveAt(_history.Count - 1);
+                        
+                        _history.Add(new ChatMessage { Role = "user", Content = prompt });
+                        historySnapshot = new List<ChatMessage>(_history);
+                    }
+                    
+                    // 4. Trigger AI Stream
+                    string model = GetActionModel(action);
+                    await StreamResponseAsync(model, historySnapshot).ConfigureAwait(false);
                 }
-
-                string prompt = BuildActionPrompt(action, selectedCode);
-                if (string.IsNullOrEmpty(prompt)) return;
-
-                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                AppendUserBubble($"⚡ **{action.ToUpper()}**\n```\n{selectedCode}\n```");
-
-                // History cleanup
-                if (_history.Count > 0 && _history[_history.Count - 1].Role == "user")
+                catch (Exception ex)
                 {
-                    _history.RemoveAt(_history.Count - 1);
+                    LocalPilotLogger.LogError($"Critical error in HandleQuickAction (action: {action})", ex);
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    AppendAIBubble($"❌ A critical error occurred: {ex.Message}");
                 }
-
-                _history.Add(new ChatMessage { Role = "user", Content = prompt });
-                
-                string model = GetActionModel(action);
-                await StreamResponseAsync(model);
             });
         }
 
@@ -294,44 +308,50 @@ namespace LocalPilot.Chat
         }
 
         // ── Streaming response ────────────────────────────────────────────────
-        private async Task StreamResponseAsync(string model)
+        private async Task StreamResponseAsync(string model, List<ChatMessage> historyContext = null)
         {
             // Signal cancellation to any currently running stream
             _cts?.Cancel();
 
-            // Wait for any previous stream to clean up and release the semaphore
-            await _streamSemaphore.WaitAsync();
+            _lastStreamId++;
+            int myStreamId = _lastStreamId;
+            
             try
             {
-                _cts?.Dispose();
+                // We do NOT dispose the old _cts here. Disposal while a token is being monitored
+                // by the JTF or a background HttpClient request can cause hard hangs/crashes in VS.
                 _cts = new CancellationTokenSource();
                 var token = _cts.Token;
 
                 if (string.IsNullOrEmpty(model))
                     model = LocalPilotSettings.Instance.ChatModel;
+
+                // Use provided context or fall back to current history (safely copied)
+                var activeHistory = historyContext ?? new List<ChatMessage>(_history);
                 
                 _ollama.UpdateBaseUrl(LocalPilotSettings.Instance.OllamaBaseUrl);
-                
-                int myStreamId = ++_lastStreamId;
                 SetStreaming(true);
 
-                // Early Connectivity Check: Fast-fail if Ollama is not running
+                LocalPilotLogger.Log($"[Chat] StreamResponseAsync setup (ID: {myStreamId}, Model: {model}, History: {activeHistory.Count})");
+
+                // Early Connectivity Check: Fast-fail if Ollama is not running (with strict timeout)
                 try
                 {
-                    using (var earlyCts = new CancellationTokenSource(TimeSpan.FromSeconds(3)))
+                    using (var earlyCts = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
                     {
-                        bool isOllamaUp = await _ollama.IsAvailableAsync(earlyCts.Token);
+                        await Task.Yield(); // Ensure we yield once to let any pending UI tasks through
+                        bool isOllamaUp = await _ollama.IsAvailableAsync(earlyCts.Token).ConfigureAwait(false);
                         if (!isOllamaUp)
                         {
                             await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                             AppendAIBubble("❌ **Connection Error**: Could not reach local Ollama.\n\nPlease check if Ollama is running at: " + LocalPilotSettings.Instance.OllamaBaseUrl);
-                            if (myStreamId == _lastStreamId) SetStreaming(false);
                             return;
                         }
                     }
                 }
-                catch { /* Quiet failure: the main streaming call below will catch and report deeper issues */ }
+                catch { /* Silent failure: the main streaming call below will handle deeper issues */ }
 
+                await Task.Yield(); // Yield again before starting the main loop
                 string finalMd = string.Empty;
                 var sb = new StringBuilder();
                 RichTextBox localStreamingBlock = null;
@@ -349,7 +369,7 @@ namespace LocalPilot.Chat
                     var uiBuffer = new StringBuilder();
 
                     // Buffer for incoming text to avoid hammering the UI thread
-                    await foreach (var chunk in _ollama.StreamChatAsync(model, _history, options, token).ConfigureAwait(false))
+                    await foreach (var chunk in _ollama.StreamChatAsync(model, activeHistory, options, token).ConfigureAwait(false))
                     {
                         sb.Append(chunk);
                         uiBuffer.Append(chunk);
@@ -382,18 +402,16 @@ namespace LocalPilot.Chat
                 catch (OperationCanceledException) 
                 { 
                     finalMd = sb.ToString(); 
+                    LocalPilotLogger.Log($"[Chat] Stream cancelled (ID: {myStreamId})");
                 }
                 catch (Exception ex)
                 {
+                    LocalPilotLogger.LogError($"[Chat] Connection error during stream (ID: {myStreamId})", ex);
                     await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                     AppendAIBubble($"❌ Error: {ex.Message}");
                 }
-                finally
-                {
-                    _streamSemaphore.Release();
-                }
 
-                // Phase 2: Final UI Cleanup (Outside Semaphore to avoid deadlocks)
+                // Phase 2: Final UI Cleanup (Outside the loop to avoid partial renders)
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                 if (!string.IsNullOrEmpty(finalMd) && localStreamingBlock != null)
                 {
@@ -402,14 +420,16 @@ namespace LocalPilot.Chat
                     _history.Add(new ChatMessage { Role = "assistant", Content = finalMd });
                     TrimHistory();
                 }
-                
-                if (myStreamId == _lastStreamId) SetStreaming(false);
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"[LocalPilot] StreamResponseAsync setup failed: {ex.Message}");
-                // No need for SetStreaming(false) here as the inner catches handle common cases,
-                // but a global protector or the ID check is safe.
+                LocalPilotLogger.LogError($"[Chat] Critical failure in StreamResponseAsync (ID: {myStreamId})", ex);
+            }
+            finally
+            {
+                // Always unlock UI if this is still the most recent requested session
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                if (myStreamId == _lastStreamId) SetStreaming(false);
             }
         }
 
@@ -626,7 +646,14 @@ namespace LocalPilot.Chat
                     };
                     
                     var codeRtb = CreateRichTextBox();
-                    HighlightCode((Paragraph)codeRtb.Document.Blocks.FirstBlock, cleanCode);
+                    if (codeRtb.Document.Blocks.FirstBlock is Paragraph p)
+                    {
+                        HighlightCode(p, cleanCode);
+                    }
+                    else
+                    {
+                        SetRichText(codeRtb, cleanCode);
+                    }
                     codeBorder.Child = codeRtb;
                     grid.Children.Add(codeBorder);
 
@@ -778,14 +805,23 @@ namespace LocalPilot.Chat
 
         private void SetStreaming(bool streaming)
         {
-            StreamingBar.Visibility = streaming ? Visibility.Visible : Visibility.Collapsed;
-            
-            // Lock all interaction during streaming to prevent action queuing
-            BtnSend.IsEnabled           = !streaming;
-            BtnClear.IsEnabled          = !streaming;
-            BtnQuickActions.IsEnabled    = !streaming;
-            TxtInput.IsEnabled          = !streaming;
-            TxtInput.Opacity           = streaming ? 0.6 : 1.0;
+            // Ensure we are on the UI thread before touching any WPF controls.
+            // This is critical now that most logic runs on a background Task.Run.
+            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+            {
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                
+                StreamingBar.Visibility = streaming ? Visibility.Visible : Visibility.Collapsed;
+                
+                // Lock all interaction during streaming to prevent action queuing
+                BtnSend.IsEnabled           = !streaming;
+                BtnClear.IsEnabled          = !streaming;
+                BtnQuickActions.IsEnabled    = !streaming;
+                TxtInput.IsEnabled          = !streaming;
+                TxtInput.Opacity           = streaming ? 0.6 : 1.0;
+
+                if (!streaming) TxtInput.Focus();
+            });
         }
 
         private void TrimHistory()
