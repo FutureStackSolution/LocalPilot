@@ -8,7 +8,7 @@
 
   <p align="center">
     <a href="https://marketplace.visualstudio.com/items?itemName=FutureStackSolution.LocalPilotFSS">
-      <img src="https://img.shields.io/visual-studio-marketplace/v/FutureStackSolution.LocalPilot?color=blue&label=VS%20Marketplace" alt="VS Marketplace" />
+      <img src="https://img.shields.io/visual-studio-marketplace/v/FutureStackSolution.LocalPilotFSS?color=blue&label=VS%20Marketplace" alt="VS Marketplace" />
     </a>
     <a href="https://github.com/FutureStackSolution/LocalPilot/blob/main/LICENSE">
       <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" />
