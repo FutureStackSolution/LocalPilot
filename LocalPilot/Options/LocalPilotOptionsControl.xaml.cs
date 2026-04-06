@@ -82,6 +82,15 @@ namespace LocalPilot.Options
             ChkEnableLogging.IsChecked = s.EnableLogging;
 
             TxtChatHistory.Text       = s.ChatHistoryMaxItems.ToString();
+            
+            // 📝 Prompts
+            TxtSystemPrompt.Text      = s.SystemPrompt;
+            TxtExplainPrompt.Text     = s.ExplainPrompt;
+            TxtRefactorPrompt.Text    = s.RefactorPrompt;
+            TxtDocumentPrompt.Text    = s.DocumentPrompt;
+            TxtReviewPrompt.Text      = s.ReviewPrompt;
+            TxtFixPrompt.Text         = s.FixPrompt;
+            TxtTestPrompt.Text        = s.TestPrompt;
 
             // Populate model combos with current value; 
             // full list populated after async fetch
@@ -140,6 +149,15 @@ namespace LocalPilot.Options
                                 ?? CmbDocModel.Text;
             s.ReviewModel     = (CmbReviewModel.SelectedItem as ComboBoxItem)?.Content?.ToString()
                                 ?? CmbReviewModel.Text;
+
+            // 📝 Prompts
+            s.SystemPrompt   = TxtSystemPrompt.Text.Trim();
+            s.ExplainPrompt  = TxtExplainPrompt.Text.Trim();
+            s.RefactorPrompt = TxtRefactorPrompt.Text.Trim();
+            s.DocumentPrompt = TxtDocumentPrompt.Text.Trim();
+            s.ReviewPrompt   = TxtReviewPrompt.Text.Trim();
+            s.FixPrompt      = TxtFixPrompt.Text.Trim();
+            s.TestPrompt     = TxtTestPrompt.Text.Trim();
 
             // Persist to disk
             SettingsPersistence.Save(s);

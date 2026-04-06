@@ -79,7 +79,7 @@
             </Setter>
         </Style>
 
-        <!-- Shared themed right-click menu for all text inputs (Cut / Copy / Paste / Select All) -->
+        <!-- Shared themed right-click menu for all text inputs -->
         <ContextMenu x:Key="ThemedEditContextMenu"
                      Style="{StaticResource ThemedContextMenuStyle}"
                      Grid.IsSharedSizeScope="True">
@@ -115,7 +115,6 @@
             </MenuItem>
         </ContextMenu>
 
-        <!-- TextBox Style — uses VS theme colours -->
         <Style x:Key="LpInputStyle" TargetType="TextBox">
             <Setter Property="Background"      Value="{DynamicResource LpWindowBgBrush}"/>
             <Setter Property="Foreground"      Value="{DynamicResource LpWindowFgBrush}"/>
@@ -128,7 +127,6 @@
             <Setter Property="ContextMenu"       Value="{StaticResource ThemedEditContextMenu}"/>
         </Style>
 
-        <!-- Section Header -->
         <Style x:Key="LpSectionHeader" TargetType="TextBlock">
             <Setter Property="Foreground"   Value="{DynamicResource LpWindowFgBrush}"/>
             <Setter Property="FontSize"     Value="13"/>
@@ -136,29 +134,22 @@
             <Setter Property="Margin"       Value="0,16,0,6"/>
         </Style>
 
-        <!-- Label -->
         <Style x:Key="LpLabelStyle" TargetType="TextBlock">
-            <Setter Property="Foreground"
-                    Value="{DynamicResource LpWindowFgBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource LpWindowFgBrush}"/>
             <Setter Property="FontSize"     Value="12"/>
             <Setter Property="Margin"       Value="0,0,0,3"/>
         </Style>
 
-        <!-- Muted label -->
         <Style x:Key="LpMutedLabel" TargetType="TextBlock">
-            <Setter Property="Foreground"
-                    Value="{DynamicResource LpMutedFgBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource LpMutedFgBrush}"/>
             <Setter Property="FontSize"     Value="12"/>
         </Style>
 
-        <!-- CheckBox — inherits VS theme -->
         <Style x:Key="LpCheckStyle" TargetType="CheckBox">
-            <Setter Property="Foreground"
-                    Value="{DynamicResource LpWindowFgBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource LpWindowFgBrush}"/>
             <Setter Property="Margin"       Value="0,4,0,4"/>
         </Style>
 
-        <!-- Primary (accent) Button -->
         <Style x:Key="LpPrimaryBtn" TargetType="Button">
             <Setter Property="Background"    Value="#7C6AF7"/>
             <Setter Property="Foreground"    Value="White"/>
@@ -171,50 +162,102 @@
                     <ControlTemplate TargetType="Button">
                         <Border Background="{TemplateBinding Background}"
                                 CornerRadius="5" Padding="{TemplateBinding Padding}">
-                            <ContentPresenter HorizontalAlignment="Center"
-                                              VerticalAlignment="Center"/>
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Background" Value="#9B8FFB"/>
-                            </Trigger>
-                            <Trigger Property="IsPressed" Value="True">
-                                <Setter Property="Background" Value="#5E4FDB"/>
-                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="#9B8FFB"/></Trigger>
+                            <Trigger Property="IsPressed" Value="True"><Setter Property="Background" Value="#5E4FDB"/></Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
         </Style>
 
-        <!-- Secondary Button — VS themed -->
         <Style x:Key="LpSecondaryBtn" TargetType="Button">
-            <Setter Property="Background"
-                    Value="{DynamicResource LpWindowBgBrush}"/>
-            <Setter Property="Foreground"
-                    Value="{DynamicResource LpWindowFgBrush}"/>
-            <Setter Property="BorderBrush"
-                    Value="{DynamicResource LpMenuBorderBrush}"/>
+            <Setter Property="Background" Value="{DynamicResource LpWindowBgBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource LpWindowFgBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource LpMenuBorderBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Padding"         Value="14,7"/>
             <Setter Property="Cursor"          Value="Hand"/>
         </Style>
 
-        <!-- Separator -->
         <Style x:Key="LpSepStyle" TargetType="Separator">
-            <Setter Property="Background"
-                    Value="{DynamicResource LpMenuBorderBrush}"/>
+            <Setter Property="Background" Value="{DynamicResource LpMenuBorderBrush}"/>
             <Setter Property="Margin"       Value="0,4,0,4"/>
+        </Style>
+
+        <!-- ═══ TabControl Premium Styling ═══ -->
+        <Style TargetType="TabControl">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="0,20,0,0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabControl">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+                            <TabPanel Grid.Row="0" IsItemsHost="True" Panel.ZIndex="1"/>
+                            <Border Grid.Row="1" Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}">
+                                <ContentPresenter ContentSource="SelectedContent" Margin="{TemplateBinding Padding}"/>
+                            </Border>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style TargetType="TabItem">
+            <Setter Property="Foreground" Value="{DynamicResource LpMutedFgBrush}"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Padding" Value="0,0,24,8"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TabItem">
+                        <Grid Background="Transparent">
+                            <StackPanel>
+                                <ContentPresenter ContentSource="Header" Margin="{TemplateBinding Padding}"
+                                                  HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                <Border x:Name="Indicator" Height="3" Background="Transparent" SnapsToDevicePixels="True" 
+                                        CornerRadius="1.5" Margin="0,-4,24,0"/>
+                            </StackPanel>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter Property="Foreground" Value="{DynamicResource LpWindowFgBrush}"/>
+                                <Setter TargetName="Indicator" Property="Background" Value="#7C6AF7"/>
+                            </Trigger>
+                            <MultiTrigger>
+                                <MultiTrigger.Conditions>
+                                    <Condition Property="IsMouseOver" Value="True"/>
+                                    <Condition Property="IsSelected" Value="False"/>
+                                </MultiTrigger.Conditions>
+                                <Setter Property="Foreground" Value="{DynamicResource LpWindowFgBrush}"/>
+                                <Setter TargetName="Indicator" Property="Background" Value="{DynamicResource LpHoverBgBrush}"/>
+                            </MultiTrigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
 
     </UserControl.Resources>
 
-    <ScrollViewer VerticalScrollBarVisibility="Auto"
-                  HorizontalScrollBarVisibility="Disabled"
-                  Background="{DynamicResource LpWindowBgBrush}"
-                  Foreground="{DynamicResource LpWindowFgBrush}">
-        <StackPanel Margin="24,20,24,28">
+    <Grid Background="{DynamicResource LpWindowBgBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/> <!-- Header -->
+            <RowDefinition Height="*"/>    <!-- Tabs -->
+            <RowDefinition Height="Auto"/> <!-- Footer -->
+        </Grid.RowDefinitions>
 
+        <StackPanel Grid.Row="0" Margin="24,20,24,0">
             <!-- ═══ Header ════════════════════════════════════════════════════ -->
             <Grid Margin="0,0,0,20">
                 <Grid.ColumnDefinitions>
@@ -226,12 +269,8 @@
                     <Image Source="/LocalPilot;component/Assets/Logo_Concept_Minimalist.png" 
                            Width="32" Height="32" VerticalAlignment="Center" Margin="0,0,10,0"/>
                     <StackPanel VerticalAlignment="Center">
-                        <TextBlock Text="LocalPilot"
-                                   Foreground="{DynamicResource LpWindowFgBrush}"
-                                   FontSize="20" FontWeight="Bold"/>
-                        <TextBlock Text="Local AI Assistant"
-                                   Style="{DynamicResource LpMutedLabel}"
-                                   Margin="0,2,0,0"/>
+                        <TextBlock Text="LocalPilot" Foreground="{DynamicResource LpWindowFgBrush}" FontSize="20" FontWeight="Bold"/>
+                        <TextBlock Text="Local AI Assistant" Style="{DynamicResource LpMutedLabel}" Margin="0,2,0,0"/>
                     </StackPanel>
                 </StackPanel>
 
@@ -241,304 +280,195 @@
                         BorderBrush="{DynamicResource LpMenuBorderBrush}"
                         BorderThickness="1" CornerRadius="20" Padding="12,6">
                     <StackPanel Orientation="Horizontal" Background="Transparent" VerticalAlignment="Center" Margin="0,4,0,0">
-                        <Ellipse x:Name="StatusDot" Width="8" Height="8"
-                                 Fill="#4EC9B0" VerticalAlignment="Center"/>
-                        <TextBlock x:Name="StatusText" Text="Ollama Connected"
-                                   Foreground="{DynamicResource LpWindowFgBrush}"
-                                   FontSize="12" Margin="6,0,0,0"
-                                   VerticalAlignment="Center"/>
+                        <Ellipse x:Name="StatusDot" Width="8" Height="8" Fill="#4EC9B0" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="StatusText" Text="Ollama Connected" Foreground="{DynamicResource LpWindowFgBrush}" FontSize="12" Margin="6,0,0,0" VerticalAlignment="Center"/>
                     </StackPanel>
                 </Border>
             </Grid>
+            <Separator Style="{DynamicResource LpSepStyle}" Margin="0,0,0,0"/>
+        </StackPanel>
 
-            <Separator Style="{DynamicResource LpSepStyle}" Margin="0,0,0,10"/>
+        <!-- ═══ Content Tabs ═══════════════════════════════════════════════ -->
+        <TabControl Grid.Row="1" Margin="24,0,24,0">
+            <!-- ───────────────── GENERAL TAB ───────────────── -->
+            <TabItem Header="General">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="0,0,16,0">
+                    <StackPanel>
+                        <!-- Connection -->
+                        <TextBlock Text="🔗  Connection" Style="{DynamicResource LpSectionHeader}"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="120"/></Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                <TextBlock Text="Ollama Base URL" Style="{DynamicResource LpLabelStyle}"/>
+                                <TextBox x:Name="TxtBaseUrl" Style="{DynamicResource LpInputStyle}" ToolTip="Default: http://localhost:11434"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Bottom">
+                                <Button Content="Test Connection" Style="{DynamicResource LpSecondaryBtn}" x:Name="BtnTestConnection" Click="BtnTestConnection_Click" Height="32"/>
+                            </StackPanel>
+                        </Grid>
+                        <TextBlock x:Name="TxtConnectionResult" Foreground="#4EC9B0" FontSize="11" Margin="0,4,0,0" Visibility="Collapsed"/>
 
-            <!-- ═══ Section 1: Connection ════════════════════════════════════ -->
-            <TextBlock Text="🔗  Connection" Style="{DynamicResource LpSectionHeader}"/>
+                        <!-- Core Models -->
+                        <TextBlock Text="🤖  Core Models" Style="{DynamicResource LpSectionHeader}"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Margin="0,0,8,10">
+                                <TextBlock Text="Inline Completion Model" Style="{DynamicResource LpLabelStyle}"/>
+                                <ComboBox x:Name="CmbCompletionModel" Height="28"/></StackPanel>
+                            <StackPanel Grid.Column="1" Margin="8,0,0,10">
+                                <TextBlock Text="Chat Model" Style="{DynamicResource LpLabelStyle}"/>
+                                <ComboBox x:Name="CmbChatModel" Height="28"/></StackPanel>
+                        </Grid>
 
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="120"/>
-                </Grid.ColumnDefinitions>
-                <StackPanel Grid.Column="0" Margin="0,0,8,0">
-                    <TextBlock Text="Ollama Base URL" Style="{DynamicResource LpLabelStyle}"/>
-                    <TextBox x:Name="TxtBaseUrl" Style="{DynamicResource LpInputStyle}"
-                             ToolTip="Default: http://localhost:11434"/>
-                </StackPanel>
-                <StackPanel Grid.Column="1" VerticalAlignment="Bottom">
-                    <Button Content="Test Connection" Style="{DynamicResource LpSecondaryBtn}"
-                            x:Name="BtnTestConnection" Click="BtnTestConnection_Click"
-                            Height="32"/>
-                </StackPanel>
-            </Grid>
+                        <TextBlock Text="🛠️  Action-Specific Models" Style="{DynamicResource LpSectionHeader}"/>
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                            <StackPanel Grid.Column="0" Grid.Row="0" Margin="0,0,8,10">
+                                <TextBlock Text="Explain Code Model" Style="{DynamicResource LpLabelStyle}"/>
+                                <ComboBox x:Name="CmbExplainModel" Height="28"/></StackPanel>
+                            <StackPanel Grid.Column="1" Grid.Row="0" Margin="8,0,0,10">
+                                <TextBlock Text="Refactor Model" Style="{DynamicResource LpLabelStyle}"/>
+                                <ComboBox x:Name="CmbRefactorModel" Height="28"/></StackPanel>
+                            <StackPanel Grid.Column="0" Grid.Row="1" Margin="0,0,8,10">
+                                <TextBlock Text="Doc Generation Model" Style="{DynamicResource LpLabelStyle}"/>
+                                <ComboBox x:Name="CmbDocModel" Height="28"/></StackPanel>
+                            <StackPanel Grid.Column="1" Grid.Row="1" Margin="8,0,0,10">
+                                <TextBlock Text="Code Review Model" Style="{DynamicResource LpLabelStyle}"/>
+                                <ComboBox x:Name="CmbReviewModel" Height="28"/></StackPanel>
+                        </Grid>
+                        <Button x:Name="BtnRefreshModels" Content="↻  Refresh Model List" Style="{DynamicResource LpSecondaryBtn}" HorizontalAlignment="Left" Click="BtnRefreshModels_Click" Margin="0,2,0,10"/>
 
-            <TextBlock x:Name="TxtConnectionResult" Foreground="#4EC9B0"
-                       FontSize="11" Margin="0,4,0,0" Visibility="Collapsed"/>
+                        <!-- Inline Completion Behaviour -->
+                        <TextBlock Text="✨  Inline Completion" Style="{DynamicResource LpSectionHeader}"/>
+                        <CheckBox x:Name="ChkEnableInline" Content="Enable inline code completion (ghost-text)" Style="{DynamicResource LpCheckStyle}"/>
+                        <CheckBox x:Name="ChkShowGhost" Content="Show ghost-text preview while typing" Style="{DynamicResource LpCheckStyle}"/>
 
-            <!-- ═══ Section 2: Models ═════════════════════════════════════════ -->
-            <TextBlock Text="🤖  Model Configuration" Style="{DynamicResource LpSectionHeader}"/>
+                        <!-- Code Actions Visibility -->
+                        <TextBlock Text="⚙️  Enabled Code Actions" Style="{DynamicResource LpSectionHeader}"/>
+                        <UniformGrid Columns="2" Margin="0,4,0,4">
+                            <CheckBox x:Name="ChkExplain"  Content="Explain Code" Style="{DynamicResource LpCheckStyle}"/>
+                            <CheckBox x:Name="ChkRefactor" Content="Refactor Code" Style="{DynamicResource LpCheckStyle}"/>
+                            <CheckBox x:Name="ChkDocGen"   Content="Generate Documentation" Style="{DynamicResource LpCheckStyle}"/>
+                            <CheckBox x:Name="ChkReview"   Content="Code Review" Style="{DynamicResource LpCheckStyle}"/>
+                            <CheckBox x:Name="ChkFix"      Content="Fix Issues" Style="{DynamicResource LpCheckStyle}"/>
+                            <CheckBox x:Name="ChkUnitTest" Content="Generate Unit Test" Style="{DynamicResource LpCheckStyle}"/>
+                        </UniformGrid>
 
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="*"/>
-                </Grid.ColumnDefinitions>
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/>
-                </Grid.RowDefinitions>
-
-                <StackPanel Grid.Column="0" Grid.Row="0" Margin="0,0,8,10">
-                    <TextBlock Text="Inline Completion Model" Style="{DynamicResource LpLabelStyle}"/>
-                    <ComboBox x:Name="CmbCompletionModel" Height="28"
-                              ToolTip="Used for real-time code suggestions"/>
-                </StackPanel>
-                <StackPanel Grid.Column="1" Grid.Row="0" Margin="8,0,0,10">
-                    <TextBlock Text="Chat Model" Style="{DynamicResource LpLabelStyle}"/>
-                    <ComboBox x:Name="CmbChatModel" Height="28"
-                              ToolTip="Used in the chat assistant panel"/>
-                </StackPanel>
-
-                <StackPanel Grid.Column="0" Grid.Row="1" Margin="0,0,8,10">
-                    <TextBlock Text="Explain Code Model" Style="{DynamicResource LpLabelStyle}"/>
-                    <ComboBox x:Name="CmbExplainModel" Height="28"/>
-                </StackPanel>
-                <StackPanel Grid.Column="1" Grid.Row="1" Margin="8,0,0,10">
-                    <TextBlock Text="Refactor Model" Style="{DynamicResource LpLabelStyle}"/>
-                    <ComboBox x:Name="CmbRefactorModel" Height="28"/>
-                </StackPanel>
-
-                <StackPanel Grid.Column="0" Grid.Row="2" Margin="0,0,8,10">
-                    <TextBlock Text="Doc Generation Model" Style="{DynamicResource LpLabelStyle}"/>
-                    <ComboBox x:Name="CmbDocModel" Height="28"/>
-                </StackPanel>
-                <StackPanel Grid.Column="1" Grid.Row="2" Margin="8,0,0,10">
-                    <TextBlock Text="Code Review Model" Style="{DynamicResource LpLabelStyle}"/>
-                    <ComboBox x:Name="CmbReviewModel" Height="28"/>
-                </StackPanel>
-            </Grid>
-
-            <Button x:Name="BtnRefreshModels" Content="↻  Refresh Model List"
-                    Style="{DynamicResource LpSecondaryBtn}" HorizontalAlignment="Left"
-                    Click="BtnRefreshModels_Click" Margin="0,2,0,10"/>
-
-            <!-- ═══ Section 3: Inline Completion ════════════════════════════ -->
-            <TextBlock Text="✨  Inline Completion" Style="{DynamicResource LpSectionHeader}"/>
-
-            <CheckBox x:Name="ChkEnableInline" Content="Enable inline code completion (ghost-text)"
-                      Style="{DynamicResource LpCheckStyle}"/>
-            <CheckBox x:Name="ChkShowGhost" Content="Show ghost-text preview while typing"
-                      Style="{DynamicResource LpCheckStyle}"/>
-
-            <!-- ═══ Section 4: Code Actions ══════════════════════════════════ -->
-            <TextBlock Text="⚙️  Code Actions" Style="{DynamicResource LpSectionHeader}"/>
-
-            <UniformGrid Columns="3" Margin="0,4,0,4">
-                <CheckBox x:Name="ChkExplain"  Content="Explain Code"       Style="{DynamicResource LpCheckStyle}"/>
-                <CheckBox x:Name="ChkRefactor" Content="Refactor Code"      Style="{DynamicResource LpCheckStyle}"/>
-                <CheckBox x:Name="ChkDocGen"   Content="Generate Documentation" Style="{DynamicResource LpCheckStyle}"/>
-                <CheckBox x:Name="ChkReview"   Content="Code Review"        Style="{DynamicResource LpCheckStyle}"/>
-                <CheckBox x:Name="ChkFix"      Content="Fix Issues"         Style="{DynamicResource LpCheckStyle}"/>
-                <CheckBox x:Name="ChkUnitTest" Content="Generate Unit Test" Style="{DynamicResource LpCheckStyle}"/>
-            </UniformGrid>
-
-
-            <!-- ═══ Section 6: UI ════════════════════════════════════════════ -->
-            <TextBlock Text="🎨  Interface" Style="{DynamicResource LpSectionHeader}"/>
-
-            <CheckBox x:Name="ChkStatusBar" Content="Show LocalPilot status in the status bar"
-                      Style="{DynamicResource LpCheckStyle}"/>
-            <CheckBox x:Name="ChkEnableLogging" Content="Enable Diagnostic Logging (to Output window)"
-                      Style="{DynamicResource LpCheckStyle}" ToolTip="Log extension activity to the 'LocalPilot' pane in the Output Window"/>
-            <Button x:Name="BtnOpenLog" Content="📂  Open Log File" Style="{DynamicResource LpSecondaryBtn}"
-                    HorizontalAlignment="Left" Click="BtnOpenLog_Click" Margin="0,2,0,10"
-                    Visibility="{Binding IsChecked, ElementName=ChkEnableLogging, Converter={StaticResource BooleanToVisibilityConverter}}"/>
-
-            <!-- ═══ Section 7: Advanced ═════════════════════════════════════ -->
-            <TextBlock Text="🛠️  Advanced Generation Settings" Style="{DynamicResource LpSectionHeader}"/>
-            <TextBlock Text="Recommended for expert users only. These values affect stability and performance."
-                       Style="{DynamicResource LpMutedLabel}" Margin="0,0,0,12"/>
-
-            <Expander Header="Fine-tune Parameters (Temperature, Context, Tokens)" 
-                      Foreground="{DynamicResource LpWindowFgBrush}"
-                      Margin="0,0,0,10">
-                <StackPanel Margin="10,10,0,0">
-                    <!-- Temperature Slider -->
-                    <Grid Margin="0,0,0,10">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="70"/>
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Grid.Column="0">
-                            <TextBlock Text="Temperature (Lower = more stable code)" Style="{DynamicResource LpLabelStyle}"/>
-                            <Slider x:Name="SldrTemp" Minimum="0" Maximum="1"
-                                    TickFrequency="0.05" IsSnapToTickEnabled="True"
-                                    Foreground="{DynamicResource LpWindowFgBrush}"
-                                    ValueChanged="SldrTemp_ValueChanged"/>
-                        </StackPanel>
-                        <TextBlock x:Name="TxtTemp" Grid.Column="1"
-                                   VerticalAlignment="Center" HorizontalAlignment="Center"
-                                   Foreground="{DynamicResource LpWindowFgBrush}" FontWeight="SemiBold"/>
-                    </Grid>
-
-                    <!-- Max Tokens Slider -->
-                    <Grid Margin="0,0,0,10">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="70"/>
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Grid.Column="0">
-                            <TextBlock Text="Max Completion Tokens (inline length)" Style="{DynamicResource LpLabelStyle}"/>
-                            <Slider x:Name="SldrMaxTokens" Minimum="32" Maximum="1024"
-                                    TickFrequency="32" IsSnapToTickEnabled="True"
-                                    Foreground="{DynamicResource LpWindowFgBrush}"
-                                    ValueChanged="SldrMaxTokens_ValueChanged"/>
-                        </StackPanel>
-                        <TextBlock x:Name="TxtMaxTokens" Grid.Column="1"
-                                   VerticalAlignment="Center" HorizontalAlignment="Center"
-                                   Foreground="{DynamicResource LpWindowFgBrush}" FontWeight="SemiBold"/>
-                    </Grid>
-
-                    <!-- Max Chat Tokens Slider -->
-                    <Grid Margin="0,0,0,10">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="70"/>
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Grid.Column="0">
-                            <TextBlock Text="Max Chat Tokens (response length)" Style="{DynamicResource LpLabelStyle}"/>
-                            <Slider x:Name="SldrMaxChatTokens" Minimum="512" Maximum="16384"
-                                    TickFrequency="512" IsSnapToTickEnabled="True"
-                                    Foreground="{DynamicResource LpWindowFgBrush}"
-                                    ValueChanged="SldrMaxChatTokens_ValueChanged"/>
-                        </StackPanel>
-                        <TextBlock x:Name="TxtMaxChatTokens" Grid.Column="1"
-                                   VerticalAlignment="Center" HorizontalAlignment="Center"
-                                   Foreground="{DynamicResource LpWindowFgBrush}" FontWeight="SemiBold"/>
-                    </Grid>
-
-                    <!-- Delay Slider -->
-                    <Grid Margin="0,0,0,10">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="70"/>
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Grid.Column="0">
-                            <TextBlock Text="Inline Trigger Delay (ms)" Style="{DynamicResource LpLabelStyle}"/>
-                            <Slider x:Name="SldrDelay" Minimum="200" Maximum="2000"
-                                    TickFrequency="100" IsSnapToTickEnabled="True"
-                                    Foreground="{DynamicResource LpWindowFgBrush}"
-                                    ValueChanged="SldrDelay_ValueChanged"/>
-                        </StackPanel>
-                        <TextBlock x:Name="TxtDelay" Grid.Column="1"
-                                   VerticalAlignment="Center" HorizontalAlignment="Center"
-                                   Foreground="{DynamicResource LpWindowFgBrush}" FontWeight="SemiBold"/>
-                    </Grid>
-
-                    <!-- Context Lines -->
-                    <Grid Margin="0,0,0,10">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="8"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Grid.Column="0">
-                            <TextBlock Text="Context Before (lines)" Style="{DynamicResource LpLabelStyle}"/>
-                            <TextBox x:Name="TxtContextBefore" Style="{DynamicResource LpInputStyle}"/>
-                        </StackPanel>
-                        <StackPanel Grid.Column="2">
-                            <TextBlock Text="Context After (lines)" Style="{DynamicResource LpLabelStyle}"/>
-                            <TextBox x:Name="TxtContextAfter" Style="{DynamicResource LpInputStyle}"/>
-                        </StackPanel>
-                    </Grid>
-
-                    <!-- History -->
-                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
-                        <TextBlock Text="Max Chat History: " Style="{DynamicResource LpLabelStyle}"
-                                   VerticalAlignment="Center"/>
-                        <TextBox x:Name="TxtChatHistory" Style="{DynamicResource LpInputStyle}"
-                                 Width="80"/>
-                        <TextBlock Text=" messages" Style="{DynamicResource LpMutedLabel}"
-                                   VerticalAlignment="Center" Margin="4,0,0,0"/>
+                        <!-- Interface Preferences -->
+                        <TextBlock Text="🎨  Interface" Style="{DynamicResource LpSectionHeader}"/>
+                        <CheckBox x:Name="ChkStatusBar" Content="Show LocalPilot status in the status bar" Style="{DynamicResource LpCheckStyle}"/>
+                        <CheckBox x:Name="ChkEnableLogging" Content="Enable Diagnostic Logging" Style="{DynamicResource LpCheckStyle}"/>
+                        <Button x:Name="BtnOpenLog" Content="📂  Open Log File" Style="{DynamicResource LpSecondaryBtn}" HorizontalAlignment="Left" Click="BtnOpenLog_Click" Margin="0,2,0,10" Visibility="{Binding IsChecked, ElementName=ChkEnableLogging, Converter={StaticResource BooleanToVisibilityConverter}}"/>
                     </StackPanel>
-                </StackPanel>
-            </Expander>
+                </ScrollViewer>
+            </TabItem>
 
-            <!-- Footer Buttons -->
-            <Separator Style="{DynamicResource LpSepStyle}" Margin="0,16,0,10"/>
+            <!-- ───────────────── ADVANCED TAB ───────────────── -->
+            <TabItem Header="Advanced">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="0,0,16,0">
+                    <StackPanel>
+                        <!-- Hyperparameters -->
+                        <TextBlock Text="🛠️  Generation Parameters" Style="{DynamicResource LpSectionHeader}"/>
+                        <Grid Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="70"/></Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="Temperature (Higher = more creative/random)" Style="{DynamicResource LpLabelStyle}"/>
+                                <Slider x:Name="SldrTemp" Minimum="0" Maximum="1" TickFrequency="0.05" IsSnapToTickEnabled="True" ValueChanged="SldrTemp_ValueChanged"/></StackPanel>
+                            <TextBlock x:Name="TxtTemp" Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Center" FontWeight="SemiBold"/>
+                        </Grid>
 
-            <!-- ── Save Toast Notification ───────────────────────────────── -->
-            <Border x:Name="SaveToast"
-                    Opacity="0" Visibility="Collapsed"
-                    Background="{DynamicResource LpMenuBgBrush}"
-                    BorderBrush="{DynamicResource LpMenuBorderBrush}"
-                    BorderThickness="1"
-                    CornerRadius="6"
-                    Padding="14,10"
-                    Margin="0,0,0,10">
+                        <Grid Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="70"/></Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="Max Chat Tokens (Response length)" Style="{DynamicResource LpLabelStyle}"/>
+                                <Slider x:Name="SldrMaxChatTokens" Minimum="512" Maximum="16384" TickFrequency="512" IsSnapToTickEnabled="True" ValueChanged="SldrMaxChatTokens_ValueChanged"/></StackPanel>
+                            <TextBlock x:Name="TxtMaxChatTokens" Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Center" FontWeight="SemiBold"/>
+                        </Grid>
+
+                        <!-- Context and History -->
+                        <Grid Margin="0,10,0,10">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="20"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="Context Before (lines)" Style="{DynamicResource LpLabelStyle}"/><TextBox x:Name="TxtContextBefore" Style="{DynamicResource LpInputStyle}"/></StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="Context After (lines)" Style="{DynamicResource LpLabelStyle}"/><TextBox x:Name="TxtContextAfter" Style="{DynamicResource LpInputStyle}"/></StackPanel>
+                        </Grid>
+
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                            <TextBlock Text="Max Chat History Messages: " Style="{DynamicResource LpLabelStyle}" VerticalAlignment="Center"/>
+                            <TextBox x:Name="TxtChatHistory" Style="{DynamicResource LpInputStyle}" Width="80"/>
+                        </StackPanel>
+
+                        <!-- New completion specific advanced settings -->
+                        <Expander Header="Inline Completion Advanced" Foreground="{DynamicResource LpWindowFgBrush}" Margin="0,10,0,10">
+                            <StackPanel Margin="10,10,0,0">
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="70"/></Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="Max Completion Tokens" Style="{DynamicResource LpLabelStyle}"/><Slider x:Name="SldrMaxTokens" Minimum="32" Maximum="1024" TickFrequency="32" IsSnapToTickEnabled="True" ValueChanged="SldrMaxTokens_ValueChanged"/></StackPanel>
+                                    <TextBlock x:Name="TxtMaxTokens" Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Center" FontWeight="SemiBold"/>
+                                </Grid>
+                                <Grid Margin="0,0,0,10">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="70"/></Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="Trigger Delay (ms)" Style="{DynamicResource LpLabelStyle}"/><Slider x:Name="SldrDelay" Minimum="200" Maximum="2000" TickFrequency="100" IsSnapToTickEnabled="True" ValueChanged="SldrDelay_ValueChanged"/></StackPanel>
+                                    <TextBlock x:Name="TxtDelay" Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Center" FontWeight="SemiBold"/>
+                                </Grid>
+                            </StackPanel>
+                        </Expander>
+
+                        <!-- Prompt Customization -->
+                        <TextBlock Text="📝  Prompt Customization" Style="{DynamicResource LpSectionHeader}"/>
+                        <Expander Header="Edit Interaction Templates" Foreground="{DynamicResource LpWindowFgBrush}">
+                             <StackPanel Margin="10,10,0,0">
+                                <StackPanel.Resources>
+                                    <Style TargetType="TextBox" x:Key="LpPromptInputAdv" BasedOn="{StaticResource LpInputStyle}">
+                                        <Setter Property="Height" Value="Auto"/><Setter Property="MinHeight" Value="60"/>
+                                        <Setter Property="AcceptsReturn" Value="True"/><Setter Property="TextWrapping" Value="Wrap"/>
+                                        <Setter Property="VerticalContentAlignment" Value="Top"/><Setter Property="Margin" Value="0,0,0,14"/>
+                                    </Style>
+                                </StackPanel.Resources>
+                                <TextBlock Text="System Instructions" Style="{DynamicResource LpLabelStyle}"/><TextBox x:Name="TxtSystemPrompt" Style="{StaticResource LpPromptInputAdv}"/>
+                                <TextBlock Text="Explain Prompt" Style="{DynamicResource LpLabelStyle}"/><TextBox x:Name="TxtExplainPrompt" Style="{StaticResource LpPromptInputAdv}"/>
+                                <TextBlock Text="Refactor Prompt" Style="{DynamicResource LpLabelStyle}"/><TextBox x:Name="TxtRefactorPrompt" Style="{StaticResource LpPromptInputAdv}"/>
+                                <TextBlock Text="Documentation Prompt" Style="{DynamicResource LpLabelStyle}"/><TextBox x:Name="TxtDocumentPrompt" Style="{StaticResource LpPromptInputAdv}"/>
+                                <TextBlock Text="Code Review Prompt" Style="{DynamicResource LpLabelStyle}"/><TextBox x:Name="TxtReviewPrompt" Style="{StaticResource LpPromptInputAdv}"/>
+                                <TextBlock Text="Fix Prompt" Style="{DynamicResource LpLabelStyle}"/><TextBox x:Name="TxtFixPrompt" Style="{StaticResource LpPromptInputAdv}"/>
+                                <TextBlock Text="Unit Test Prompt" Style="{DynamicResource LpLabelStyle}"/><TextBox x:Name="TxtTestPrompt" Style="{StaticResource LpPromptInputAdv}"/>
+                            </StackPanel>
+                        </Expander>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
+
+        <!-- ═══ Footer ════════════════════════════════════════════════════ -->
+        <StackPanel Grid.Row="2" Margin="24,10,24,20">
+            <Separator Style="{DynamicResource LpSepStyle}" Margin="0,0,0,16"/>
+            <!-- Save Toast Notification -->
+            <Border x:Name="SaveToast" Opacity="0" Visibility="Collapsed" Background="{DynamicResource LpMenuBgBrush}" BorderBrush="{DynamicResource LpMenuBorderBrush}" BorderThickness="1" CornerRadius="6" Padding="14,10" Margin="0,0,0,16">
                 <Border.Resources>
-                    <!-- Fade-in then out storyboard -->
                     <Storyboard x:Key="ToastStoryboard">
-                        <!-- Make visible immediately (handled in code, but keep opacity anim here) -->
                         <DoubleAnimationUsingKeyFrames Storyboard.TargetProperty="Opacity">
-                            <!-- Rise -->
-                            <LinearDoubleKeyFrame Value="0"  KeyTime="0:0:0.0"/>
-                            <LinearDoubleKeyFrame Value="1"  KeyTime="0:0:0.25"/>
-                            <!-- Hold -->
-                            <LinearDoubleKeyFrame Value="1"  KeyTime="0:0:2.25"/>
-                            <!-- Fade out -->
-                            <LinearDoubleKeyFrame Value="0"  KeyTime="0:0:2.75"/>
+                            <LinearDoubleKeyFrame Value="0"  KeyTime="0:0:0.0"/><LinearDoubleKeyFrame Value="1"  KeyTime="0:0:0.25"/>
+                            <LinearDoubleKeyFrame Value="1"  KeyTime="0:0:2.25"/><LinearDoubleKeyFrame Value="0"  KeyTime="0:0:2.75"/>
                         </DoubleAnimationUsingKeyFrames>
                     </Storyboard>
                 </Border.Resources>
                 <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-
-                    <!-- Green tick icon -->
-                    <Border Grid.Column="0" Background="#1A4EC9B0" CornerRadius="14"
-                            Width="28" Height="28" Margin="0,0,10,0">
-                        <TextBlock Text="&#xE73E;" FontFamily="Segoe MDL2 Assets" FontSize="13"
-                                   Foreground="#4EC9B0"
-                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                    </Border>
-
-                    <!-- Message -->
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <Border Grid.Column="0" Background="#1A4EC9B0" CornerRadius="14" Width="28" Height="28" Margin="0,0,10,0">
+                        <TextBlock Text="&#xE73E;" FontFamily="Segoe MDL2 Assets" FontSize="13" Foreground="#4EC9B0" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
                     <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                        <TextBlock x:Name="ToastTitle"
-                                   Text="Settings saved"
-                                   FontWeight="SemiBold" FontSize="12"
-                                   Foreground="{DynamicResource LpWindowFgBrush}"/>
-                        <TextBlock x:Name="ToastSubtitle"
-                                   Text="All changes have been persisted."
-                                   FontSize="11" Opacity="0.7"
-                                   Foreground="{DynamicResource LpWindowFgBrush}"/>
-                    </StackPanel>
-
-                    <!-- Dismiss × button -->
-                    <Button Grid.Column="2" x:Name="BtnDismissToast"
-                            Content="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="10"
-                            Background="Transparent" BorderThickness="0"
-                             Foreground="{DynamicResource LpMutedFgBrush}"
-                            Cursor="Hand" Padding="4"
-                            VerticalAlignment="Top"
-                            Click="BtnDismissToast_Click"
-                            ToolTip="Dismiss"/>
+                        <TextBlock x:Name="ToastTitle" Text="Settings saved" FontWeight="SemiBold" FontSize="12"/><TextBlock x:Name="ToastSubtitle" Text="All changes have been persisted." FontSize="11" Opacity="0.7"/></StackPanel>
+                    <Button Grid.Column="2" x:Name="BtnDismissToast" Content="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="10" Background="Transparent" BorderThickness="0" Cursor="Hand" Padding="4" VerticalAlignment="Top" Click="BtnDismissToast_Click"/>
                 </Grid>
             </Border>
-
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Content="Reset to Defaults" Style="{DynamicResource LpSecondaryBtn}"
-                        x:Name="BtnReset" Click="BtnReset_Click" Margin="0,0,10,0"/>
-                <Button Content="💾  Save Settings" Style="{DynamicResource LpSecondaryBtn}"
-                        x:Name="BtnSave"  Click="BtnSave_Click"/>
+                <Button Content="Reset Defaults" Style="{DynamicResource LpSecondaryBtn}" x:Name="BtnReset" Click="BtnReset_Click" Margin="0,0,10,0"/>
+                <Button Content="💾  Save Settings" Style="{DynamicResource LpPrimaryBtn}" x:Name="BtnSave" Click="BtnSave_Click" Width="140"/>
             </StackPanel>
-
         </StackPanel>
-    </ScrollViewer>
+    </Grid>
 </UserControl>

@@ -147,11 +147,7 @@ namespace LocalPilot.Chat
             _history.Add(new ChatMessage
             {
                 Role    = "system",
-                Content = "You are LocalPilot, a world-class AI pair programmer for Visual Studio. " +
-                          "Your goal is to help the user write, explain, and refactor production-ready, high-performance code. " +
-                          "RULES: 1. Be extremely concise and skip pleasantries. 2. Use professional, clean markdown formatting. " +
-                          "3. Always prioritize the provided <PROJECT_SOURCE_CONTEXT> if available. " +
-                          "4. If you don't know the answer from the context, admit it instead of hallucinating."
+                Content = LocalPilotSettings.Instance.SystemPrompt
             });
 
             // Modern introductory text is now partly in XAML, but we can add a greet
@@ -310,19 +306,27 @@ namespace LocalPilot.Chat
 
         private string BuildActionPrompt(string action, string code)
         {
+            var s = LocalPilotSettings.Instance;
             bool hasCode = !string.IsNullOrWhiteSpace(code);
             string codeBlock = hasCode ? $"\n\n```\n{code}\n```" : "(no code selected)";
 
-            return action switch
+            string template = action switch
             {
-                "explain"  => $"Explain the following code clearly and concisely:{codeBlock}",
-                "refactor" => $"Refactor the following code to improve readability, performance and best practices. RETURN ONLY THE REFACTORED CODE BLOCK without extra explanation if possible:{codeBlock}",
-                "document" => $"Add XML documentation comments (summary, params, returns) for the following code and return only the documented code block:{codeBlock}",
-                "review"   => $"Perform a rigorous security and quality review of the following code. Identify potential bugs, performance bottlenecks, and security vulnerabilities. Provide specific, actionable suggestions for improvement:{codeBlock}",
-                "fix"      => $"Identify and fix all issues in the following code. RETURN ONLY THE FIXED CODE BLOCK without extra explanation if possible:{codeBlock}",
-                "test"     => $"Write comprehensive unit tests using xUnit for the following code:{codeBlock}",
+                "explain"  => s.ExplainPrompt,
+                "refactor" => s.RefactorPrompt,
+                "document" => s.DocumentPrompt,
+                "review"   => s.ReviewPrompt,
+                "fix"      => s.FixPrompt,
+                "test"     => s.TestPrompt,
                 _          => string.Empty
             };
+
+            if (string.IsNullOrEmpty(template)) return string.Empty;
+
+            // Replace the placeholder if present
+            return template.Contains("{codeBlock}") 
+                ? template.Replace("{codeBlock}", codeBlock) 
+                : $"{template}{codeBlock}";
         }
 
         private async Task<string> TryGetEditorSelectionAsync()
