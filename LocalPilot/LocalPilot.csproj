@@ -58,6 +58,10 @@
     <Compile Include="Services\OllamaService.cs" />
     <Compile Include="Services\LocalPilotLogger.cs" />
     <Compile Include="Services\ProjectContextService.cs" />
+    <Compile Include="Services\AgentOrchestrator.cs" />
+    <Compile Include="Services\ToolRegistry.cs" />
+    <!-- Models -->
+    <Compile Include="Models\AgentModels.cs" />
     <!-- Settings -->
     <Compile Include="Settings\LocalPilotSettings.cs" />
     <!-- Options -->

@@ -36,7 +36,8 @@ namespace LocalPilot.Settings
         // ── Chat panel ─────────────────────────────────────────────────────────
         public int    ChatHistoryMaxItems { get; set; } = 50;
 
-        // ── Code Actions ──────────────────────────────────────────────────────
+        // ── Agent ─────────────────────────────────────────────────────────────
+        public bool   RequireApprovalForWrites { get; set; } = true;
         public bool   EnableExplain      { get; set; } = true;
         public bool   EnableRefactor     { get; set; } = true;
         public bool   EnableDocGen       { get; set; } = true;

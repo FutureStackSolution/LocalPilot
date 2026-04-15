@@ -1,3 +1,4 @@
+using LocalPilot.Models;
 using LocalPilot.Services;
 using LocalPilot.Settings;
 using Microsoft.VisualStudio.PlatformUI;
@@ -26,6 +27,22 @@ namespace LocalPilot.Chat
         private string _lastAuthoringCode = null; // Buffer for original code during Refactor/Fix
         private string _currentAction = null;     // Tracks active quick action context
         private int _lastStreamId = 0; // Class-level ID to track active stream
+        
+        // Agent Mode Services
+        private readonly ToolRegistry _toolRegistry;
+        private readonly AgentOrchestrator _agentOrchestrator;
+        private TaskCompletionSource<bool> _permissionTcs;
+        private StackPanel _agentCurrentContainer;
+        private StackPanel _agentTurnContainer;
+        private RichTextBox _agentTurnBubble;
+        private StringBuilder _agentResponseSb = new StringBuilder();
+        private bool _isAgentMode = false;
+        private bool _isStreaming = false;
+        private bool _agentPlanRenderedThisTurn = false;
+        private bool _suppressAgentTextThisTurn = false;
+        private string _lastToolChipName = null;
+        private TextBlock _lastToolChipLabel = null;
+        private int _lastToolChipCount = 0;
 
         private Brush ThemeWindowBg => (Brush)this.Resources["LpWindowBgBrush"];
         private Brush ThemeWindowFg => (Brush)this.Resources["LpWindowFgBrush"];
@@ -35,13 +52,24 @@ namespace LocalPilot.Chat
         // Design tokens for rendering logic
         private static readonly FontFamily UIFont      = new FontFamily("Segoe UI");
         private static readonly FontFamily ConsoleFont = new FontFamily("Consolas");
-        private static readonly SolidColorBrush BrushAccent = new SolidColorBrush(Color.FromRgb(0x7C, 0x6A, 0xF7));
-        private static readonly SolidColorBrush BrushCode   = new SolidColorBrush(Color.FromRgb(0xCE, 0x91, 0x78));
 
         public LocalPilotChatControl()
         {
             InitializeComponent();
             _ollama = new OllamaService(LocalPilotSettings.Instance.OllamaBaseUrl);
+            
+            // Initialize Agent Services
+            _toolRegistry = new ToolRegistry();
+            _agentOrchestrator = new AgentOrchestrator(_ollama, _toolRegistry, ProjectContextService.Instance);
+            
+            // Wire up Agent events
+            _agentOrchestrator.OnStatusUpdate += OnAgentStatusUpdate;
+            _agentOrchestrator.OnToolCallPending += OnAgentToolCallPending;
+            _agentOrchestrator.OnMessageFragment += OnAgentMessageFragment;
+            _agentOrchestrator.OnMessageCompleted += OnAgentMessageCompleted;
+            _agentOrchestrator.OnPlanReady += OnAgentPlanReady;
+            _agentOrchestrator.RequestPermissionAsync = OnAgentPermissionRequestedAsync;
+
             UpdateBrushes();
             
             // Initialize history immediately to prevent race conditions during async loading
@@ -56,13 +84,32 @@ namespace LocalPilot.Chat
             UpdateBrushes();
             
             // Only show welcome if history was cleared or never initialized.
-            // This prevents clearing history when Right-Click actions fire before Load is fully complete.
             if (_history.Count == 0) 
             {
                 ShowWelcomeMessage();
             }
+
+            // Unified Smart Mode: Start in Agent state for panel inputs
+            _isAgentMode = true;
             
             VSColorTheme.ThemeChanged += OnThemeChanged;
+        }
+
+
+
+        private void SetMode(bool isAgent)
+        {
+            _isAgentMode = isAgent;
+
+            // MessagesContainer should always be visible so user can see history & context
+            MessagesContainer.Visibility = Visibility.Visible;
+            
+            if (!isAgent)
+            {
+                AgentStatusBar.Visibility = Visibility.Collapsed;
+            }
+            
+            ChatScroll.ScrollToEnd();
         }
 
         private void OnUnloaded(object sender, RoutedEventArgs e)
@@ -78,52 +125,91 @@ namespace LocalPilot.Chat
         {
             try
             {
-                // Dynamic VS Theme linkage
-                SetResourceBrush("LpWindowBgBrush",   VsBrushes.ToolWindowBackgroundKey,  Brushes.White);
-                SetResourceBrush("LpWindowFgBrush",   VsBrushes.ToolWindowTextKey,        Brushes.Black);
-                SetResourceBrush("LpMenuBgBrush",     VsBrushes.ToolWindowBackgroundKey,  Brushes.White);
-                SetResourceBrush("LpMenuBorderBrush", VsBrushes.ToolWindowBorderKey,      Brushes.Gray);
-                SetResourceBrush("LpMutedFgBrush",    VsBrushes.GrayTextKey,              Brushes.DarkGray);
-                
-                // 🎨 Theme-Aware Accent & Bubble Tinting
-                var accentBrush = (Brush)Application.Current.FindResource(VsBrushes.ControlLinkTextKey) ?? BrushAccent;
-                this.Resources["LpAccentBrush"] = accentBrush;
-                
-                var accentColor = (accentBrush as SolidColorBrush)?.Color ?? Color.FromRgb(0x7C, 0x6A, 0xF7);
-                var tintColor = Color.FromArgb(0x18, accentColor.R, accentColor.G, accentColor.B);
-                this.Resources["LpUserBubbleBgBrush"] = new SolidColorBrush(tintColor);
+                // Base theme brushes from Visual Studio
+                var toolWindowBg = Application.Current.FindResource(VsBrushes.ToolWindowBackgroundKey) as SolidColorBrush;
+                var toolWindowFg = Application.Current.FindResource(VsBrushes.ToolWindowTextKey) as Brush ?? Brushes.Black;
+                var borderBrush  = Application.Current.FindResource(VsBrushes.ToolWindowBorderKey) as Brush ?? Brushes.Gray;
+                var grayText     = Application.Current.FindResource(VsBrushes.GrayTextKey) as Brush ?? Brushes.DarkGray;
 
-                // 🌈 Theme-Aware Syntax Palette
-                bool isDark = true;
-                var bgBrush = Application.Current.FindResource(VsBrushes.ToolWindowBackgroundKey) as SolidColorBrush;
-                if (bgBrush != null)
-                {
-                    var c = bgBrush.Color;
-                    isDark = (c.R + c.G + c.B) / 3.0 < 128;
-                }
+                // Fallback when VS theme resources are unavailable
+                var baseBgColor = toolWindowBg?.Color ?? Colors.White;
+                bool isDark = IsDark(baseBgColor);
 
-                if (isDark)
-                {
-                    this.Resources["LpCodeKwBrush"]      = new SolidColorBrush(Color.FromRgb(0x56, 0x9C, 0xD6)); // Blue
-                    this.Resources["LpCodeCommentBrush"] = new SolidColorBrush(Color.FromRgb(0x6A, 0x99, 0x55)); // Green
-                    this.Resources["LpCodeStringBrush"]  = new SolidColorBrush(Color.FromRgb(0xD6, 0x9D, 0x85)); // Orange
-                    this.Resources["LpCodeNumberBrush"]  = new SolidColorBrush(Color.FromRgb(0xB5, 0xCE, 0xA8)); // Light Green
-                    this.Resources["LpCodeTypeBrush"]    = new SolidColorBrush(Color.FromRgb(0x4E, 0xC9, 0xB0)); // Teal
-                    this.Resources["LpCodeMethodBrush"]  = new SolidColorBrush(Color.FromRgb(0xDC, 0xDC, 0xAA)); // Yellow
-                }
-                else
-                {
-                    this.Resources["LpCodeKwBrush"]      = new SolidColorBrush(Color.FromRgb(0x00, 0x00, 0xFF)); // Pure Blue
-                    this.Resources["LpCodeCommentBrush"] = new SolidColorBrush(Color.FromRgb(0x00, 0x80, 0x00)); // Dark Green
-                    this.Resources["LpCodeStringBrush"]  = new SolidColorBrush(Color.FromRgb(0xA3, 0x15, 0x15)); // Dark Red
-                    this.Resources["LpCodeNumberBrush"]  = new SolidColorBrush(Color.FromRgb(0x09, 0x86, 0x58)); // Deep Teal
-                    this.Resources["LpCodeTypeBrush"]    = new SolidColorBrush(Color.FromRgb(0x26, 0x7F, 0x99)); // Blue-Green
-                    this.Resources["LpCodeMethodBrush"]  = new SolidColorBrush(Color.FromRgb(0x79, 0x5E, 0x26)); // Brown
-                }
+                // Derived surfaces for better separation across Dark/Light/Blue themes
+                var menuBgColor = AdjustColor(baseBgColor, isDark ? 8 : -8);
+                var userBubbleColor = AdjustColor(baseBgColor, isDark ? 12 : -12);
+
+                this.Resources["LpWindowBgBrush"] = new SolidColorBrush(baseBgColor);
+                this.Resources["LpWindowFgBrush"] = toolWindowFg;
+                this.Resources["LpMenuBgBrush"] = new SolidColorBrush(menuBgColor);
+                this.Resources["LpMenuBorderBrush"] = borderBrush;
+                this.Resources["LpMutedFgBrush"] = grayText;
+                
+                // 🎨 Accent & Highlight area
+                // Using standard VS link color as our primary accent
+                var accentBrush = Application.Current.FindResource(VsBrushes.ControlLinkTextKey) as Brush
+                                  ?? Brushes.DodgerBlue;
+                
+                this.Resources["LpAccentBrush"]    = accentBrush;
+                this.Resources["LpStopBrush"]      = new SolidColorBrush(Color.FromRgb(0xE5, 0x14, 0x00)); // Modern Red
+                this.Resources["LpHoverBgBrush"]   = Application.Current.FindResource(VsBrushes.CommandBarHoverKey) as Brush
+                                                    ?? new SolidColorBrush(AdjustColor(baseBgColor, isDark ? 16 : -16));
+                this.Resources["LpHoverFgBrush"]   = toolWindowFg;
+
+                // 🫧 User Bubble Background
+                this.Resources["LpUserBubbleBgBrush"] = new SolidColorBrush(userBubbleColor);
+
+                // 🌈 Syntax Highlighting Palette (Theme-Aware)
+                UpdateSyntaxBrushes();
                 
                 ChatScroll.Background = (Brush)this.Resources["LpWindowBgBrush"];
             }
-            catch { /* Fallback to XAML defaults if shell is busy */ }
+            catch { }
+        }
+
+        private void UpdateSyntaxBrushes()
+        {
+            var bgBrush = Application.Current.FindResource(VsBrushes.ToolWindowBackgroundKey) as SolidColorBrush;
+            bool isDark = bgBrush != null && (bgBrush.Color.R + bgBrush.Color.G + bgBrush.Color.B) / 3.0 < 128;
+
+            if (isDark)
+            {
+                SetBrush("LpCodeKwBrush",      Color.FromRgb(0x56, 0x9C, 0xD6)); 
+                SetBrush("LpCodeCommentBrush", Color.FromRgb(0x6A, 0x99, 0x55)); 
+                SetBrush("LpCodeStringBrush",  Color.FromRgb(0xD6, 0x9D, 0x85)); 
+                SetBrush("LpCodeNumberBrush",  Color.FromRgb(0xB5, 0xCE, 0xA8)); 
+                SetBrush("LpCodeTypeBrush",    Color.FromRgb(0x4E, 0xC9, 0xB0)); 
+                SetBrush("LpCodeMethodBrush",  Color.FromRgb(0xDC, 0xDC, 0xAA)); 
+            }
+            else
+            {
+                SetBrush("LpCodeKwBrush",      Color.FromRgb(0x00, 0x00, 0xFF)); 
+                SetBrush("LpCodeCommentBrush", Color.FromRgb(0x00, 0x80, 0x00)); 
+                SetBrush("LpCodeStringBrush",  Color.FromRgb(0xA3, 0x15, 0x15)); 
+                SetBrush("LpCodeNumberBrush",  Color.FromRgb(0x09, 0x86, 0x58)); 
+                SetBrush("LpCodeTypeBrush",    Color.FromRgb(0x26, 0x7F, 0x99)); 
+                SetBrush("LpCodeMethodBrush",  Color.FromRgb(0x79, 0x5E, 0x26)); 
+            }
+        }
+
+        private void SetBrush(string key, Color color)
+        {
+            this.Resources[key] = new SolidColorBrush(color);
+        }
+
+        private static bool IsDark(Color c)
+        {
+            return ((c.R + c.G + c.B) / 3.0) < 128;
+        }
+
+        private static Color AdjustColor(Color c, int delta)
+        {
+            byte Clamp(int v) => (byte)Math.Max(0, Math.Min(255, v));
+            return Color.FromArgb(
+                c.A,
+                Clamp(c.R + delta),
+                Clamp(c.G + delta),
+                Clamp(c.B + delta));
         }
 
         private void SetResourceBrush(string key, object vsKey, Brush fallback)
@@ -155,36 +241,43 @@ namespace LocalPilot.Chat
         }
 
         // ── Send message ──────────────────────────────────────────────────────
-        private void BtnSend_Click(object sender, RoutedEventArgs e)
-        {
-            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
-            {
-                await SendMessageAsync(TxtInput.Text.Trim());
-            });
-        }
 
-        private void TxtInput_KeyDown(object sender, KeyEventArgs e)
+        private void BtnSend_Click(object sender, RoutedEventArgs e) => HandleSendInput();
+
+        private void TxtInput_PreviewKeyDown(object sender, KeyEventArgs e)
         {
             if (e.Key == Key.Return)
             {
                 if (Keyboard.Modifiers == ModifierKeys.Shift)
                 {
-                    // Shift+Enter: Insert newline
-                    int caretIndex = TxtInput.CaretIndex;
-                    TxtInput.Text = TxtInput.Text.Insert(caretIndex, Environment.NewLine);
-                    TxtInput.CaretIndex = caretIndex + Environment.NewLine.Length;
-                    e.Handled = true;
+                    // Shift+Enter: Let it fall through to insert newline
+                    return;
                 }
-                else
-                {
-                    // Enter only: Send
-                    e.Handled = true;
-                    _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
-                    {
-                        await SendMessageAsync(TxtInput.Text.Trim());
-                    });
-                }
+                
+                // Enter only: Send
+                e.Handled = true;
+                HandleSendInput();
             }
+        }
+
+        private void HandleSendInput()
+        {
+            if (_isStreaming)
+            {
+                _cts?.Cancel();
+                _isStreaming = false;
+                SetStreaming(false);
+                return;
+            }
+
+            string text = TxtInput.Text.Trim();
+            if (string.IsNullOrWhiteSpace(text)) return;
+
+            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+            {
+                // SMART MODE: General input box always defaults to Agent for maximum capability.
+                await RunAgentTaskAsync(text);
+            });
         }
 
         private async Task SendMessageAsync(string text)
@@ -222,12 +315,466 @@ namespace LocalPilot.Chat
             await StreamResponseAsync(LocalPilotSettings.Instance.ChatModel);
         }
 
+        private async Task RunAgentTaskAsync(string task)
+        {
+            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+            TxtInput.Clear();
+            AppendUserBubble(task);
+            
+            SetStreaming(true);
+            
+            // Reset agent streaming state
+            _agentCurrentContainer = null;
+            _agentResponseSb.Clear();
+            _agentPlanRenderedThisTurn = false;
+            _suppressAgentTextThisTurn = false;
+            _lastToolChipName = null;
+            _lastToolChipLabel = null;
+            _lastToolChipCount = 0;
+
+            try
+            {
+                _cts?.Cancel();
+                _cts = new CancellationTokenSource();
+                
+                await _agentOrchestrator.RunTaskAsync(task, _cts.Token);
+            }
+            catch (Exception ex)
+            {
+                AppendAIBubble($"❌ Agent Error: {ex.Message}");
+                SetStreaming(false);
+            }
+        }
+
+        private void EnsureAgentBubble()
+        {
+            if (_agentCurrentContainer != null) return;
+
+            // Create the main bubble container and store the content area reference
+            _agentCurrentContainer = AppendAIBubble(string.Empty);
+        }
+
+        private void OnAgentMessageFragment(string fragment)
+        {
+            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+            {
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+
+                if (_suppressAgentTextThisTurn)
+                {
+                    return;
+                }
+                
+                EnsureAgentBubble();
+
+                if (_agentTurnContainer == null)
+                {
+                    _agentTurnContainer = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
+                    _agentCurrentContainer.Children.Add(_agentTurnContainer);
+                    _agentTurnBubble = CreateRichTextBox();
+                    _agentTurnContainer.Children.Add(_agentTurnBubble);
+                }
+
+                _agentResponseSb.Append(fragment);
+                string currentFull = _agentResponseSb.ToString();
+
+                if (currentFull.Contains("```") || currentFull.Contains("#"))
+                {
+                    RenderFullMarkdown(_agentTurnContainer, currentFull);
+                }
+                else
+                {
+                    RenderMarkdown(_agentTurnBubble, currentFull);
+                }
+
+                ChatScroll.ScrollToEnd();
+            });
+        }
+
+        private void OnAgentMessageCompleted(string fullMessage)
+        {
+            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+            {
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+
+                string messageToRender = fullMessage;
+                if (!string.IsNullOrWhiteSpace(messageToRender))
+                {
+                    messageToRender = StripLeadingStepsBlock(messageToRender);
+                    _agentPlanRenderedThisTurn = false;
+                }
+
+                if (_suppressAgentTextThisTurn)
+                {
+                    // For planning turns we render a dedicated plan card and suppress raw narrative text.
+                    // Keep completion lightweight and tool-centric.
+                    messageToRender = string.Empty;
+                    _suppressAgentTextThisTurn = false;
+                }
+
+                if (_agentTurnContainer != null && !string.IsNullOrWhiteSpace(messageToRender))
+                {
+                    RenderFullMarkdown(_agentTurnContainer, messageToRender);
+                }
+                else if (_agentTurnContainer != null && string.IsNullOrWhiteSpace(messageToRender) && _agentCurrentContainer != null)
+                {
+                    // Remove empty turn blocks so tool chips stay visually tight.
+                    _agentCurrentContainer.Children.Remove(_agentTurnContainer);
+                }
+
+                _agentTurnContainer = null;
+                _agentTurnBubble = null;
+                _agentResponseSb.Clear();
+                ChatScroll.ScrollToEnd();
+            });
+        }
+
+        private void OnAgentPlanReady(AgentPlan plan)
+        {
+            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+            {
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+
+                EnsureAgentBubble();
+                if (_agentCurrentContainer == null || plan == null || plan.Steps == null || plan.Steps.Count == 0)
+                {
+                    return;
+                }
+
+                // Remove any partially streamed plain-text plan block to avoid duplicate rendering.
+                if (_agentTurnContainer != null)
+                {
+                    _agentCurrentContainer.Children.Remove(_agentTurnContainer);
+                    _agentTurnContainer = null;
+                    _agentTurnBubble = null;
+                    _agentResponseSb.Clear();
+                }
+
+                var planCard = BuildAgentPlanCard(plan);
+                _agentCurrentContainer.Children.Add(planCard);
+                _agentPlanRenderedThisTurn = true;
+                _suppressAgentTextThisTurn = true;
+                ChatScroll.ScrollToEnd();
+            });
+        }
+
+        private FrameworkElement BuildAgentPlanCard(AgentPlan plan)
+        {
+            var card = new Border
+            {
+                Background = (Brush)this.Resources["LpMenuBgBrush"],
+                BorderBrush = (Brush)this.Resources["LpMenuBorderBrush"],
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(6),
+                Padding = new Thickness(12, 10, 12, 10),
+                Margin = new Thickness(0, 0, 0, 10)
+            };
+
+            var root = new StackPanel();
+
+            var header = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 8) };
+            header.Children.Add(new TextBlock
+            {
+                Text = "\uE8FD",
+                FontFamily = new FontFamily("Segoe MDL2 Assets"),
+                FontSize = 12,
+                Foreground = (Brush)this.Resources["LpAccentBrush"],
+                Margin = new Thickness(0, 0, 6, 0),
+                VerticalAlignment = VerticalAlignment.Center
+            });
+            header.Children.Add(new TextBlock
+            {
+                Text = "Execution Plan",
+                FontSize = 12,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = (Brush)this.Resources["LpWindowFgBrush"],
+                VerticalAlignment = VerticalAlignment.Center
+            });
+            root.Children.Add(header);
+
+            if (!string.IsNullOrWhiteSpace(plan.Preamble))
+            {
+                root.Children.Add(new TextBlock
+                {
+                    Text = plan.Preamble.Trim(),
+                    TextWrapping = TextWrapping.Wrap,
+                    FontSize = 12,
+                    Foreground = (Brush)this.Resources["LpMutedFgBrush"],
+                    Margin = new Thickness(0, 0, 0, 8)
+                });
+            }
+
+            for (int i = 0; i < plan.Steps.Count; i++)
+            {
+                var row = new Grid { Margin = new Thickness(0, 2, 0, 2) };
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+                row.Children.Add(new TextBlock
+                {
+                    Text = $"{i + 1}.",
+                    FontSize = 12,
+                    FontWeight = FontWeights.SemiBold,
+                    Foreground = (Brush)this.Resources["LpWindowFgBrush"],
+                    Margin = new Thickness(0, 0, 8, 0)
+                });
+
+                var stepText = new TextBlock
+                {
+                    Text = plan.Steps[i],
+                    TextWrapping = TextWrapping.Wrap,
+                    FontSize = 12,
+                    Foreground = (Brush)this.Resources["LpWindowFgBrush"]
+                };
+                Grid.SetColumn(stepText, 1);
+                row.Children.Add(stepText);
+
+                root.Children.Add(row);
+            }
+
+            card.Child = root;
+            return card;
+        }
+
+        private string StripLeadingStepsBlock(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return text;
+
+            var normalized = text.Replace("\r\n", "\n");
+            int stepsIndex = normalized.IndexOf("Steps:", StringComparison.OrdinalIgnoreCase);
+            if (stepsIndex < 0) return text;
+
+            var lines = normalized.Split('\n');
+            var sb = new StringBuilder();
+            bool inPlanBlock = false;
+            bool planStarted = false;
+
+            foreach (var rawLine in lines)
+            {
+                string line = rawLine.Trim();
+
+                if (!planStarted && line.Equals("Steps:", StringComparison.OrdinalIgnoreCase))
+                {
+                    inPlanBlock = true;
+                    planStarted = true;
+                    continue;
+                }
+
+                if (inPlanBlock)
+                {
+                    bool isStepLine = System.Text.RegularExpressions.Regex.IsMatch(line, @"^(\d+[\.\)]|-)\s+");
+                    bool isContinuation = rawLine.StartsWith(" ") || rawLine.StartsWith("\t");
+
+                    if (string.IsNullOrWhiteSpace(line) || isStepLine || isContinuation)
+                    {
+                        continue;
+                    }
+
+                    // First non-plan narrative line after plan.
+                    inPlanBlock = false;
+                }
+
+                if (!inPlanBlock)
+                {
+                    sb.AppendLine(rawLine);
+                }
+            }
+
+            return sb.ToString().Trim();
+        }
+
+        private void OnAgentStatusUpdate(AgentStatus status, string detail)
+        {
+            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+            {
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                
+                string model = LocalPilotSettings.Instance.ChatModel;
+                TxtAgentStatus.Text = $"LocalPilot ({model}) {status}";
+                TxtAgentDetail.Text = detail;
+                
+                if (status != AgentStatus.Completed)
+                {
+                    if (status == AgentStatus.Idle || status == AgentStatus.Failed)
+                    {
+                        var container = _agentCurrentContainer;
+                        _isAgentMode = false;
+                        _agentCurrentContainer = null;
+
+                        if (container != null)
+                        {
+                            var badge = new Border
+                            {
+                                Background = (Brush)this.Resources["LpMenuBgBrush"],
+                                BorderBrush = (Brush)this.Resources["LpMenuBorderBrush"],
+                                BorderThickness = new Thickness(1),
+                                CornerRadius = new CornerRadius(6),
+                                Padding = new Thickness(10, 7, 10, 7),
+                                Margin = new Thickness(0, 8, 0, 4),
+                                HorizontalAlignment = HorizontalAlignment.Left
+                            };
+
+                            var sp = new StackPanel { Orientation = Orientation.Horizontal };
+                            sp.Children.Add(new TextBlock
+                            {
+                                Text = status == AgentStatus.Idle ? "\uE71A" : "\uE7BA",
+                                FontFamily = new FontFamily("Segoe MDL2 Assets"),
+                                FontSize = 12,
+                                Margin = new Thickness(0, 0, 8, 0),
+                                VerticalAlignment = VerticalAlignment.Center,
+                                Foreground = status == AgentStatus.Idle
+                                    ? (Brush)this.Resources["LpMutedFgBrush"]
+                                    : (Brush)this.Resources["LpAccentBrush"]
+                            });
+                            sp.Children.Add(new TextBlock
+                            {
+                                Text = status == AgentStatus.Idle ? "Task cancelled by user." : "Task stopped due to an error.",
+                                FontWeight = FontWeights.SemiBold,
+                                FontSize = 12,
+                                Foreground = (Brush)this.Resources["LpWindowFgBrush"],
+                                VerticalAlignment = VerticalAlignment.Center
+                            });
+                            badge.Child = sp;
+                            container.Children.Add(badge);
+                        }
+                        else
+                        {
+                            AppendAIBubble(status == AgentStatus.Idle
+                                ? "**Task cancelled by user.**"
+                                : "**Task stopped due to an error.**");
+                        }
+
+                        await Task.Delay(800);
+                        SetStreaming(false);
+                        _lastToolChipName = null;
+                        _lastToolChipLabel = null;
+                        _lastToolChipCount = 0;
+                    }
+                    else
+                    {
+                        EnsureAgentBubble();
+                        AgentStatusBar.Visibility = Visibility.Visible;
+                    }
+                }
+                else
+                {
+                    // Save reference before clearing state
+                    var container = _agentCurrentContainer;
+                    _isAgentMode = false;
+                    _agentCurrentContainer = null;
+                    
+                    // Show a graceful completion chip in the chat
+                    if (container != null)
+                    {
+                         var sp = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0,8,0,4) };
+                         sp.Children.Add(new TextBlock { Text = "\uE73E", FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 13, Margin = new Thickness(0,0,8,0), VerticalAlignment = VerticalAlignment.Center, Foreground = (Brush)this.Resources["LpAccentBrush"] });
+                         sp.Children.Add(new TextBlock { 
+                             Text = "Completed", 
+                             FontWeight = FontWeights.SemiBold, 
+                             FontSize = 12,
+                             Foreground = (Brush)this.Resources["LpWindowFgBrush"],
+                             VerticalAlignment = VerticalAlignment.Center 
+                         });
+                         container.Children.Add(sp);
+                    }
+                    else
+                    {
+                         AppendAIBubble("**Completed**");
+                    }
+                    
+                    await Task.Delay(2000);
+                    SetStreaming(false);
+                    _lastToolChipName = null;
+                    _lastToolChipLabel = null;
+                    _lastToolChipCount = 0;
+                }
+                ChatScroll.ScrollToEnd();
+            });
+        }
+
+        private void OnAgentToolCallPending(ToolCallRequest request)
+        {
+            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+            {
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+
+                EnsureAgentBubble();
+
+                // Map tool names to clean label + MDL2 icon
+                var (icon, label) = request.Name switch
+                {
+                    "read_file"    => ("\uE8A5", "Read file"),
+                    "write_file"   => ("\uE74E", "Write file"),
+                    "grep_search"  => ("\uE721", "Search references"),
+                    "replace_text" => ("\uE70F", "Update code"),
+                    "run_terminal" => ("\uE756", "Run command"),
+                    _              => ("\uE9F5", request.Name)
+                };
+
+                if (_agentCurrentContainer != null)
+                {
+                    // De-duplicate consecutive identical tool chips to keep UI compact.
+                    if (string.Equals(_lastToolChipName, request.Name, StringComparison.OrdinalIgnoreCase) && _lastToolChipLabel != null)
+                    {
+                        _lastToolChipCount++;
+                        _lastToolChipLabel.Text = $"{label} ({_lastToolChipCount})";
+                        ChatScroll.ScrollToEnd();
+                        return;
+                    }
+
+                    _lastToolChipName = request.Name;
+                    _lastToolChipCount = 1;
+
+                    // ── Professional Status Pill ────────────────────────────
+                    var pill = new Border
+                    {
+                        Background      = (Brush)this.Resources["LpMenuBgBrush"],
+                        BorderBrush     = (Brush)this.Resources["LpMenuBorderBrush"],
+                        BorderThickness = new Thickness(1),
+                        CornerRadius    = new CornerRadius(4),
+                        Padding         = new Thickness(8, 4, 10, 4),
+                        Margin          = new Thickness(0, 2, 0, 2),
+                        HorizontalAlignment = HorizontalAlignment.Left
+                    };
+
+                    var sp = new StackPanel { Orientation = Orientation.Horizontal };
+                    sp.Children.Add(new TextBlock
+                    {
+                        Text              = icon,
+                        FontFamily        = new FontFamily("Segoe MDL2 Assets"),
+                        FontSize          = 11,
+                        Foreground        = (Brush)this.Resources["LpMutedFgBrush"],
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Margin            = new Thickness(0, 0, 6, 0)
+                    });
+
+                    sp.Children.Add(new TextBlock
+                    {
+                        Text              = label,
+                        FontSize          = 11,
+                        FontStyle         = FontStyles.Normal,
+                        FontWeight        = FontWeights.SemiBold,
+                        Foreground        = (Brush)this.Resources["LpWindowFgBrush"],
+                        VerticalAlignment = VerticalAlignment.Center
+                    });
+                    _lastToolChipLabel = (TextBlock)sp.Children[1];
+
+                    pill.Child = sp;
+                    _agentCurrentContainer.Children.Add(pill);
+                    ChatScroll.ScrollToEnd();
+                }
+
+                LocalPilotLogger.Log($"[Agent] Requesting tool: {request.Name}");
+            });
+        }
+
         private void QuickAction_Click(object sender, RoutedEventArgs e)
         {
             var btn = (Button)sender;
             var action = btn.Tag?.ToString() ?? string.Empty;
             _ = HandleQuickActionAsync(action);
         }
+
 
         private async Task HandleQuickActionAsync(string action, string preCapturedSelection = null)
         {
@@ -393,10 +940,7 @@ namespace LocalPilot.Chat
                 var activeHistory = historyContext ?? new List<ChatMessage>(_history);
                 
                 _ollama.UpdateBaseUrl(LocalPilotSettings.Instance.OllamaBaseUrl);
-                SetStreaming(true);
-
-                LocalPilotLogger.Log($"[Chat] StreamResponseAsync setup (ID: {myStreamId}, Model: {model}, History: {activeHistory.Count})");
-
+                
                 // Early Connectivity Check: Fast-fail if Ollama is not running (with strict timeout)
                 try
                 {
@@ -418,6 +962,7 @@ namespace LocalPilot.Chat
                 string finalMd = string.Empty;
                 var sb = new StringBuilder();
                 var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+                var startTime = DateTime.Now;
                 RichTextBox localStreamingBlock = null;
                 StackPanel localContainer = null;
                 bool forceFullMarkdown = false;
@@ -426,15 +971,18 @@ namespace LocalPilot.Chat
                 {
                     var options = new OllamaOptions
                     {
-                        Temperature = LocalPilotSettings.Instance.Temperature,
+                        Temperature = (float)LocalPilotSettings.Instance.Temperature,
                         NumPredict = LocalPilotSettings.Instance.MaxChatTokens
                     };
+
+                    string modelName = LocalPilotSettings.Instance.ChatModel;
+                    SetStreaming(true, modelName);
 
                     int tokenCount = 0;
                     int batchSize = 12;
                     var uiBuffer = new StringBuilder();
 
-                    // 1. PROJECT CONTEXT INTEGRATION (New in v1.2) - History-Aware Search
+                    // 1. PROJECT CONTEXT INTEGRATION (v1.3) - History-Aware Search
                     // Retrieve top semantically relevant chunks based on recent conversation flow
                     var contextHistory = activeHistory.Skip(Math.Max(0, activeHistory.Count - 3)).Select(m => m.Content);
                     string searchQuery = string.Join(" ", contextHistory);
@@ -469,10 +1017,11 @@ namespace LocalPilot.Chat
                             await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync(token);
                             token.ThrowIfCancellationRequested();
 
-                            if (localStreamingBlock == null && !string.IsNullOrEmpty(batchContent))
+                            if (localContainer == null && !string.IsNullOrEmpty(batchContent))
                             {
-                                localStreamingBlock = AppendAIBubble(string.Empty);
-                                localContainer = (StackPanel)localStreamingBlock.Parent;
+                                localContainer = AppendAIBubble(string.Empty);
+                                localStreamingBlock = CreateRichTextBox();
+                                localContainer.Children.Add(localStreamingBlock);
                             }
 
                             if (localContainer != null)
@@ -523,35 +1072,19 @@ namespace LocalPilot.Chat
                 double seconds = stopwatch.Elapsed.TotalSeconds;
 
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+
+                // Finalizing response status (Success or Cancel)
+                if (localContainer != null && localContainer.Tag is TextBlock statusLabel)
+                {
+                    var duration = DateTime.Now - startTime;
+                    statusLabel.Text = $"  ·  worked for {duration.TotalSeconds:F1}s";
+                    statusLabel.FontStyle = FontStyles.Normal;
+                    statusLabel.Opacity = 0.5;
+                }
+
                 if (!string.IsNullOrEmpty(finalMd) && localContainer != null)
                 {
                     RenderFullMarkdown(localContainer, finalMd);
-                    
-                        // Update Header Metric (Prestige Style) - Robust WPF Tree Traversal
-                        try 
-                        {
-                            var border = System.Windows.Media.VisualTreeHelper.GetParent(localContainer) as System.Windows.FrameworkElement;
-                            var bubbleContainer = System.Windows.Media.VisualTreeHelper.GetParent(border) as System.Windows.Controls.StackPanel;
-                            var header = bubbleContainer?.Children[0] as System.Windows.Controls.StackPanel;
-                            
-                            var metric = header?.Children.OfType<TextBlock>().FirstOrDefault();
-                            if (metric != null)
-                            {
-                                if (seconds >= 60)
-                                {
-                                    int mins = (int)seconds / 60;
-                                    double secs = seconds % 60;
-                                    metric.Text = $"worked for {mins}m {secs:F1}s";
-                                }
-                                else
-                                {
-                                    metric.Text = $"worked for {seconds:F1}s";
-                                }
-                                metric.FontWeight = System.Windows.FontWeights.Bold;
-                                metric.Foreground = (System.Windows.Media.Brush)this.Resources["LpAccentBrush"];
-                            }
-                        } catch { /* Handle edge cases where UI structure changed during stream */ }
-
                     _history.Add(new ChatMessage { Role = "assistant", Content = finalMd });
                     TrimHistory();
                 }
@@ -569,46 +1102,50 @@ namespace LocalPilot.Chat
         }
 
         // ── UI helpers ────────────────────────────────────────────────────────
+        //
+        //  Design language: GitHub Copilot / Antigravity parity
+        //  • User  → right-aligned, rounded, very subtle background tint, NO visible border
+        //  • AI    → left-aligned, NO background card, NO border — just text on the panel bg
+        //  • Tool  → single-line status chip (icon + italic label, muted accent colour)
+        //
+
         private void AppendUserBubble(string text)
         {
-            var bubbleContainer = new StackPanel { Margin = new Thickness(0, 8, 8, 8) };
-            
-            // 👤 Role Header (Right-Aligned)
-            var header = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0,0,4,2) };
-            header.Children.Add(new TextBlock { Text = "YOU", FontSize = 9, FontWeight = FontWeights.Bold, Foreground = (Brush)this.Resources["LpMutedFgBrush"], VerticalAlignment = VerticalAlignment.Center });
-            header.Children.Add(new TextBlock { Text = "\uE77B", FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 10, Foreground = (Brush)this.Resources["LpMutedFgBrush"], Margin = new Thickness(4,0,0,0) });
-            bubbleContainer.Children.Add(header);
+            // Outer row — pushes content to the right
+            var row = new Grid { Margin = new Thickness(0, 8, 0, 4) };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-            var border = new Border
+            // Bubble: subtle tinted background, consistent corner radius
+            var bubble = new Border
             {
                 Background      = (Brush)this.Resources["LpUserBubbleBgBrush"],
-                BorderBrush     = (Brush)this.Resources["LpAccentBrush"],
-                Opacity         = 0.95, // Slight transparency for a glass feel
-                BorderThickness = new Thickness(1),
-                CornerRadius    = new CornerRadius(12, 12, 2, 12),
-                Padding         = new Thickness(14, 10, 14, 10),
-                Margin          = new Thickness(40, 0, 0, 0),
-                HorizontalAlignment = HorizontalAlignment.Right
+                CornerRadius    = new CornerRadius(6),
+                Padding         = new Thickness(12, 8, 12, 8),
+                Margin          = new Thickness(48, 0, 12, 0),
+                HorizontalAlignment = HorizontalAlignment.Right,
+                MaxWidth        = 340
             };
 
             var body = new RichTextBox
             {
-                Background   = Brushes.Transparent,
-                Foreground   = ThemeWindowFg,
-                BorderThickness = new Thickness(0),
-                IsReadOnly   = true,
-                FontFamily   = UIFont,
-                FontSize     = 13,
-                IsDocumentEnabled = true,
-                Padding      = new Thickness(0),
+                Background              = Brushes.Transparent,
+                Foreground              = ThemeWindowFg,
+                BorderThickness         = new Thickness(0),
+                IsReadOnly              = true,
+                FontFamily              = UIFont,
+                FontSize                = 13,
+                IsDocumentEnabled       = true,
+                Padding                 = new Thickness(0),
                 VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
-                ContextMenu  = BuildRichTextBoxContextMenu()
+                ContextMenu             = BuildRichTextBoxContextMenu()
             };
             SetRichText(body, text);
 
-            border.Child = body;
-            bubbleContainer.Children.Add(border);
-            MessagesContainer.Children.Add(bubbleContainer);
+            bubble.Child = body;
+            Grid.SetColumn(bubble, 1);
+            row.Children.Add(bubble);
+            MessagesContainer.Children.Add(row);
 
             _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
             {
@@ -617,78 +1154,70 @@ namespace LocalPilot.Chat
             });
         }
 
-        private RichTextBox AppendAIBubble(string text)
+        private StackPanel AppendAIBubble(string text)
         {
-            var bubbleContainer = new StackPanel { Margin = new Thickness(8, 8, 0, 8) };
+            // AI message: minimalist flat layout matching VS Code / Antigravity
+            var msgContainer = new StackPanel { Margin = new Thickness(12, 8, 12, 12) };
 
-            // 🤖 Role Header (Left-Aligned - Branded Prestige Style)
-            var header = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(4,0,0,5) };
-            
-            // Integrated Official Brand Logo
-            try {
-                var logoBrush = new Image { 
-                    Source = new System.Windows.Media.Imaging.BitmapImage(new Uri("pack://application:,,,/LocalPilot;component/Assets/Logo_Concept_Minimalist.png")),
-                    Width = 14, Height = 14, Margin = new Thickness(0,0,6,0),
-                    VerticalAlignment = VerticalAlignment.Center
-                };
-                header.Children.Add(logoBrush);
-            } catch { /* Handle missing asset gracefully */ }
-
-            if (string.IsNullOrEmpty(text))
+            // Label row with muted semi-bold name
+            var labelRow = new StackPanel
             {
-                header.Children.Add(new TextBlock { 
-                    Text = "(thinking...)", 
-                    FontSize = 9, 
-                    FontWeight = FontWeights.Normal, 
-                    Foreground = (Brush)this.Resources["LpMutedFgBrush"], 
-                    VerticalAlignment = VerticalAlignment.Center 
-                });
-            }
-            bubbleContainer.Children.Add(header);
-
-            var border = new Border
-            {
-                Background   = ThemeWindowBg,
-                BorderBrush  = Brushes.Transparent, // Removed border for AI (Antigravity Style)
-                BorderThickness = new Thickness(0),
-                CornerRadius = new CornerRadius(12, 12, 12, 2),
-                Padding      = new Thickness(14, 10, 14, 10),
-                Margin       = new Thickness(0, 0, 40, 0),
-                HorizontalAlignment = HorizontalAlignment.Left,
-                MaxWidth     = 1600
+                Orientation         = Orientation.Horizontal,
+                Margin              = new Thickness(0, 0, 0, 8),
+                HorizontalAlignment = HorizontalAlignment.Left
             };
 
-            var container = new StackPanel { Orientation = Orientation.Vertical };
+            var nameLabel = new TextBlock
+            {
+                Text              = "LocalPilot",
+                FontSize          = 11,
+                FontWeight        = FontWeights.SemiBold,
+                Foreground        = (Brush)this.Resources["LpMutedFgBrush"],
+                VerticalAlignment = VerticalAlignment.Center,
+                Opacity           = 0.9
+            };
+            labelRow.Children.Add(nameLabel);
+
+            // Status indicator (thinking ... worked for X seconds)
+            var statusLabel = new TextBlock
+            {
+                Text              = string.IsNullOrEmpty(text) ? "  ·  thinking" : "",
+                FontSize          = 11,
+                FontStyle         = FontStyles.Italic,
+                Foreground        = (Brush)this.Resources["LpMutedFgBrush"],
+                VerticalAlignment = VerticalAlignment.Center,
+                Opacity           = 0.6
+            };
+            labelRow.Children.Add(statusLabel);
+            
+            msgContainer.Children.Add(labelRow);
+
+            var contentArea = new StackPanel();
+            contentArea.Tag = statusLabel; // Store reference for later updates
 
             if (string.IsNullOrEmpty(text))
             {
-                var body = CreateRichTextBox();
-                container.Children.Add(body);
-                border.Child = container;
-                bubbleContainer.Children.Add(border);
-                MessagesContainer.Children.Add(bubbleContainer);
+                msgContainer.Children.Add(contentArea);
+                MessagesContainer.Children.Add(msgContainer);
                 _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
                 {
                     await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                     ChatScroll.ScrollToEnd();
                 });
-                return body;
-            }
-            else
-            {
-                RenderFullMarkdown(container, text);
+                return contentArea;
             }
 
-            border.Child = container;
-            bubbleContainer.Children.Add(border);
-            MessagesContainer.Children.Add(bubbleContainer);
+            RenderFullMarkdown(contentArea, text);
+            msgContainer.Children.Add(contentArea);
+            MessagesContainer.Children.Add(msgContainer);
+
             _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
             {
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                 ChatScroll.ScrollToEnd();
             });
 
-            return null;
+            return contentArea;
         }
 
         private RichTextBox CreateRichTextBox()
@@ -718,7 +1247,7 @@ namespace LocalPilot.Chat
             Brush menuBg     = ThemeSurface;
             Brush menuBorder = ThemeBorder;
             Brush itemFg     = ThemeWindowFg;
-            Brush hoverBg    = BrushAccent;
+            Brush hoverBg    = (Brush)this.Resources["LpAccentBrush"];
             Brush hoverFg    = Brushes.White;
             Brush sepColor   = ThemeBorder;
 
@@ -797,9 +1326,9 @@ namespace LocalPilot.Chat
             if (string.IsNullOrEmpty(md)) return;
             container.Children.Clear();
 
-            // 🎨 Theme-Aware Resolution with Safe Fallbacks
-            var accentBrush = (Brush)this.FindResource("LpAccentBrush") ?? BrushAccent;
-            var mutedBrush = (Brush)this.FindResource("LpMutedFgBrush") ?? Brushes.Gray;
+            // 🎨 Theme-Aware Resolution
+            var accentBrush = (Brush)this.Resources["LpAccentBrush"];
+            var mutedBrush = (Brush)this.Resources["LpMutedFgBrush"];
 
             // 1. PROJECT CONTEXT INDICATOR (v2.0)
             if (md.Contains("--- PROJECT_SOURCE_CONTEXT ---"))
@@ -1035,8 +1564,8 @@ namespace LocalPilot.Chat
                 if (isCode)
                 {
                     run.FontFamily = ConsoleFont;
-                    run.Foreground = BrushAccent;
-                    run.Background = new SolidColorBrush(Color.FromArgb(0x0F, 0x7C, 0x6A, 0xF7));
+                    run.Foreground = (Brush)this.Resources["LpAccentBrush"];
+                    run.Background = (Brush)this.Resources["LpHoverBgBrush"];
                 }
                 else
                 {
@@ -1128,37 +1657,6 @@ namespace LocalPilot.Chat
             rtb.Document.Blocks.Add(para);
         }
 
-        private void AppendToRichTextBox(RichTextBox rtb, string text)
-        {
-            if (rtb.Document.Blocks.FirstBlock is Paragraph p)
-            {
-                p.Inlines.Add(new Run(text) { Foreground = ThemeWindowFg });
-            }
-        }
-
-        // Remove unused method — user bubbles now use TextBlock directly
-
-        private void SetStreaming(bool streaming)
-        {
-            // Ensure we are on the UI thread before touching any WPF controls.
-            // This is critical now that most logic runs on a background Task.Run.
-            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
-            {
-                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                
-                StreamingBar.Visibility = streaming ? Visibility.Visible : Visibility.Collapsed;
-                
-                // Lock all interaction during streaming to prevent action queuing
-                BtnSend.IsEnabled           = !streaming;
-                BtnClear.IsEnabled          = !streaming;
-                BtnQuickActions.IsEnabled    = !streaming;
-                TxtInput.IsEnabled          = !streaming;
-                TxtInput.Opacity           = streaming ? 0.6 : 1.0;
-
-                if (!streaming) TxtInput.Focus();
-            });
-        }
-
         private void TrimHistory()
         {
             // 1. Data history trimming (what goes to AI)
@@ -1174,6 +1672,50 @@ namespace LocalPilot.Chat
             {
                 MessagesContainer.Children.RemoveAt(0);
             }
+        }
+
+        private void SetStreaming(bool streaming, string modelName = null)
+        {
+            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+            {
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                
+                _isStreaming = streaming;
+                
+                if (streaming)
+                {
+                    AgentStatusBar.Visibility = Visibility.Visible;
+                    
+                    string model = modelName ?? LocalPilotSettings.Instance.ChatModel;
+                    TxtAgentStatus.Text = _isAgentMode ? $"LocalPilot ({model}) working" : $"LocalPilot ({model}) is thinking";
+                    TxtAgentDetail.Text = _isAgentMode ? "Autonomous Loop Active" : "Generating response...";
+                    
+                    // Change Send icon to Stop (Square)
+                    BtnSendIcon.Data = Geometry.Parse("M6,6H18V18H6V6Z"); 
+                    BtnSendIcon.Fill = Brushes.White;
+                    BtnSend.ToolTip = "Stop (Esc)";
+                    BtnSend.Background = (Brush)this.Resources["LpStopBrush"];
+                }
+                else
+                {
+                    AgentStatusBar.Visibility = Visibility.Collapsed;
+                    
+                    // Restore Send icon (Plane)
+                    BtnSendIcon.Data = Geometry.Parse("M3.4,20.4l17.45-7.48c0.81-0.35,0.81-1.49,0-1.84L3.4,3.6C2.71,3.3,2,3.8,2,4.55l1.6,7.45L2,19.45C2,20.2,2.71,20.7,3.4,20.4z");
+                    BtnSendIcon.Fill = Brushes.White;
+                    BtnSend.ToolTip = "Send (Enter)";
+                    BtnSend.Background = (Brush)this.Resources["LpAntigravityBlue"];
+                }
+                
+                // Lock all interaction during streaming to prevent action queuing
+                BtnSend.IsEnabled           = true; 
+                BtnClear.IsEnabled          = !streaming;
+                BtnQuickActions.IsEnabled    = !streaming;
+                TxtInput.IsEnabled          = !streaming;
+                TxtInput.Opacity           = streaming ? 0.6 : 1.0;
+
+                if (!streaming) TxtInput.Focus();
+            });
         }
 
         // ── Toolbar events ────────────────────────────────────────────────────
@@ -1294,6 +1836,97 @@ namespace LocalPilot.Chat
                 LocalPilotLogger.LogError("Failed to apply refactored code", ex);
                 AppendAIBubble($"❌ Failed to apply changes: {ex.Message}");
             }
+        }
+        private async Task<bool> OnAgentPermissionRequestedAsync(ToolCallRequest tool)
+        {
+            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+            _permissionTcs = new TaskCompletionSource<bool>();
+
+            ConfirmationPanel.Visibility = Visibility.Visible;
+            TxtConfirmDetail.Text = BuildConfirmationMessage(tool);
+
+            // Scroll to bottom so user sees the prompt
+            ChatScroll.ScrollToEnd();
+
+            return await _permissionTcs.Task;
+        }
+
+        private string BuildConfirmationMessage(ToolCallRequest tool)
+        {
+            if (tool == null) return "The agent wants to run an action that can modify your project. Do you want to allow it?";
+
+            string GetArg(string key)
+            {
+                if (tool.Arguments == null) return null;
+                if (!tool.Arguments.TryGetValue(key, out var v) || v == null) return null;
+                return v.ToString();
+            }
+
+            string ShortPath(string path)
+            {
+                if (string.IsNullOrWhiteSpace(path)) return null;
+                try
+                {
+                    return System.IO.Path.GetFileName(path);
+                }
+                catch
+                {
+                    return path;
+                }
+            }
+
+            return tool.Name switch
+            {
+                "write_file" => BuildWriteFileMessage(GetArg("path"), GetArg("content")),
+                "replace_text" => BuildReplaceTextMessage(GetArg("path"), GetArg("old_text"), GetArg("new_text")),
+                "delete_file" => $"The agent wants to delete the file '{ShortPath(GetArg("path")) ?? "selected file"}'.\n\nThis will permanently remove it from disk. Allow this action?",
+                "run_terminal" => BuildRunCommandMessage(GetArg("command")),
+                _ => $"The agent wants permission to run '{tool.Name}'.\n\nAllow this action?"
+            };
+        }
+
+        private string BuildWriteFileMessage(string path, string content)
+        {
+            string file = string.IsNullOrWhiteSpace(path) ? "a file" : $"'{System.IO.Path.GetFileName(path)}'";
+            int length = string.IsNullOrEmpty(content) ? 0 : content.Length;
+            string sizeHint = length > 0 ? $" (~{length} characters)" : string.Empty;
+
+            return $"The agent wants to create or update {file}{sizeHint}.\n\nAllow this action?";
+        }
+
+        private string BuildReplaceTextMessage(string path, string oldText, string newText)
+        {
+            string file = string.IsNullOrWhiteSpace(path) ? "a file" : $"'{System.IO.Path.GetFileName(path)}'";
+            string oldPreview = BuildPreview(oldText);
+            string newPreview = BuildPreview(newText);
+
+            return $"The agent wants to update content in {file}.\n\nFind:\n{oldPreview}\n\nReplace with:\n{newPreview}\n\nAllow this action?";
+        }
+
+        private string BuildRunCommandMessage(string command)
+        {
+            string preview = BuildPreview(command, 120);
+            return $"The agent wants to run a terminal command in your workspace:\n{preview}\n\nThis may modify files or run scripts. Allow this action?";
+        }
+
+        private string BuildPreview(string text, int maxLen = 180)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return "(empty)";
+            string normalized = text.Replace("\r\n", " ").Replace("\n", " ").Trim();
+            if (normalized.Length <= maxLen) return normalized;
+            return normalized.Substring(0, maxLen) + "...";
+        }
+
+        private void BtnApprove_Click(object sender, RoutedEventArgs e)
+        {
+            ConfirmationPanel.Visibility = Visibility.Collapsed;
+            _permissionTcs?.TrySetResult(true);
+        }
+
+        private void BtnDeny_Click(object sender, RoutedEventArgs e)
+        {
+            ConfirmationPanel.Visibility = Visibility.Collapsed;
+            _permissionTcs?.TrySetResult(false);
         }
     }
 }

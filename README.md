@@ -170,7 +170,20 @@ Since **LocalPilot** runs Large Language Models (LLMs) **entirely on your local 
 
 ## 📜 Release History
 
-### 🚀 v1.2 - The Aesthetic & Intelligence Update (latest)
+### 🚀 v1.3 - The Autopilot & Security Update (latest)
+**"A smarter, safer, and more integrated AI pair programming experience."**
+
+- **🏎️ Autonomous Agent Mode (Gated Beta)**: LocalPilot now transforms from a simple chat assistant into a proactive agent. By combining high-reasoning models with local tools, the agent can now perform multi-step tasks like "Refactor this class and update all call sites" autonomously.
+    - **📝 Smart Planning**: The agent generates a human-readable plan before taking any action.
+    - **🔍 Local Tool Suite**: Integration with `read_file`, `grep_search`, `replace_text`, and `run_terminal` allows for deep project interaction.
+    - **🔄 Plan-Act-Observe Loop**: A robust feedback loop ensures the agent verifies its work and recovers from errors intelligently.
+- **🤖 Background Autopilot Indexing**: LocalPilot now automatically indexes your entire solution in the background. This enables zero-latency semantic search, allowing the AI to understand your project's structure and cross-file dependencies without manual context assembly.
+- **🛡️ Human-in-the-Loop (HIL) Safety**: Introducing a critical security layer for autonomous coding. All write-based tool executions (creating files, updating code, deleting files) now require explicit user approval via a professional confirmation chip in the chat, giving you total control over your codebase.
+- **📍 History-Aware Project Context**: The AI assistant is now smarter about recent conversation history and codebase state, using semantic embeddings to pull in relevant snippets precisely when they are needed for reasoning or refactoring.
+- **✨ Premium UI Aesthetics**: Modernized the chat interface with high-fidelity "sparkle" glyphs, theme-aware "ghost" interaction models for buttons, and a more compact, distraction-free layout that stays out of your way.
+- **⚙️ Core Performance & Stability**: Resolved critical UI thread deadlocks during code selection and hardened the streaming engine against local LLM fluctuations, ensuring a smooth and responsive experience even on base-tier hardware.
+
+### 🔨 v1.2 - The Aesthetic & Intelligence Update
 **"A major leap in visual fidelity and user experience refinement."**
 
 - **✨ High-Fidelity Syntax Highlighting**: New theme-aware code renderer with a custom regex engine for premium visualization of methods, types, and strings.

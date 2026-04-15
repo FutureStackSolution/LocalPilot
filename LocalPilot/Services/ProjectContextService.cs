@@ -76,6 +76,7 @@ namespace LocalPilot.Services
 
         private async Task ScanProjectItemsAsync(global::EnvDTE.ProjectItems items, OllamaService ollama, CancellationToken ct)
         {
+            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
             if (items == null) return;
             foreach (global::EnvDTE.ProjectItem item in items)
             {
