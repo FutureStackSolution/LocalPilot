@@ -982,7 +982,7 @@ namespace LocalPilot.Chat
                     int batchSize = 12;
                     var uiBuffer = new StringBuilder();
 
-                    // 1. PROJECT CONTEXT INTEGRATION (New in v1.2) - History-Aware Search
+                    // 1. PROJECT CONTEXT INTEGRATION (v1.3) - History-Aware Search
                     // Retrieve top semantically relevant chunks based on recent conversation flow
                     var contextHistory = activeHistory.Skip(Math.Max(0, activeHistory.Count - 3)).Select(m => m.Content);
                     string searchQuery = string.Join(" ", contextHistory);
