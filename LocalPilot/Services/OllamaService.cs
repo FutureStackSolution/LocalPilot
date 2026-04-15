@@ -125,6 +125,11 @@ namespace LocalPilot.Services
                 response = await _httpClient.PostAsync($"{_baseUrl}/api/generate", content, ct);
                 response.EnsureSuccessStatusCode();
             }
+            catch (OperationCanceledException)
+            {
+                // User-initiated cancellation is expected; do not emit a connectivity error.
+                yield break;
+            }
             catch (Exception ex)
             {
                 errorMessage = $"\n[LocalPilot Error] Could not reach Ollama: {ex.Message}";
@@ -185,6 +190,11 @@ namespace LocalPilot.Services
 
                 response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
                 response.EnsureSuccessStatusCode();
+            }
+            catch (OperationCanceledException)
+            {
+                // User-initiated cancellation is expected; do not emit a connectivity error.
+                yield break;
             }
             catch (Exception ex)
             {
