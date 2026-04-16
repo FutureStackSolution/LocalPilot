@@ -8,8 +8,20 @@ using LocalPilot.Settings;
 
 namespace LocalPilot.Services
 {
+    public enum LogCategory
+    {
+        General,
+        Context,
+        Agent,
+        Ollama,
+        UI,
+        Error
+    }
+
     public static class LocalPilotLogger
     {
+        public static event Action<string, LogCategory> OnLog;
+
         private static IVsOutputWindowPane _pane;
         private static Guid _paneGuid = new Guid("A1B2C3D4-E5F6-4A5B-B9C8-D7E6F5A4B3C2");
         private static readonly string _logDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LocalPilot", "logs");
@@ -19,13 +31,17 @@ namespace LocalPilot.Services
 
         public static string GetLogPath() => _logFile;
 
-        public static void Log(string message)
+        public static void Log(string message, LogCategory category = LogCategory.General)
         {
             if (!LocalPilotSettings.Instance.EnableLogging) return;
 
-            string timestamped = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}";
+            string catStr = category.ToString().ToUpper();
+            string timestamped = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [{catStr}] {message}";
 
-            // 1. Log to Output Window (Non-blocking, uses VS ThreadSafe method)
+            // 1. Notify Subscribers (UI)
+            OnLog?.Invoke(message, category);
+
+            // 2. Log to Output Window (Non-blocking)
             _ = Task.Run(async () =>
             {
                 try
@@ -33,21 +49,20 @@ namespace LocalPilot.Services
                     if (_pane == null && !_initializing)
                     {
                         _initializing = true;
-                        // On-demand initialization of the VS Output Pane
                         await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                         var outWindow = Microsoft.VisualStudio.Shell.Package.GetGlobalService(typeof(SVsOutputWindow)) as IVsOutputWindow;
                         if (outWindow != null)
                         {
-                            outWindow.CreatePane(ref _paneGuid, "LocalPilot", 1, 1);
+                            outWindow.CreatePane(ref _paneGuid, "LocalPilot (Internal)", 1, 1);
                             outWindow.GetPane(ref _paneGuid, out _pane);
                         }
                     }
                     _pane?.OutputStringThreadSafe($"{timestamped}{Environment.NewLine}");
                 }
-                catch { /* Best effort output window logging */ }
+                catch { }
             });
 
-            // 2. Log to File (Background Thread with Static Lock)
+            // 3. Log to File
             _ = Task.Run(() =>
             {
                 lock (_fileLock)
@@ -57,15 +72,14 @@ namespace LocalPilot.Services
                         if (!Directory.Exists(_logDir)) Directory.CreateDirectory(_logDir);
                         File.AppendAllText(_logFile, timestamped + Environment.NewLine);
                     }
-                    catch { /* Best effort file writing */ }
+                    catch { }
                 }
             });
         }
 
         public static void LogError(string message, Exception ex = null)
         {
-            string err = $"[ERROR] {message} {(ex != null ? ex.ToString() : "")}";
-            Log(err);
+            Log($"{message} {(ex != null ? ex.ToString() : "")}", LogCategory.Error);
         }
     }
 }

@@ -618,21 +618,37 @@ namespace LocalPilot.Services
 
             try
             {
-                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                
-                // Open file and set cursor
+                // 1. Open file and set focus
                 var docView = await VS.Documents.OpenAsync(path);
-                if (docView?.TextView == null) return new ToolResponse { IsError = true, Output = "Could not open file in editor." };
+                if (docView?.TextView == null) return new ToolResponse { IsError = true, Output = $"Could not open file: {path}" };
 
-                var point = new Microsoft.VisualStudio.Text.SnapshotPoint(docView.TextBuffer.CurrentSnapshot, 0); // Logic simplified for brevity
-                // Note: In a real implementation, we'd map line/col to a SnapshotPoint properly.
+                // 2. Map line/column to SnapshotPoint (VS uses 0-indexed for snapshots, 1-indexed for some UI)
+                // SymbolIndexService results are 1-indexed, so we subtract 1.
+                var snapshot = docView.TextBuffer.CurrentSnapshot;
+                int targetLine = Math.Max(0, line - 1);
+                if (targetLine >= snapshot.LineCount) return new ToolResponse { IsError = true, Output = $"Line {line} is out of range." };
+
+                var snapshotLine = snapshot.GetLineFromLineNumber(targetLine);
+                int targetCol = Math.Max(0, col - 1);
+                int targetPos = snapshotLine.Start + Math.Min(targetCol, snapshotLine.Length);
                 
-                // Invoke native rename
+                var point = new Microsoft.VisualStudio.Text.SnapshotPoint(snapshot, targetPos);
+
+                // 3. Move cursor to the symbol
+                docView.TextView.Caret.MoveTo(point);
+                docView.TextView.Selection.Select(new Microsoft.VisualStudio.Text.SnapshotSpan(point, 0), false);
+                
+                // 4. Force focus to the editor to ensure command routes correctly
+                (docView.TextView as System.Windows.FrameworkElement)?.Focus();
+
+                // 5. Invoke native rename
                 var dte = Microsoft.VisualStudio.Shell.Package.GetGlobalService(typeof(global::EnvDTE.DTE)) as global::EnvDTE80.DTE2;
                 if (dte != null)
                 {
+                    // Re-enable focus check
+                    await Task.Delay(100); // Small nudge for VS to settle focus
                     dte.ExecuteCommand("Refactor.Rename", newName);
-                    return new ToolResponse { Output = "Rename command invoked successfully." };
+                    return new ToolResponse { Output = $"Rename symbolic command '{newName}' invoked at {path}:{line}:{col}." };
                 }
 
                 return new ToolResponse { IsError = true, Output = "DTE not available." };

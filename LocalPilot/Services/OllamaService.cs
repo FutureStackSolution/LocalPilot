@@ -212,7 +212,7 @@ namespace LocalPilot.Services
                 NullValueHandling = NullValueHandling.Ignore 
             });
             
-            LocalPilotLogger.Log($"[Ollama] StreamChatWithToolsAsync starting for model: {model}, tools: {tools?.Count ?? 0}");
+            LocalPilotLogger.Log($"POST /api/chat payload:\n{jsonPayload}", LogCategory.Ollama);
 
             HttpResponseMessage response = null;
             string errorDetails = null;

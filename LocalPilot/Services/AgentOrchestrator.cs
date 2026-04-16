@@ -284,7 +284,18 @@ namespace LocalPilot.Services
                 // Add assistant response to history
                 messages.Add(new ChatMessage { Role = "assistant", Content = responseText });
 
-                // 2. Process tool calls (if any)
+                // 2. [FALLBACK] If no native tool calls, check for JSON blocks in text
+                if (!toolCallsThisTurn.Any() && !string.IsNullOrWhiteSpace(responseText))
+                {
+                    var fallbackCalls = ParseJsonToolCalls(responseText);
+                    if (fallbackCalls.Any())
+                    {
+                        LocalPilotLogger.Log($"[Agent] Found {fallbackCalls.Count} fallback tool calls in text output.");
+                        toolCallsThisTurn.AddRange(fallbackCalls);
+                    }
+                }
+
+                // 3. Process tool calls (if any)
                 if (toolCallsThisTurn.Any())
                 {
                     // Filter out unknown tools
@@ -433,6 +444,53 @@ namespace LocalPilot.Services
                 LocalPilotLogger.LogError("[Agent] RunTaskAsync failed", ex);
                 OnStatusUpdate?.Invoke(AgentStatus.Failed, $"Task failed: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Robust regex-based parser to catch tool calls embedded in markdown code blocks.
+        /// Primarily used as a fallback for models that struggle with native tool-calling APIs.
+        /// </summary>
+        private List<ToolCallRequest> ParseJsonToolCalls(string text)
+        {
+            var results = new List<ToolCallRequest>();
+            try
+            {
+                // Match blocks like: ```json { "name": "...", "arguments": { ... } } ```
+                // Or just a raw JSON object { "name": "...", ... }
+                var pattern = @"(?:```(?:json)?\s*)?\{\s*""name""\s*:\s*""(?<name>[^""]+)""\s*,\s*""arguments""\s*:\s*(?<args>\{.*?\})\s*\}(?:\s*```)?";
+                var matches = System.Text.RegularExpressions.Regex.Matches(text, pattern, System.Text.RegularExpressions.RegexOptions.Singleline);
+
+                foreach (System.Text.RegularExpressions.Match m in matches)
+                {
+                    try
+                    {
+                        string name = m.Groups["name"].Value;
+                        string argsJson = m.Groups["args"].Value;
+                        var args = JsonConvert.DeserializeObject<Dictionary<string, object>>(argsJson);
+                        
+                        results.Add(new ToolCallRequest { Name = name, Arguments = args });
+                    }
+                    catch { /* Skip malformed JSON */ }
+                }
+
+                // Fallback: If no structured "name/arguments" pairs, look for any JSON object that might be a tool call
+                if (!results.Any())
+                {
+                    var rawPattern = @"(?:```(?:json)?\s*)?(?<json>\{\s*""name""\s*:.+?\})(?:\s*```)?";
+                    var rawMatches = System.Text.RegularExpressions.Regex.Matches(text, rawPattern, System.Text.RegularExpressions.RegexOptions.Singleline);
+                    foreach (System.Text.RegularExpressions.Match m in rawMatches)
+                    {
+                        try
+                        {
+                            var tc = JsonConvert.DeserializeObject<ToolCallRequest>(m.Groups["json"].Value);
+                            if (tc != null && !string.IsNullOrEmpty(tc.Name)) results.Add(tc);
+                        }
+                        catch { }
+                    }
+                }
+            }
+            catch { }
+            return results;
         }
 
         private string BuildToolSignature(ToolCallRequest toolCall)

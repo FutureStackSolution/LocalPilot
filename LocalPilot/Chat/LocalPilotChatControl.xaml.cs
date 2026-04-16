@@ -76,6 +76,9 @@ namespace LocalPilot.Chat
             _agentOrchestrator.OnTurnModificationsPending += OnAgentModificationsPending;
             _agentOrchestrator.RequestPermissionAsync = HandlePermissionRequestAsync;
 
+            // Wire up Global Logging
+            LocalPilotLogger.OnLog += OnGlobalLog;
+
             UpdateBrushes();
             
             // Initialize history immediately to prevent race conditions during async loading
@@ -83,6 +86,62 @@ namespace LocalPilot.Chat
             
             Loaded += OnLoaded;
             Unloaded += OnUnloaded;
+        }
+
+        private void OnGlobalLog(string message, LogCategory category)
+        {
+            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+            {
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                AppendLogToConsole(message, category);
+            });
+        }
+
+        private void AppendLogToConsole(string message, LogCategory category)
+        {
+            if (ConsoleContainer == null) return;
+
+            var entry = new TextBlock
+            {
+                Text = $"[{DateTime.Now:HH:mm:ss}] [{category.ToString().ToUpper()}] {message}",
+                FontSize = 10,
+                FontFamily = new FontFamily("Consolas"),
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 0, 0, 2)
+            };
+
+            // Terminal coloring
+            entry.Foreground = category switch
+            {
+                LogCategory.Error => new SolidColorBrush(Color.FromRgb(0xFF, 0x45, 0x00)), // Orangered
+                LogCategory.Agent => new SolidColorBrush(Color.FromRgb(0x4E, 0xC9, 0xB0)), // Teal
+                LogCategory.Ollama => new SolidColorBrush(Color.FromRgb(0xCE, 0x91, 0x78)), // Peach
+                LogCategory.Context => new SolidColorBrush(Color.FromRgb(0x56, 0x9C, 0xD6)), // Blue
+                _ => Brushes.Gray
+            };
+
+            ConsoleContainer.Children.Add(entry);
+
+            // Cap entries for performance
+            if (ConsoleContainer.Children.Count > 100) ConsoleContainer.Children.RemoveAt(0);
+            
+            ConsoleScroll.ScrollToEnd();
+            
+            // Auto-show console on error if logging is enabled
+            if (category == LogCategory.Error && LocalPilotSettings.Instance.EnableLogging)
+            {
+                DiagnosticConsole.Visibility = Visibility.Visible;
+            }
+        }
+
+        private void BtnToggleConsole_Click(object sender, RoutedEventArgs e)
+        {
+            DiagnosticConsole.Visibility = DiagnosticConsole.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+        }
+
+        private void BtnCloseConsole_Click(object sender, RoutedEventArgs e)
+        {
+            DiagnosticConsole.Visibility = Visibility.Collapsed;
         }
 
         private void OnLoaded(object sender, RoutedEventArgs e)

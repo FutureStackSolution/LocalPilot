@@ -442,6 +442,13 @@
 
                 <!-- Right: icon buttons -->
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button x:Name="BtnToggleConsole"
+                            Style="{StaticResource IconButtonStyle}"
+                            ToolTip="Toggle Diagnostic Console"
+                            Click="BtnToggleConsole_Click">
+                        <TextBlock Text="&#xE756;" FontFamily="Segoe MDL2 Assets" FontSize="12"
+                                   Foreground="{DynamicResource LpMutedFgBrush}"/>
+                    </Button>
                     <Button x:Name="BtnClear"
                             Style="{StaticResource IconButtonStyle}"
                             ToolTip="Clear conversation"
@@ -472,6 +479,43 @@
                 <StackPanel x:Name="MessagesContainer" VerticalAlignment="Top"/>
             </StackPanel>
         </ScrollViewer>
+
+        <!-- ═══════════════════════  DIAGNOSTIC CONSOLE  ═══════════════════════ -->
+        <!-- Collapsible terminal-like log view -->
+        <Grid Grid.Row="1" VerticalAlignment="Bottom" MaxHeight="250">
+            <Border x:Name="DiagnosticConsole"
+                    Visibility="Collapsed"
+                    Background="{DynamicResource LpMenuBgBrush}"
+                    BorderBrush="{DynamicResource LpMenuBorderBrush}"
+                    BorderThickness="0,1,0,0">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- Console Header -->
+                    <Border Grid.Row="0" Padding="8,4" Background="{DynamicResource LpWindowBgBrush}">
+                        <DockPanel>
+                            <TextBlock Text="DIAGNOSTIC CONSOLE" FontSize="9" FontWeight="Bold" 
+                                       Foreground="{DynamicResource LpMutedFgBrush}" VerticalAlignment="Center"/>
+                            <Button x:Name="BtnCloseConsole" DockPanel.Dock="Right" 
+                                    Style="{StaticResource IconButtonStyle}" 
+                                    Width="16" Height="16" Click="BtnCloseConsole_Click">
+                                <TextBlock Text="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="8"/>
+                            </Button>
+                        </DockPanel>
+                    </Border>
+
+                    <!-- Console Feed -->
+                    <ScrollViewer Grid.Row="1" x:Name="ConsoleScroll" Padding="8" Background="#0C0C0C">
+                        <StackPanel x:Name="ConsoleContainer">
+                            <!-- Log entries will be added here -->
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+            </Border>
+        </Grid>
 
         <!-- ═══════════════════════  FOOTER  ════════════════════════════════ -->
         <Border Grid.Row="2"
