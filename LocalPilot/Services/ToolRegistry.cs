@@ -242,7 +242,7 @@ namespace LocalPilot.Services
         public RunTerminalTool(ToolRegistry registry) => _registry = registry;
 
         public string Name => "run_terminal";
-        public string Description => "Run a shell command on the host system within the workspace.";
+        public string Description => "Run a shell command on the host system within the workspace using cmd.exe. Use for non-interactive commands only (e.g., dotnet build, git status).";
         public string ParameterSchema => "{ \"command\": \"string\" }";
 
         public async Task<ToolResponse> ExecuteAsync(Dictionary<string, object> args, CancellationToken ct)
@@ -349,7 +349,7 @@ namespace LocalPilot.Services
         private readonly ToolRegistry _registry;
         public ReplaceTextTool(ToolRegistry registry) => _registry = registry;
         public string Name => "replace_text";
-        public string Description => "Replace all occurrences of a string in a specific file.";
+        public string Description => "Replace a specific block of text in a file. The 'old_text' MUST match the file content EXACTLY, including whitespace and line endings. Use unique, small blocks for precision.";
         public string ParameterSchema => "{ \"path\": \"string\", \"old_text\": \"string\", \"new_text\": \"string\" }";
 
         public async Task<ToolResponse> ExecuteAsync(Dictionary<string, object> args, CancellationToken ct)

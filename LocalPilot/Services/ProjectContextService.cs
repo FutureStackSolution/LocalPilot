@@ -151,19 +151,20 @@ namespace LocalPilot.Services
             if (!results.Any()) 
             {
                 // Hallucination Guard: Inform the AI that it needs to be careful
-                return "\n[ZERO_LOCAL_CONTEXT_MATCHES]\nNOTE: I could not find any specific code in the current project that relates to this query. Please answer based on general knowledge but warn the user that this feature was not found in their solution.\n";
+                return "\n<context_warning>\n[ZERO_LOCAL_CONTEXT_MATCHES]\nNOTE: I could not find any specific code in the current project that relates to this query. Please answer based on general knowledge but warn the user that this feature was not found in their solution. If appropriate, use 'list_directory' to explore the project manually.\n</context_warning>\n";
             }
 
             var sb = new System.Text.StringBuilder();
-            sb.AppendLine("\n[STUDYING RELEVANT PROJECT CONTEXT...]");
-            sb.AppendLine("The following snippets from the current solution are highly relevant to the query:");
+            sb.AppendLine($"\n<grounding_context last_indexed=\"{_lastIndexTime:yyyy-MM-dd HH:mm:ss}\">");
+            sb.AppendLine("The following snippets from the current solution are semantically relevant to the task (use for grounding):");
             foreach (var r in results)
             {
-                sb.AppendLine($"<file path=\"{r.Chunk.FilePath}\">");
+                int lineCount = r.Chunk.Content.Count(c => c == '\n') + 1;
+                sb.AppendLine($"  <file_snippet path=\"{r.Chunk.FilePath}\" lines=\"{lineCount}\">");
                 sb.AppendLine(r.Chunk.Content);
-                sb.AppendLine("</file>");
+                sb.AppendLine("  </file_snippet>");
             }
-            sb.AppendLine("\n[END OF PROJECT CONTEXT]");
+            sb.AppendLine("</grounding_context>");
             return sb.ToString();
         }
 

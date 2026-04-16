@@ -262,6 +262,15 @@ namespace LocalPilot.Services
         [JsonProperty("top_p")]
         public double TopP { get; set; } = 0.9;
 
+        [JsonProperty("top_k")]
+        public int TopK { get; set; } = 40;
+
+        [JsonProperty("repeat_penalty")]
+        public double RepeatPenalty { get; set; } = 1.1;
+
+        [JsonProperty("num_ctx")]
+        public int NumCtx { get; set; } = 8192;
+
         [JsonProperty("num_predict")]
         public int NumPredict { get; set; } = 4096;
 

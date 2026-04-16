@@ -82,18 +82,20 @@ Then add a blank line and begin executing.
 Do NOT repeat the plan on subsequent turns.
 
 ### OPERATIONAL RULES
-1. **FOCUS ON THE TASK**: Your primary goal is to perform the requested edit correctly.
-2. **VERIFY BEFORE MODIFYING**: If you are unsure where a symbol is defined or if it's used elsewhere, use 'grep_search'.
+1. **THINK BEFORE ACTING**: Use a <thought> block to deliberate on the context, potential pitfalls, and your next move.
+2. **FOCUS ON THE TASK**: Your primary goal is to perform the requested edit correctly.
 3. **READ BEFORE WRITE**: Always 'read_file' to get the latest content before performing a 'replace_text'.
-4. **PRECISION EDITS**: Use enough surrounding context in 'replace_text' to match ONLY the intended block.
-5. **INTELLIGENT RECOVERY**: If a tool fails or text is not found, read the file again and retry.
-6. **VALIDATE**: Use 'list_errors' after changes to ensure stability.
+4. **VERIFY BEFORE MODIFYING**: If you are unsure where a symbol is defined, use 'grep_search'.
+5. **INTELLIGENT RECOVERY**: If 'read_file' fails (path not found), use 'list_directory' to explore and find the correct path.
+6. **NO HALLUCINATIONS**: Never assume a file exists or an API is available without evidence.
+7. **CITATIONS**: Always cite your sources using the [source: Filename.cs] format when referencing code from the project snippets.
+8. **AMBIGUITY**: If the task is unclear, ask the user for clarification instead of guessing.
 
 ### AVAILABLE TOOLS
 {toolList}
 
 ### RESPONSE FORMAT
-For the FIRST turn: output the Steps plan, then your reasoning, then tool call(s).
+For the FIRST turn: output the Steps plan, then a <thought> block, then tool call(s).
 For ALL turns: Provide your tool call(s) in a single ```json block.
 The content MUST be a JSON array of objects with ""name"" and ""arguments"".
 
@@ -101,9 +103,10 @@ Example:
 Steps:
 1. **Read file**: Read Calculator.cs to see the current Add method.
 2. **Update method**: Rename Add to Sum.
-3. **Verify**: Check for build errors.
 
-I'll start by reading the file.
+<thought>
+I need to examine Calculator.cs first to ensure I have the exact content for replacement.
+</thought>
 ```json
 [
   {{
@@ -158,7 +161,10 @@ I'll start by reading the file.
                 bool isUserOutputSuppressed = false;
 
                 string contextModel = LocalPilot.Settings.LocalPilotSettings.Instance.ChatModel;
-                await foreach (var token in _ollama.StreamChatAsync(contextModel, messages, ct: ct))
+                var options = ApplyPerformancePresets(LocalPilot.Settings.LocalPilotSettings.Instance.Mode);
+
+                await foreach (var token in _ollama.StreamChatAsync(contextModel, messages, options, ct))
+
                 {
                     responseBuilder.Append(token);
 
@@ -171,7 +177,14 @@ I'll start by reading the file.
 
                     if (!isUserOutputSuppressed)
                     {
-                        OnMessageFragment?.Invoke(token);
+                        // Heuristic: If we detect reasoning patterns without tags, wrap them visually for segments
+                        string frag = token;
+                        if (currentText.Length < 200 && (frag.ToLower().Contains("let me") || frag.ToLower().Contains("first, i") || frag.ToLower().Contains("analyzing")))
+                        {
+                            // Wrap the fragment in a pseudo-thought block if it looks like the start of reasoning
+                            frag = "[Reasoning] " + frag;
+                        }
+                        OnMessageFragment?.Invoke(frag);
                     }
                 }
 
@@ -269,12 +282,17 @@ I'll start by reading the file.
 
                         // Add tool result back as a system observation
                         string output = toolResult.Output ?? string.Empty;
-                        if (output.Length > 15000) output = output.Substring(0, 15000) + "... [Output heavily truncated for context limits]";
+                        
+                        // Intelligent Truncation: Save context window for local models
+                        if (output.Length > 8000) 
+                        {
+                            output = output.Substring(0, 8000) + "... [Output heavily truncated]";
+                        }
 
                         messages.Add(new ChatMessage
                         {
                             Role = "user",
-                            Content = $"Tool Result ({toolCall.Name}):\n{output}"
+                            Content = $"[Observation: Tool '{toolCall.Name}' executed]\nResult:\n{output}"
                         });
                     }
                 }
@@ -496,6 +514,38 @@ I'll start by reading the file.
                 || t.Contains("io exception")
                 || t.Contains("access is denied")
                 || t.Contains("locked");
+        }
+        private OllamaOptions ApplyPerformancePresets(LocalPilot.Settings.PerformanceMode mode)
+        {
+            var options = new OllamaOptions();
+            var settings = LocalPilot.Settings.LocalPilotSettings.Instance;
+
+            // Start with synchronized global settings
+            options.Temperature = settings.Temperature;
+            options.NumPredict = settings.MaxChatTokens;
+
+            switch (mode)
+            {
+                case LocalPilot.Settings.PerformanceMode.Fast:
+                    options.NumCtx = 4096;
+                    options.RepeatPenalty = 1.1;
+                    options.TopP = 0.9;
+                    break;
+                case LocalPilot.Settings.PerformanceMode.HighAccuracy:
+                    options.NumCtx = 16384; 
+                    options.RepeatPenalty = 1.25; // Stronger penalty for greedy sampling
+                    options.TopP = 0.8;
+                    options.TopK = 20;
+                    break;
+                case LocalPilot.Settings.PerformanceMode.Custom:
+                case LocalPilot.Settings.PerformanceMode.Standard:
+                default:
+                    options.NumCtx = 8192;
+                    options.RepeatPenalty = 1.1;
+                    options.TopP = 0.9;
+                    break;
+            }
+            return options;
         }
     }
 }
