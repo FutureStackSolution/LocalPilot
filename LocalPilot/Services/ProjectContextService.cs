@@ -139,9 +139,19 @@ namespace LocalPilot.Services
                     await ScanProjectItemsAsync(item.ProjectItems, ollama, ct);
                 }
 
+                string itemName = string.Empty;
                 string fullPath = string.Empty;
-                try { fullPath = item.FileNames[1]; } catch { continue; }
-
+                
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                try 
+                { 
+                    itemName = item.Name;
+                    fullPath = item.FileNames[1]; 
+                } 
+                catch { continue; }
+                
+                await Task.Yield(); // Switch back to background thread
+                
                 if (string.IsNullOrEmpty(fullPath) || !IsRelevantFile(fullPath)) continue;
 
                 try
@@ -150,7 +160,7 @@ namespace LocalPilot.Services
                     if (fileInfo.Length > 512000) continue;
 
                     // 🚀 SMART DELTA: Only update if the file has changed since it was last indexed
-                    var existing = _index.FirstOrDefault(c => c.FilePath == item.Name);
+                    var existing = _index.FirstOrDefault(c => c.FilePath == itemName);
                     if (existing != null && fileInfo.LastWriteTime <= existing.LastModified)
                     {
                         continue; 
@@ -158,7 +168,7 @@ namespace LocalPilot.Services
 
                     if (existing != null)
                     {
-                        _index.RemoveAll(c => c.FilePath == item.Name);
+                        _index.RemoveAll(c => c.FilePath == itemName);
                     }
 
                     string content = File.ReadAllText(fullPath);

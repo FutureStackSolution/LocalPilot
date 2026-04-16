@@ -28,7 +28,6 @@ namespace LocalPilot.Services
         public event Action<ToolCallRequest, ToolResponse> OnToolCallCompleted;
         public event Action<string> OnMessageFragment;
         public event Action<string> OnMessageCompleted;
-        public event Action<AgentPlan> OnPlanReady;
         public event Action<Dictionary<string, string>> OnTurnModificationsPending; // 🚀 Antigravity Stage UX
         
         public Func<ToolCallRequest, Task<bool>> RequestPermissionAsync;
@@ -204,7 +203,6 @@ Example:
 
 
             bool isDone = false;
-            bool planEmitted = false;
             int maxSteps = 20;
             int step = 0;
             _stagedChanges.Clear();
@@ -248,17 +246,6 @@ Example:
 
                 var response = responseBuilder.ToString();
 
-                // ── PLAN EXTRACTION (first turn only) ──────────────────────
-                if (!planEmitted && step == 1)
-                {
-                    planEmitted = true;
-                    var plan = TryParsePlan(response);
-                    if (plan != null && plan.Steps.Count > 0)
-                    {
-                        OnPlanReady?.Invoke(plan);
-                        OnStatusUpdate?.Invoke(AgentStatus.Planning, $"{plan.Steps.Count} steps planned");
-                    }
-                }
 
                 // Show final clean message if it was a direct reply, 
                 // OR just end the fragment stream if we was performing tools.

@@ -39,15 +39,7 @@ namespace LocalPilot.Chat
         private StringBuilder _agentResponseSb = new StringBuilder();
         private readonly ProjectMapService _projectMap;
         private bool _isStreaming = false;
-        private int _lastToolChipCount = 0;
         
-        // Work Summary State
-        private StackPanel _activeWorkSummaryPanel;
-        private StackPanel _activeWorkRowsPanel;
-        private DateTime _turnStartTime;
-        private bool _isWorkSummaryHeaderCreated = false;
-        private TextBlock _workDurationLabel;
-        private UIElement _activeWorkSummaryBlock;
         
         // 🚀 UI Performance State
         private double _lastScrollTime = 0;
@@ -343,10 +335,6 @@ namespace LocalPilot.Chat
         private void StartNewAgentTurn()
         {
             _agentResponseSb.Clear();
-            _lastToolChipCount = 0;
-            _isWorkSummaryHeaderCreated = false;
-            _activeWorkRowsPanel = null;
-            _activeWorkSummaryBlock = null;
             _currentChunkSb.Clear();
             _currentNarrativeContainer = null;
 
@@ -367,7 +355,7 @@ namespace LocalPilot.Chat
 
         private void OnAgentToolCallPending(ToolCallRequest request)
         {
-            ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
             {
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                 
@@ -504,15 +492,6 @@ namespace LocalPilot.Chat
             _agentTurnContainer.Children.Add(rowStack);
         }
 
-        private void UpdateWorkDuration()
-        {
-            if (_workDurationLabel == null) return;
-            var elapsed = DateTime.Now - _turnStartTime;
-            if (elapsed.TotalMinutes >= 1)
-                _workDurationLabel.Text = $"Worked for {(int)elapsed.TotalMinutes}m {(int)elapsed.Seconds}s";
-            else
-                _workDurationLabel.Text = $"Worked for {(int)elapsed.TotalSeconds}s";
-        }
 
         private void EnsureAgentBubble()
         {
@@ -548,7 +527,7 @@ namespace LocalPilot.Chat
 
         private void OnAgentModificationsPending(Dictionary<string, string> changes)
         {
-            ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
             {
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                 
@@ -599,13 +578,16 @@ namespace LocalPilot.Chat
             Grid.SetColumn(actions, 1);
             
             var btnAcceptAll = CreateGhostButton("Accept All", "\uE73E", (Brush)this.Resources["LpAccentBrush"]);
-            btnAcceptAll.Click += async (s, e) => {
-                foreach (var kvp in changes)
-                {
-                    await WriteFileAsync(kvp.Key, kvp.Value);
-                }
-                border.Visibility = Visibility.Collapsed;
-                AppendAIBubble("✅ All changes accepted.");
+            btnAcceptAll.Click += (s, e) => {
+                _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () => {
+                    foreach (var kvp in changes)
+                    {
+                        await WriteFileAsync(kvp.Key, kvp.Value);
+                    }
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    border.Visibility = Visibility.Collapsed;
+                    AppendAIBubble("✅ All changes accepted.");
+                });
             };
             
             var btnRejectAll = CreateGhostButton("Reject All", "\uE711", (Brush)this.Resources["LpMutedFgBrush"]);
@@ -641,13 +623,18 @@ namespace LocalPilot.Chat
                 Grid.SetColumn(rowActions, 1);
 
                 var btnDiff = CreateGhostButton("Diff", "\uE8A1", (Brush)this.Resources["LpMutedFgBrush"]);
-                btnDiff.Click += async (s, e) => await ShowDiffAsync(kvp.Key, kvp.Value);
+                btnDiff.Click += (s, e) => {
+                    _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () => await ShowDiffAsync(kvp.Key, kvp.Value));
+                };
 
                 var btnAccept = CreateGhostButton("Accept", "\uE73E", (Brush)this.Resources["LpAccentBrush"]);
-                btnAccept.Click += async (s, e) => {
-                    await WriteFileAsync(kvp.Key, kvp.Value);
-                    row.Opacity = 0.5;
-                    row.IsEnabled = false;
+                btnAccept.Click += (s, e) => {
+                    _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () => {
+                        await WriteFileAsync(kvp.Key, kvp.Value);
+                        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                        row.Opacity = 0.5;
+                        row.IsEnabled = false;
+                    });
                 };
 
                 rowActions.Children.Add(btnDiff);
@@ -745,110 +732,6 @@ namespace LocalPilot.Chat
             });
         }
 
-        private void OnAgentPlanReady(AgentPlan plan)
-        {
-            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
-            {
-                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-
-                EnsureAgentBubble();
-                if (_agentCurrentContainer == null || plan == null || plan.Steps == null || plan.Steps.Count == 0)
-                {
-                    return;
-                }
-
-                // Remove any partially streamed plain-text plan block to avoid duplicate rendering.
-                if (_agentTurnContainer != null)
-                {
-                    _agentCurrentContainer.Children.Remove(_agentTurnContainer);
-                    _agentTurnContainer = null;
-                    _agentTurnBubble = null;
-                    _agentResponseSb.Clear();
-                }
-
-                var planCard = BuildAgentPlanCard(plan);
-                _agentCurrentContainer.Children.Add(planCard);
-                ChatScroll.ScrollToEnd();
-            });
-        }
-
-        private FrameworkElement BuildAgentPlanCard(AgentPlan plan)
-        {
-            var card = new Border
-            {
-                Background = (Brush)this.Resources["LpMenuBgBrush"],
-                BorderBrush = (Brush)this.Resources["LpMenuBorderBrush"],
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(6),
-                Padding = new Thickness(12, 10, 12, 10),
-                Margin = new Thickness(0, 0, 0, 10)
-            };
-
-            var root = new StackPanel();
-
-            var header = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 8) };
-            header.Children.Add(new TextBlock
-            {
-                Text = "\uE8FD",
-                FontFamily = new FontFamily("Segoe MDL2 Assets"),
-                FontSize = 12,
-                Foreground = (Brush)this.Resources["LpAccentBrush"],
-                Margin = new Thickness(0, 0, 6, 0),
-                VerticalAlignment = VerticalAlignment.Center
-            });
-            header.Children.Add(new TextBlock
-            {
-                Text = "Execution Plan",
-                FontSize = 12,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = (Brush)this.Resources["LpWindowFgBrush"],
-                VerticalAlignment = VerticalAlignment.Center
-            });
-            root.Children.Add(header);
-
-            if (!string.IsNullOrWhiteSpace(plan.Preamble))
-            {
-                root.Children.Add(new TextBlock
-                {
-                    Text = plan.Preamble.Trim(),
-                    TextWrapping = TextWrapping.Wrap,
-                    FontSize = 12,
-                    Foreground = (Brush)this.Resources["LpMutedFgBrush"],
-                    Margin = new Thickness(0, 0, 0, 8)
-                });
-            }
-
-            for (int i = 0; i < plan.Steps.Count; i++)
-            {
-                var row = new Grid { Margin = new Thickness(0, 2, 0, 2) };
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-
-                row.Children.Add(new TextBlock
-                {
-                    Text = $"{i + 1}.",
-                    FontSize = 12,
-                    FontWeight = FontWeights.SemiBold,
-                    Foreground = (Brush)this.Resources["LpWindowFgBrush"],
-                    Margin = new Thickness(0, 0, 8, 0)
-                });
-
-                var stepText = new TextBlock
-                {
-                    Text = plan.Steps[i],
-                    TextWrapping = TextWrapping.Wrap,
-                    FontSize = 12,
-                    Foreground = (Brush)this.Resources["LpWindowFgBrush"]
-                };
-                Grid.SetColumn(stepText, 1);
-                row.Children.Add(stepText);
-
-                root.Children.Add(row);
-            }
-
-            card.Child = root;
-            return card;
-        }
 
         private FrameworkElement BuildThoughtCard(string thought)
         {
@@ -902,52 +785,6 @@ namespace LocalPilot.Chat
             return card;
         }
 
-        private string StripLeadingStepsBlock(string text)
-        {
-            if (string.IsNullOrWhiteSpace(text)) return text;
-
-            var normalized = text.Replace("\r\n", "\n");
-            int stepsIndex = normalized.IndexOf("Steps:", StringComparison.OrdinalIgnoreCase);
-            if (stepsIndex < 0) return text;
-
-            var lines = normalized.Split('\n');
-            var sb = new StringBuilder();
-            bool inPlanBlock = false;
-            bool planStarted = false;
-
-            foreach (var rawLine in lines)
-            {
-                string line = rawLine.Trim();
-
-                if (!planStarted && line.Equals("Steps:", StringComparison.OrdinalIgnoreCase))
-                {
-                    inPlanBlock = true;
-                    planStarted = true;
-                    continue;
-                }
-
-                if (inPlanBlock)
-                {
-                    bool isStepLine = System.Text.RegularExpressions.Regex.IsMatch(line, @"^(\d+[\.\)]|-)\s+");
-                    bool isContinuation = rawLine.StartsWith(" ") || rawLine.StartsWith("\t");
-
-                    if (string.IsNullOrWhiteSpace(line) || isStepLine || isContinuation)
-                    {
-                        continue;
-                    }
-
-                    // First non-plan narrative line after plan.
-                    inPlanBlock = false;
-                }
-
-                if (!inPlanBlock)
-                {
-                    sb.AppendLine(rawLine);
-                }
-            }
-
-            return sb.ToString().Trim();
-        }
 
         private void OnAgentStatusUpdate(AgentStatus status, string detail)
         {
@@ -1011,7 +848,6 @@ namespace LocalPilot.Chat
 
                         await Task.Delay(800);
                         SetStreaming(false);
-                        _lastToolChipCount = 0;
                     }
                     else
                     {
@@ -1046,12 +882,10 @@ namespace LocalPilot.Chat
                     
                     await Task.Delay(2000);
                     SetStreaming(false);
-                    _lastToolChipCount = 0;
                 }
                 ChatScroll.ScrollToEnd();
             });
         }
-
         private void QuickAction_Click(object sender, RoutedEventArgs e)
         {
             var btn = (Button)sender;
