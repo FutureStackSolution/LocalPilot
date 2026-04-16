@@ -103,40 +103,6 @@ namespace LocalPilot.Settings
         public bool   ShowStatusBar      { get; set; } = true;
         public bool   EnableLogging      { get; set; } = false;
 
-        // ── Prompt Customization ───────────────────────────────────────────────
-        public string SystemPrompt { get; set; } = 
-            "You are LocalPilot, a world-class AI pair programmer for Visual Studio. " +
-            "Your goal is to help the user write, explain, and refactor production-ready, high-performance code. " +
-            "RULES: 1. Be extremely concise and skip pleasantries. 2. Use professional, clean markdown formatting. " +
-            "3. Always prioritize the provided <PROJECT_SOURCE_CONTEXT> snippets. " +
-            "4. CITATIONS: Always cite your sources using the [source: Filename.cs] format when referencing code from the project. " +
-            "5. If you don't know the answer from the context, admit it instead of hallucinating.";
-
-        public string ExplainPrompt { get; set; } = "Explain the following code clearly and concisely. Reference specific files using [source: filename] if applicable:{codeBlock}";
-        
-        public string RefactorPrompt { get; set; } = 
-            "Refactor the following code to improve readability, performance and best practices. " +
-            "Reference existing patterns using [source: filename]. " +
-            "RETURN ONLY THE REFACTORED CODE BLOCK without extra explanation if possible:{codeBlock}";
-        
-        public string DocumentPrompt { get; set; } = 
-            "Add XML documentation comments (summary, params, returns) for the following code and return only the documented code block:{codeBlock}";
-        
-        public string ReviewPrompt { get; set; } = 
-            "Perform a rigorous security and quality review of the following code. " +
-            "Identify potential bugs, performance bottlenecks, and security vulnerabilities. " +
-            "Cite relevant project files using [source: filename]. " +
-            "Provide specific, actionable suggestions for improvement:{codeBlock}";
-        
-        public string FixPrompt { get; set; } = 
-            "Identify and fix all issues in the following code. " +
-            "Reference project context using [source: filename] if necessary. " +
-            "RETURN ONLY THE FIXED CODE BLOCK without extra explanation if possible:{codeBlock}";
-        
-        public string TestPrompt { get; set; } = 
-            "Write comprehensive unit tests using xUnit for the following code. " +
-            "Ensure tests stay consistent with existing project patterns [source: filename]:{codeBlock}";
-
         // ── Singleton ─────────────────────────────────────────────────────────
         private static LocalPilotSettings _instance;
         public  static LocalPilotSettings Instance

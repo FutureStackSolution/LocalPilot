@@ -35,7 +35,6 @@ namespace LocalPilot.Chat
         private TaskCompletionSource<bool> _permissionTcs;
         private StackPanel _agentCurrentContainer;
         private StackPanel _agentTurnContainer;
-        private RichTextBox _agentTurnBubble;
         private StringBuilder _agentResponseSb = new StringBuilder();
         private readonly ProjectMapService _projectMap;
         private bool _isStreaming = false;
@@ -75,6 +74,7 @@ namespace LocalPilot.Chat
             _agentOrchestrator.OnMessageFragment += OnAgentMessageFragment;
             _agentOrchestrator.OnMessageCompleted += OnAgentMessageCompleted;
             _agentOrchestrator.OnTurnModificationsPending += OnAgentModificationsPending;
+            _agentOrchestrator.RequestPermissionAsync = HandlePermissionRequestAsync;
 
             UpdateBrushes();
             
@@ -250,7 +250,7 @@ namespace LocalPilot.Chat
             _history.Add(new ChatMessage
             {
                 Role    = "system",
-                Content = LocalPilotSettings.Instance.SystemPrompt
+                Content = PromptLoader.GetPrompt("SystemPrompt")
             });
 
             // Modern introductory text is now partly in XAML, but we can add a greet
@@ -301,7 +301,6 @@ namespace LocalPilot.Chat
             if (string.IsNullOrWhiteSpace(text)) return;
 
             TxtInput.Clear();
-            AppendUserBubble(text);
             
             // Note: History management and context injection moved to AgentOrchestrator
             // so that slash commands can resolve selection/files in a background-friendly way.
@@ -346,9 +345,6 @@ namespace LocalPilot.Chat
             var labelRow = CreateAIHeader(out _);
             _agentTurnContainer.Children.Add(labelRow);
 
-            _agentTurnBubble = CreateRichTextBox();
-            _agentTurnContainer.Children.Add(_agentTurnBubble);
-
             MessagesContainer.Children.Add(_agentTurnContainer);
             ChatScroll.ScrollToEnd();
         }
@@ -367,36 +363,36 @@ namespace LocalPilot.Chat
                 {
                     displayName = "Explored 1 file";
                     object val = null;
-                    request.Arguments?.TryGetValue("AbsolutePath", out val);
-                    detail = System.IO.Path.GetFileName(val?.ToString() ?? "file");
+                    request.Arguments?.TryGetValue("path", out val);
+                    detail = "File: " + System.IO.Path.GetFileName(val?.ToString() ?? "unknown");
                 }
                 else if (request.Name == "grep_search")
                 {
                     displayName = "Searched codebase";
                     object val = null;
-                    request.Arguments?.TryGetValue("Query", out val);
-                    detail = val?.ToString();
+                    request.Arguments?.TryGetValue("pattern", out val);
+                    detail = "Search: " + val?.ToString();
                 }
-                else if (request.Name == "list_dir")
+                else if (request.Name == "list_directory")
                 {
                     displayName = "Exploring project structure";
                     object val = null;
-                    request.Arguments?.TryGetValue("DirectoryPath", out val);
-                    detail = val?.ToString();
+                    request.Arguments?.TryGetValue("path", out val);
+                    detail = "Directory: " + val?.ToString();
                 }
-                else if (request.Name.Contains("write") || request.Name.Contains("replace") || request.Name.Contains("rename"))
+                else if (request.Name == "write_file" || request.Name == "replace_text" || request.Name == "rename_symbol")
                 {
                     displayName = "Edited 1 file";
                     object val = null;
-                    request.Arguments?.TryGetValue("TargetFile", out val);
-                    detail = val?.ToString();
+                    request.Arguments?.TryGetValue("path", out val);
+                    detail = "File: " + System.IO.Path.GetFileName(val?.ToString() ?? "unknown");
                 }
                 else if (request.Name == "run_terminal")
                 {
                     displayName = "Executed command";
                     object val = null;
-                    request.Arguments?.TryGetValue("CommandLine", out val);
-                    detail = val?.ToString();
+                    request.Arguments?.TryGetValue("command", out val);
+                    detail = "Command: " + val?.ToString();
                 }
 
                 // Reset chunk tracking to force a NEW narrative block for any text following this action
@@ -407,14 +403,18 @@ namespace LocalPilot.Chat
 
                 // Append the activity row at the current position
                 AddWorkRow(displayName, icon, detail);
-
-                // Reset bubble tracking 
-                _agentTurnBubble = null;
             });
         }
 
         private void AddWorkRow(string label, string icon, string detail = null)
         {
+            // 🛡️ Robustness Check: Ensure we have a turn container to append to
+            // This prevents NullReferenceException if a tool call returns after a turn was finalized or before it fully started.
+            if (_agentTurnContainer == null)
+            {
+                StartNewAgentTurn();
+            }
+
             var rowStack = new StackPanel { Margin = new Thickness(0, 4, 0, 8) };
             
             var row = new Grid { Margin = new Thickness(0, 2, 0, 2) };
@@ -515,6 +515,8 @@ namespace LocalPilot.Chat
                 {
                     AppendNarrativeBlock();
                 }
+
+                if (_currentNarrativeContainer == null) return; // 🛡️ Safety: Skip fragment if container lost
 
                 // 🚀 UI OPTIMIZATION: Throttled Incremental Update
                 if ((DateTime.Now - _lastUiUpdateTime).TotalMilliseconds > 32) // ~30 FPS
@@ -721,13 +723,24 @@ namespace LocalPilot.Chat
             {
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                 
-                // Final full render to ensure all closing tags/backticks are perfectly handled
-                RenderFullMarkdown(_agentTurnContainer, fullMessage);
+                // Final full render to ensure all closing tags/backticks are perfectly handled.
+                // We target the current narrative block if available to preserve tool rows and previous turns.
+                if (_currentNarrativeContainer != null)
+                {
+                    RenderFullMarkdown(_currentNarrativeContainer, fullMessage);
+                }
+                else if (_agentTurnContainer != null)
+                {
+                    RenderFullMarkdown(_agentTurnContainer, fullMessage);
+                }
+                
                 _lastUiUpdateTime = DateTime.Now;
 
-                _agentTurnContainer = null;
-                _agentTurnBubble = null;
+                // Reset narrative state for potential next turn in the same task
+                _currentNarrativeContainer = null;
+                _currentChunkSb.Clear();
                 _agentResponseSb.Clear();
+                
                 ChatScroll.ScrollToEnd();
             });
         }
@@ -735,32 +748,22 @@ namespace LocalPilot.Chat
 
         private FrameworkElement BuildThoughtCard(string thought)
         {
-            var card = new Border
-            {
-                Background = (Brush)this.Resources["LpMenuBgBrush"],
-                BorderBrush = (Brush)this.Resources["LpMenuBorderBrush"],
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(6),
-                Padding = new Thickness(12, 10, 12, 10),
-                Margin = new Thickness(0, 4, 0, 10),
-                Opacity = 0.95
-            };
+            // 👻 Ghost UI: Modern, panel-less look with subtle accent grounding
+            var root = new StackPanel { Margin = new Thickness(0, 4, 0, 10), Opacity = 0.9 };
 
-            var root = new StackPanel();
-
-            var header = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 8) };
+            var header = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 6) };
             header.Children.Add(new TextBlock
             {
-                Text = "\uE9CE", 
+                Text = "\uE9CE", // Brain/Intelligence icon
                 FontFamily = new FontFamily("Segoe MDL2 Assets"),
-                FontSize = 11,
-                Foreground = (Brush)this.Resources["LpMutedFgBrush"],
+                FontSize = 10,
+                Foreground = (Brush)this.Resources["LpAccentBrush"],
                 Margin = new Thickness(0, 0, 8, 0),
                 VerticalAlignment = VerticalAlignment.Center
             });
             header.Children.Add(new TextBlock
             {
-                Text = "THOUGHT PROCESS",
+                Text = "REASONING",
                 FontSize = 9,
                 FontWeight = FontWeights.Bold,
                 Foreground = (Brush)this.Resources["LpMutedFgBrush"],
@@ -769,20 +772,25 @@ namespace LocalPilot.Chat
             root.Children.Add(header);
 
             var rtb = CreateRichTextBox();
-            rtb.Opacity = 0.85;
+            rtb.Opacity = 0.75;
             rtb.FontSize = 12;
+            rtb.FontStyle = FontStyles.Italic;
             
             // Use existing markdown logic for the thought content
             RenderMarkdown(rtb, thought.Trim());
             
-            // Apply italic style to all content in the thought RTB
-            rtb.FontStyle = FontStyles.Italic;
+            var border = new Border
+            {
+                BorderBrush = (Brush)this.Resources["LpAccentBrush"],
+                BorderThickness = new Thickness(1.5, 0, 0, 0),
+                Padding = new Thickness(14, 0, 0, 0),
+                Margin = new Thickness(4, 2, 0, 4),
+                Child = rtb
+            };
             
-            root.Children.Add(rtb);
-
-            card.Child = root;
-            card.Tag = rtb; // Store reference for incremental updates
-            return card;
+            root.Children.Add(border);
+            root.Tag = rtb; // Store reference for incremental updates
+            return root;
         }
 
 
@@ -954,23 +962,19 @@ namespace LocalPilot.Chat
             bool hasCode = !string.IsNullOrWhiteSpace(code);
             string codeBlock = hasCode ? $"\n\n```\n{code}\n```" : "(no code selected)";
 
-            string template = action switch
+            string templateName = action switch
             {
-                "explain"  => s.ExplainPrompt,
-                "refactor" => s.RefactorPrompt,
-                "document" => s.DocumentPrompt,
-                "review"   => s.ReviewPrompt,
-                "fix"      => s.FixPrompt,
-                "test"     => s.TestPrompt,
-                _          => string.Empty
+                "explain"  => "ExplainPrompt",
+                "refactor" => "RefactorPrompt",
+                "document" => "DocumentPrompt",
+                "review"   => "ReviewPrompt",
+                "fix"      => "FixPrompt",
+                "test"     => "TestPrompt",
+                _          => null
             };
 
-            if (string.IsNullOrEmpty(template)) return string.Empty;
-
-            // Replace the placeholder if present
-            return template.Contains("{codeBlock}") 
-                ? template.Replace("{codeBlock}", codeBlock) 
-                : $"{template}{codeBlock}";
+            if (templateName == null) return string.Empty;
+            return PromptLoader.GetPrompt(templateName, new Dictionary<string, string> { { "codeBlock", codeBlock } });
         }
 
         private async Task<string> TryGetEditorSelectionAsync()
@@ -1208,45 +1212,39 @@ namespace LocalPilot.Chat
 
         private void AppendUserBubble(string text)
         {
-            // Outer row — pushes content to the right
+            // ── Layout: single-column Grid so the bubble is ALWAYS constrained
+            //    to the actual panel width. Previous bug: Auto column + MaxWidth=480
+            //    overflowed narrow VS sidebars (~350px), clipping the text.
             var row = new Grid { Margin = new Thickness(0, 8, 4, 16) };
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-            // 'Ghost' capsule style from screenshot
+            // 'Ghost' capsule style — right-aligned, left margin creates 
+            // the visual offset so short messages don't span full width.
             var bubble = new Border
             {
-                Background      = (Brush)this.Resources["LpSurfaceBrush"],
-                CornerRadius    = new CornerRadius(14, 14, 2, 14), // Tapered corner
+                Background      = (Brush)this.Resources["LpUserBubbleBgBrush"],
+                CornerRadius    = new CornerRadius(14, 14, 2, 14),
                 Padding         = new Thickness(16, 10, 16, 10),
-                Margin          = new Thickness(50, 0, 8, 0),
+                Margin          = new Thickness(40, 0, 0, 0),
                 HorizontalAlignment = HorizontalAlignment.Right,
-                MaxWidth        = 480,
+                // No MaxWidth — the Star column constrains us to panel width
                 BorderBrush     = new SolidColorBrush(Color.FromArgb(0x15, 0x80, 0x80, 0x80)),
                 BorderThickness = new Thickness(1)
             };
 
-            var body = CreateRichTextBox();
-            body.FontSize = 13;
-            RenderMarkdown(body, text);
+            var body = new TextBlock
+            {
+                Text            = text,
+                TextWrapping    = TextWrapping.Wrap,
+                Foreground      = (Brush)this.Resources["LpWindowFgBrush"],
+                FontSize        = 13,
+                FontFamily      = UIFont
+            };
+            ApplySimpleMarkdown(body, text);
 
             bubble.Child = body;
-            Grid.SetColumn(bubble, 1);
+            Grid.SetColumn(bubble, 0);
             row.Children.Add(bubble);
-
-            // Subtle reply icon matching the professional aesthetic
-            var replyIcon = new TextBlock
-            {
-                Text = "\uE97A", 
-                FontFamily = new FontFamily("Segoe MDL2 Assets"),
-                FontSize = 10,
-                Foreground = (Brush)this.Resources["LpMutedFgBrush"],
-                HorizontalAlignment = HorizontalAlignment.Right,
-                VerticalAlignment = VerticalAlignment.Bottom,
-                Margin = new Thickness(0, 0, 12, -18),
-                Opacity = 0.4
-            };
-            row.Children.Add(replyIcon);
 
             MessagesContainer.Children.Add(row);
 
@@ -1255,6 +1253,24 @@ namespace LocalPilot.Chat
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                 ChatScroll.ScrollToEnd();
             });
+        }
+
+        private void ApplySimpleMarkdown(TextBlock tb, string text)
+        {
+            if (string.IsNullOrEmpty(text)) return;
+            tb.Inlines.Clear();
+            var parts = System.Text.RegularExpressions.Regex.Split(text, @"(\*\*.*?\*\*)").Where(p => !string.IsNullOrEmpty(p));
+            foreach (var part in parts)
+            {
+                if (part.StartsWith("**") && part.EndsWith("**"))
+                {
+                    tb.Inlines.Add(new Bold(new Run(part.Substring(2, part.Length - 4))));
+                }
+                else
+                {
+                    tb.Inlines.Add(new Run(part));
+                }
+            }
         }
 
         private StackPanel CreateAIHeader(out TextBlock statusLabelRef, string status = null)
@@ -1352,6 +1368,15 @@ namespace LocalPilot.Chat
 
         private StackPanel AppendNarrativeBlock()
         {
+            // 🛡️ Robustness Check: Ensure we have a turn container to append to
+            if (_agentTurnContainer == null)
+            {
+                StartNewAgentTurn();
+            }
+
+            // If still null (unlikely but possible if StartNewAgentTurn failed), bail
+            if (_agentTurnContainer == null) return null;
+
             var container = new StackPanel { Margin = new Thickness(0, 4, 0, 8) };
             _agentTurnContainer.Children.Add(container);
             _currentNarrativeContainer = container;
@@ -1371,6 +1396,7 @@ namespace LocalPilot.Chat
                 IsDocumentEnabled = true,
                 Padding      = new Thickness(0),
                 VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
                 ContextMenu  = BuildRichTextBoxContextMenu()
             };
             return rtb;
@@ -1533,7 +1559,7 @@ namespace LocalPilot.Chat
 
         private void RenderFullMarkdown(StackPanel container, string md)
         {
-            if (string.IsNullOrEmpty(md)) return;
+            if (container == null || string.IsNullOrEmpty(md)) return;
             container.Children.Clear();
             _lastActiveBlockElement = null; // Reset tracking
 
@@ -1586,8 +1612,21 @@ namespace LocalPilot.Chat
                     
                     if (!string.IsNullOrWhiteSpace(content))
                     {
-                        // Match 'Ghost' style: Thinking is an activity row with detail expansion
-                        AddWorkRow("Thought process", "\uE76C", content);
+                        // 🛡️ GLOBAL TURN DEDUPLICATION: Check if this exact thought exists anywhere in the current turn container
+                        bool isDuplicate = false;
+                        if (_agentTurnContainer != null)
+                        {
+                            isDuplicate = GetAllChildren(_agentTurnContainer)
+                                          .OfType<StackPanel>()
+                                          .Any(sp => sp.Tag is RichTextBox rtb && GetRichText(rtb).Trim() == content);
+                        }
+
+                        if (!isDuplicate)
+                        {
+                            var thoughtCard = BuildThoughtCard(content);
+                            container.Children.Add(thoughtCard);
+                            _lastActiveBlockElement = thoughtCard;
+                        }
                     }
                 }
                 // ── CODE BLOCK ─────────────────────────────────────────────
@@ -2140,6 +2179,26 @@ namespace LocalPilot.Chat
             if (normalized.Length <= maxLen) return normalized;
             return normalized.Substring(0, maxLen) + "...";
         }
+        private IEnumerable<DependencyObject> GetAllChildren(DependencyObject parent)
+        {
+            if (parent == null) yield break;
+            int count = VisualTreeHelper.GetChildrenCount(parent);
+            for (int i = 0; i < count; i++)
+            {
+                var child = VisualTreeHelper.GetChild(parent, i);
+                yield return child;
+                foreach (var descendent in GetAllChildren(child))
+                {
+                    yield return descendent;
+                }
+            }
+        }
+
+        private string GetRichText(RichTextBox rtb)
+        {
+            if (rtb == null) return string.Empty;
+            return new TextRange(rtb.Document.ContentStart, rtb.Document.ContentEnd).Text;
+        }
 
         private void BtnApprove_Click(object sender, RoutedEventArgs e)
         {
@@ -2151,6 +2210,22 @@ namespace LocalPilot.Chat
         {
             ConfirmationPanel.Visibility = Visibility.Collapsed;
             _permissionTcs?.TrySetResult(false);
+        }
+
+        private async Task<bool> HandlePermissionRequestAsync(ToolCallRequest toolCall)
+        {
+            _permissionTcs = new TaskCompletionSource<bool>();
+            
+            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+            
+            // Highlight the risky tool
+            string actionDescription = $"{toolCall.Name} on {toolCall.Arguments?["TargetFile"] ?? toolCall.Arguments?["path"] ?? "workspace"}";
+            TxtConfirmDetail.Text = $"Agent is requesting permission to perform a potentially destructive action:\n\n{actionDescription}\n\nDo you want to allow this?";
+            
+            ConfirmationPanel.Visibility = Visibility.Visible;
+            ChatScroll.ScrollToEnd();
+
+            return await _permissionTcs.Task;
         }
     }
 }

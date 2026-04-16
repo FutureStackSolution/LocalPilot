@@ -630,7 +630,7 @@
                             <TextBlock Text="&#xE945;" 
                                        FontFamily="Segoe MDL2 Assets" 
                                        FontSize="10" 
-                                       Foreground="{DynamicResource LpAntigravityBlue}"
+                                       Foreground="{DynamicResource LpMutedFgBrush}"
                                        VerticalAlignment="Center"
                                        HorizontalAlignment="Center"/>
                             <Button.ContextMenu>

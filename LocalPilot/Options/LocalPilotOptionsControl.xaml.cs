@@ -64,6 +64,10 @@ namespace LocalPilot.Options
             SldrMaxTokens.Value      = s.MaxCompletionTokens;
             SldrMaxChatTokens.Value  = s.MaxChatTokens;
             SldrTemp.Value           = s.Temperature;
+            SldrMaxMapSize.Value     = s.MaxMapSizeKB;
+            
+            // Intelligence Mode
+            CmbPerformanceMode.SelectedIndex = (int)s.Mode;
 
             // Context
             TxtContextBefore.Text   = s.ContextLinesBefore.ToString();
@@ -80,17 +84,9 @@ namespace LocalPilot.Options
             ChkUnitTest.IsChecked     = s.EnableUnitTest;
             ChkStatusBar.IsChecked    = s.ShowStatusBar;
             ChkEnableLogging.IsChecked = s.EnableLogging;
+            ChkEnableProjectMap.IsChecked = s.EnableProjectMap;
 
             TxtChatHistory.Text       = s.ChatHistoryMaxItems.ToString();
-            
-            // 📝 Prompts
-            TxtSystemPrompt.Text      = s.SystemPrompt;
-            TxtExplainPrompt.Text     = s.ExplainPrompt;
-            TxtRefactorPrompt.Text    = s.RefactorPrompt;
-            TxtDocumentPrompt.Text    = s.DocumentPrompt;
-            TxtReviewPrompt.Text      = s.ReviewPrompt;
-            TxtFixPrompt.Text         = s.FixPrompt;
-            TxtTestPrompt.Text        = s.TestPrompt;
 
             // Populate model combos with current value; 
             // full list populated after async fetch
@@ -121,6 +117,9 @@ namespace LocalPilot.Options
             s.MaxCompletionTokens   = (int)SldrMaxTokens.Value;
             s.MaxChatTokens         = (int)SldrMaxChatTokens.Value;
             s.Temperature           = Math.Round(SldrTemp.Value, 2);
+            s.Mode                  = (PerformanceMode)CmbPerformanceMode.SelectedIndex;
+            s.MaxMapSizeKB          = (int)SldrMaxMapSize.Value;
+            s.EnableProjectMap      = ChkEnableProjectMap.IsChecked == true;
 
             if (int.TryParse(TxtContextBefore.Text, out int cb)) s.ContextLinesBefore = cb;
             if (int.TryParse(TxtContextAfter.Text,  out int ca)) s.ContextLinesAfter  = ca;
@@ -149,15 +148,6 @@ namespace LocalPilot.Options
                                 ?? CmbDocModel.Text;
             s.ReviewModel     = (CmbReviewModel.SelectedItem as ComboBoxItem)?.Content?.ToString()
                                 ?? CmbReviewModel.Text;
-
-            // 📝 Prompts
-            s.SystemPrompt   = TxtSystemPrompt.Text.Trim();
-            s.ExplainPrompt  = TxtExplainPrompt.Text.Trim();
-            s.RefactorPrompt = TxtRefactorPrompt.Text.Trim();
-            s.DocumentPrompt = TxtDocumentPrompt.Text.Trim();
-            s.ReviewPrompt   = TxtReviewPrompt.Text.Trim();
-            s.FixPrompt      = TxtFixPrompt.Text.Trim();
-            s.TestPrompt     = TxtTestPrompt.Text.Trim();
 
             // Persist to disk
             SettingsPersistence.Save(s);
@@ -282,6 +272,26 @@ namespace LocalPilot.Options
             }
         }
 
+        private void BtnOpenPrompts_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                string path = PromptLoader.GetPromptsDirectoryPath();
+                if (System.IO.Directory.Exists(path))
+                {
+                    System.Diagnostics.Process.Start("explorer.exe", path);
+                }
+                else
+                {
+                    MessageBox.Show("Prompts directory not found. Try restarting Visual Studio.", "LocalPilot", MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to open directory: {ex.Message}", "LocalPilot", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
         /// <summary>
         /// Shows the inline toast banner with a fade-in → hold → fade-out animation,
         /// then collapses it. Non-blocking — awaits only a Task.Delay.
@@ -361,6 +371,28 @@ namespace LocalPilot.Options
         {
             if (TxtMaxChatTokens != null)
                 TxtMaxChatTokens.Text = $"{(int)e.NewValue}";
+        }
+
+        private void SldrMaxMapSize_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (TxtMaxMapSize != null)
+                TxtMaxMapSize.Text = $"{(int)e.NewValue} KB";
+        }
+
+        private void CmbPerformanceMode_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (CmbPerformanceMode == null || CmbPerformanceMode.SelectedIndex == -1) return;
+            
+            var selectedMode = (PerformanceMode)CmbPerformanceMode.SelectedIndex;
+            if (selectedMode == PerformanceMode.Custom) return;
+
+            // Apply presets to the UI elements immediately so user sees the change
+            var s = LocalPilotSettings.Instance;
+            s.Mode = selectedMode; // This triggers ApplyModePresets internally in Settings
+            
+            // Sync UI Sliders to the new preset values
+            SldrTemp.Value = s.Temperature;
+            SldrMaxChatTokens.Value = s.MaxChatTokens;
         }
 
         // ── Helpers ───────────────────────────────────────────────────────────

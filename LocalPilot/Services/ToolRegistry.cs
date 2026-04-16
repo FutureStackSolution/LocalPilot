@@ -43,6 +43,7 @@ namespace LocalPilot.Services
             RegisterTool(new ListErrorsTool(this));
             RegisterTool(new DeleteFileTool(this));
             RegisterTool(new RenameSymbolTool(this));
+            RegisterTool(new RunTestsTool(this));
         }
 
         public void RegisterTool(IAgentTool tool)
@@ -53,6 +54,70 @@ namespace LocalPilot.Services
         public IEnumerable<IAgentTool> GetAllTools() => _tools.Values;
 
         public bool HasTool(string name) => _tools.ContainsKey(name);
+
+        /// <summary>
+        /// Generates tool definitions in Ollama's native format for the /api/chat tools parameter.
+        /// This enables structured tool calling — Ollama returns tool_calls as JSON objects,
+        /// not embedded in text, eliminating all parsing/nudging issues.
+        /// </summary>
+        public List<OllamaToolDefinition> GetOllamaToolDefinitions()
+        {
+            var definitions = new List<OllamaToolDefinition>();
+            
+            foreach (var tool in _tools.Values)
+            {
+                var def = new OllamaToolDefinition
+                {
+                    Type = "function",
+                    Function = new OllamaFunctionDefinition
+                    {
+                        Name = tool.Name,
+                        Description = tool.Description,
+                        Parameters = ParseParameterSchema(tool.ParameterSchema)
+                    }
+                };
+                definitions.Add(def);
+            }
+
+            return definitions;
+        }
+
+        /// <summary>
+        /// Parses our simple parameter schema strings (e.g. '{ "path": "string" }') 
+        /// into Ollama's JSON Schema format.
+        /// </summary>
+        private OllamaParameterDefinition ParseParameterSchema(string schema)
+        {
+            var paramDef = new OllamaParameterDefinition
+            {
+                Type = "object",
+                Properties = new Dictionary<string, OllamaPropertyDefinition>(),
+                Required = new List<string>()
+            };
+
+            if (string.IsNullOrEmpty(schema) || schema == "{}") return paramDef;
+
+            try
+            {
+                var obj = Newtonsoft.Json.Linq.JObject.Parse(schema);
+                foreach (var prop in obj.Properties())
+                {
+                    string propType = prop.Value?.ToString() ?? "string";
+                    paramDef.Properties[prop.Name] = new OllamaPropertyDefinition
+                    {
+                        Type = propType == "integer" ? "integer" : "string",
+                        Description = $"The {prop.Name} parameter"
+                    };
+                    paramDef.Required.Add(prop.Name);
+                }
+            }
+            catch
+            {
+                LocalPilotLogger.Log($"[ToolRegistry] Failed to parse parameter schema: {schema}");
+            }
+
+            return paramDef;
+        }
 
         public async Task<ToolResponse> ExecuteToolAsync(string name, Dictionary<string, object> args, CancellationToken ct)
         {
@@ -334,7 +399,12 @@ namespace LocalPilot.Services
                     catch { }
                 });
 
-                return new ToolResponse { Output = matches.Any() ? string.Join("\n", matches) : "No matches found." };
+                if (matches.Any())
+                {
+                    return new ToolResponse { Output = string.Join("\n", matches) };
+                }
+
+                return new ToolResponse { Output = "No matches found. Try using find_definitions if searching for a specific class or method." };
             }
             catch (Exception ex) { return new ToolResponse { IsError = true, Output = $"Search failed: {ex.Message}" }; }
         }
@@ -568,6 +638,80 @@ namespace LocalPilot.Services
                 return new ToolResponse { IsError = true, Output = "DTE not available." };
             }
             catch (Exception ex) { return new ToolResponse { IsError = true, Output = $"Rename failed: {ex.Message}" }; }
+        }
+    }
+
+    public class RunTestsTool : IAgentTool
+    {
+        private readonly ToolRegistry _registry;
+        public RunTestsTool(ToolRegistry registry) => _registry = registry;
+        public string Name => "run_tests";
+        public string Description => "Runs all unit tests in the solution using 'dotnet test' and returns the pass/fail results. Use this to verify that your code changes didn't break anything.";
+        public string ParameterSchema => "{ }";
+
+        public async Task<ToolResponse> ExecuteAsync(Dictionary<string, object> args, CancellationToken ct)
+        {
+            var root = _registry.WorkspaceRoot;
+            if (string.IsNullOrEmpty(root)) return new ToolResponse { IsError = true, Output = "Workspace root not found." };
+
+            string cmd = "dotnet";
+            string argStr = "test --label --verbosity quiet";
+
+            // 🧠 AUTO-DETECT TOOLCHAIN
+            if (File.Exists(Path.Combine(root, "package.json")))
+            {
+                cmd = "npm.cmd"; // Windows specific
+                argStr = "test";
+            }
+            else if (File.Exists(Path.Combine(root, "go.mod")))
+            {
+                cmd = "go";
+                argStr = "test ./...";
+            }
+            else if (File.Exists(Path.Combine(root, "pyproject.toml")) || File.Exists(Path.Combine(root, "requirements.txt")))
+            {
+                cmd = "pytest";
+                argStr = "";
+            }
+
+            try
+            {
+                var startInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = cmd,
+                    Arguments = argStr,
+                    WorkingDirectory = root,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+
+                using (var proc = System.Diagnostics.Process.Start(startInfo))
+                {
+                    string output = await proc.StandardOutput.ReadToEndAsync();
+                    string error = await proc.StandardError.ReadToEndAsync();
+                    
+                    var waitTask = Task.Run(() => proc.WaitForExit(60000)); // 60s timeout
+                    await waitTask;
+
+                    if (!proc.HasExited)
+                    {
+                        proc.Kill();
+                        return new ToolResponse { IsError = true, Output = $"{cmd} timed out after 60 seconds." };
+                    }
+
+                    if (proc.ExitCode != 0)
+                    {
+                        return new ToolResponse { IsError = true, Output = $"Tests failed ({cmd} Exit Code {proc.ExitCode}):\n{output}\n{error}" };
+                    }
+                    return new ToolResponse { Output = $"Tests passed successfully using {cmd}!\n{output}" };
+                }
+            }
+            catch (Exception ex)
+            {
+                return new ToolResponse { IsError = true, Output = $"Failed to execute {cmd}: {ex.Message}. Ensure the tool is installed in your PATH." };
+            }
         }
     }
 }

@@ -12,7 +12,7 @@ namespace LocalPilot.Services
 {
     /// <summary>
     /// Communicates with a local Ollama instance over HTTP.
-    /// Supports streaming completions, chat, and model listing.
+    /// Supports streaming completions, chat with native tool calling, and model listing.
     /// </summary>
     public class OllamaService
     {
@@ -26,9 +26,6 @@ namespace LocalPilot.Services
 
         public void UpdateBaseUrl(string baseUrl)
         {
-            // If HttpClient is static, BaseAddress cannot be updated per instance.
-            // Instead, the _baseUrl field is used to construct full URLs for each request.
-            // This method now only updates the instance's _baseUrl.
             _baseUrl = baseUrl?.TrimEnd('/') ?? "http://localhost:11434";
         }
 
@@ -64,21 +61,13 @@ namespace LocalPilot.Services
             }
             catch { return false; }
         }
-        // ── Semantic Embeddings (New in v1.2) ──────────────────────────────────
-        /// <summary>
-        /// Generates a vector embedding for the given text using Ollama.
-        /// This is the heart of semantic search and project context.
-        /// </summary>
+
+        // ── Semantic Embeddings ────────────────────────────────────────────────
         public async Task<float[]> GetEmbeddingsAsync(string model, string prompt, CancellationToken ct = default)
         {
             try
             {
-                var payload = new
-                {
-                    model,
-                    prompt
-                };
-
+                var payload = new { model, prompt };
                 var body = JsonConvert.SerializeObject(payload);
                 var content = new StringContent(body, Encoding.UTF8, "application/json");
 
@@ -100,7 +89,6 @@ namespace LocalPilot.Services
         }
 
         // ── Code completion (generate endpoint) ───────────────────────────────
-        /// <summary>Yields tokens one by one as they stream from Ollama.</summary>
         public async IAsyncEnumerable<string> StreamCompletionAsync(
             string model,
             string prompt,
@@ -127,7 +115,6 @@ namespace LocalPilot.Services
             }
             catch (OperationCanceledException)
             {
-                // User-initiated cancellation is expected; do not emit a connectivity error.
                 yield break;
             }
             catch (Exception ex)
@@ -161,25 +148,71 @@ namespace LocalPilot.Services
             }
         }
 
-        // ── Chat completion ────────────────────────────────────────────────────
-        /// <summary>Yields chat response tokens one by one as they stream.</summary>
+        // ── Chat completion (SIMPLE — no tool calling, for regular chat) ──────
+        /// <summary>Yields chat response tokens one by one as they stream. No tool support.</summary>
         public async IAsyncEnumerable<string> StreamChatAsync(
             string model,
             List<ChatMessage> messages,
             OllamaOptions options = null,
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
         {
-            var payload = new
+            // Delegate to the advanced method but ignore tool calls
+            await foreach (var result in StreamChatWithToolsAsync(model, messages, null, options, ct))
             {
-                model,
-                messages,
-                stream  = true,
-                options = options ?? new OllamaOptions()
-            };
+                if (result.IsTextToken)
+                    yield return result.TextToken;
+            }
+        }
 
-            string jsonPayload = JsonConvert.SerializeObject(payload);
-            LocalPilotLogger.Log($"[Ollama] StreamChatAsync starting for model: {model}");
-            LocalPilotLogger.Log($"[Ollama] Input Payload: {jsonPayload}");
+        // ── Chat completion WITH NATIVE TOOL CALLING ──────────────────────────
+        /// <summary>
+        /// Streams chat responses and returns structured tool calls from Ollama's native API.
+        /// This is the core method that eliminates text-based JSON parsing of tool calls.
+        /// 
+        /// When tools are provided, Ollama's API will return either:
+        ///   1. A normal text response (streamed token by token)
+        ///   2. A tool_calls array in the response (structured, not embedded in text)
+        /// 
+        /// The caller receives ChatStreamResult objects that clearly distinguish between
+        /// text tokens and tool call requests.
+        /// </summary>
+        public async IAsyncEnumerable<ChatStreamResult> StreamChatWithToolsAsync(
+            string model,
+            List<ChatMessage> messages,
+            List<OllamaToolDefinition> tools = null,
+            OllamaOptions options = null,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+        {
+            // Build payload — include tools if provided
+            object payload;
+            if (tools != null && tools.Count > 0)
+            {
+                payload = new
+                {
+                    model,
+                    messages,
+                    tools,
+                    stream = true,
+                    options = options ?? new OllamaOptions()
+                };
+            }
+            else
+            {
+                payload = new
+                {
+                    model,
+                    messages,
+                    stream = true,
+                    options = options ?? new OllamaOptions()
+                };
+            }
+
+            string jsonPayload = JsonConvert.SerializeObject(payload, new JsonSerializerSettings 
+            { 
+                NullValueHandling = NullValueHandling.Ignore 
+            });
+            
+            LocalPilotLogger.Log($"[Ollama] StreamChatWithToolsAsync starting for model: {model}, tools: {tools?.Count ?? 0}");
 
             HttpResponseMessage response = null;
             string errorDetails = null;
@@ -193,7 +226,6 @@ namespace LocalPilot.Services
             }
             catch (OperationCanceledException)
             {
-                // User-initiated cancellation is expected; do not emit a connectivity error.
                 yield break;
             }
             catch (Exception ex)
@@ -204,7 +236,7 @@ namespace LocalPilot.Services
 
             if (errorDetails != null)
             {
-                yield return $"\n[LocalPilot Error] Could not reach Ollama: {errorDetails}";
+                yield return ChatStreamResult.Text($"\n[LocalPilot Error] Could not reach Ollama: {errorDetails}");
                 yield break;
             }
 
@@ -220,17 +252,55 @@ namespace LocalPilot.Services
                         if (jsonReader.TokenType != JsonToken.StartObject) continue;
                         var obj = await JObject.LoadAsync(jsonReader, ct).ConfigureAwait(false);
                         
+                        // Check for text content
                         var token = obj["message"]?["content"]?.ToString() ?? string.Empty;
                         if (!string.IsNullOrEmpty(token))
                         {
                             fullResponse.Append(token);
-                            yield return token;
+                            yield return ChatStreamResult.Text(token);
+                        }
+
+                        // ═══════════════════════════════════════════════════════
+                        // NATIVE TOOL CALLING: Check for tool_calls in the response
+                        // Ollama returns these as structured JSON, NOT embedded in text.
+                        // This is the key architectural improvement over parsing ```json blocks.
+                        // ═══════════════════════════════════════════════════════
+                        var toolCalls = obj["message"]?["tool_calls"] as JArray;
+                        if (toolCalls != null && toolCalls.Count > 0)
+                        {
+                            LocalPilotLogger.Log($"[Ollama] Received {toolCalls.Count} native tool call(s)");
+                            foreach (var tc in toolCalls)
+                            {
+                                var funcObj = tc["function"];
+                                if (funcObj == null) continue;
+
+                                string toolName = funcObj["name"]?.ToString();
+                                var argsObj = funcObj["arguments"];
+                                
+                                Dictionary<string, object> args = null;
+                                if (argsObj != null)
+                                {
+                                    try
+                                    {
+                                        args = argsObj.ToObject<Dictionary<string, object>>();
+                                    }
+                                    catch
+                                    {
+                                        args = new Dictionary<string, object>();
+                                    }
+                                }
+
+                                if (!string.IsNullOrEmpty(toolName))
+                                {
+                                    LocalPilotLogger.Log($"[Ollama] Tool call: {toolName}({JsonConvert.SerializeObject(args)})");
+                                    yield return ChatStreamResult.ToolCall(toolName, args ?? new Dictionary<string, object>());
+                                }
+                            }
                         }
 
                         if (obj["done"]?.Value<bool>() == true)
                         {
                             LocalPilotLogger.Log($"[Ollama] Finished streaming from model: {model}");
-                            LocalPilotLogger.Log($"[Ollama] Full Output Response: {fullResponse.ToString()}");
                             break;
                         }
                     }
@@ -254,6 +324,82 @@ namespace LocalPilot.Services
     }
 
     // ── Supporting types ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Result from a chat stream — either a text token or a structured tool call.
+    /// This replaces the old approach of parsing ```json blocks from text output.
+    /// </summary>
+    public class ChatStreamResult
+    {
+        public bool IsTextToken { get; private set; }
+        public bool IsToolCall { get; private set; }
+        
+        public string TextToken { get; private set; }
+        
+        public string ToolName { get; private set; }
+        public Dictionary<string, object> ToolArguments { get; private set; }
+
+        public static ChatStreamResult Text(string token) => new ChatStreamResult 
+        { 
+            IsTextToken = true, 
+            TextToken = token 
+        };
+
+        public static ChatStreamResult ToolCall(string name, Dictionary<string, object> args) => new ChatStreamResult 
+        { 
+            IsToolCall = true, 
+            ToolName = name, 
+            ToolArguments = args 
+        };
+    }
+
+    /// <summary>
+    /// Ollama tool definition for native function calling.
+    /// Matches the JSON schema expected by Ollama's /api/chat endpoint.
+    /// See: https://ollama.com/blog/tool-support
+    /// </summary>
+    public class OllamaToolDefinition
+    {
+        [JsonProperty("type")]
+        public string Type { get; set; } = "function";
+
+        [JsonProperty("function")]
+        public OllamaFunctionDefinition Function { get; set; }
+    }
+
+    public class OllamaFunctionDefinition
+    {
+        [JsonProperty("name")]
+        public string Name { get; set; }
+
+        [JsonProperty("description")]
+        public string Description { get; set; }
+
+        [JsonProperty("parameters")]
+        public OllamaParameterDefinition Parameters { get; set; }
+    }
+
+    public class OllamaParameterDefinition
+    {
+        [JsonProperty("type")]
+        public string Type { get; set; } = "object";
+
+        [JsonProperty("properties")]
+        public Dictionary<string, OllamaPropertyDefinition> Properties { get; set; } = new Dictionary<string, OllamaPropertyDefinition>();
+
+        [JsonProperty("required")]
+        public List<string> Required { get; set; } = new List<string>();
+    }
+
+    public class OllamaPropertyDefinition
+    {
+        [JsonProperty("type")]
+        public string Type { get; set; } = "string";
+
+        [JsonProperty("description")]
+        public string Description { get; set; }
+    }
+
     public class OllamaOptions
     {
         [JsonProperty("temperature")]
@@ -281,7 +427,7 @@ namespace LocalPilot.Services
     public class ChatMessage
     {
         [JsonProperty("role")]
-        public string Role { get; set; }      // "system" | "user" | "assistant"
+        public string Role { get; set; }      // "system" | "user" | "assistant" | "tool"
 
         [JsonProperty("content")]
         public string Content { get; set; }

@@ -14,7 +14,15 @@ namespace LocalPilot.Services
 {
     /// <summary>
     /// The heart of Agent Mode. Orchestrates the Plan-Act-Observe loop
-    /// by combining the LLM's reasoning with local tools.
+    /// using Ollama's NATIVE tool calling API.
+    /// 
+    /// KEY ARCHITECTURE CHANGE (v3.0):
+    /// Instead of parsing ```json blocks from free-text model output, this orchestrator
+    /// sends tool definitions via Ollama's /api/chat 'tools' parameter and receives
+    /// structured tool_calls in the API response. This eliminates:
+    ///   - Text-based JSON parsing (ParseAllToolCalls, SafeParseJson)
+    ///   - Nudge messages ("You MUST call tools...")
+    ///   - The "reasoning 3x then completing" bug
     /// </summary>
     public class AgentOrchestrator
     {
@@ -28,7 +36,7 @@ namespace LocalPilot.Services
         public event Action<ToolCallRequest, ToolResponse> OnToolCallCompleted;
         public event Action<string> OnMessageFragment;
         public event Action<string> OnMessageCompleted;
-        public event Action<Dictionary<string, string>> OnTurnModificationsPending; // 🚀 Antigravity Stage UX
+        public event Action<Dictionary<string, string>> OnTurnModificationsPending;
         
         public Func<ToolCallRequest, Task<bool>> RequestPermissionAsync;
 
@@ -44,6 +52,7 @@ namespace LocalPilot.Services
 
         /// <summary>
         /// Initiates an autonomous task for the agent.
+        /// Uses Ollama's native tool calling API for structured, reliable tool invocation.
         /// </summary>
         public async Task RunTaskAsync(string taskDescription, CancellationToken ct)
         {
@@ -69,42 +78,47 @@ namespace LocalPilot.Services
             }
             catch { }
 
+            var messages = new List<ChatMessage>();
             _toolRegistry.WorkspaceRoot = solutionPath;
-            string toolList = string.Join("\n", _toolRegistry.GetAllTools().Select(t => $"- {t.Name}: {t.Description}\n  Parameters: {t.ParameterSchema}"));
 
-            var systemPrompt = $@"You are LocalPilot, an elite AI developer inside Visual Studio.
-WORKSPACE: {solutionPath}
+            // 🚀 UNIFIED CONTEXT PIPELINE: Proactively gather implicit context (Errors, Git, Symbols)
+            string implicitContext = await GetUnifiedContextAsync(solutionPath);
+            if (!string.IsNullOrEmpty(implicitContext))
+            {
+                messages.Add(new ChatMessage { Role = "system", Content = implicitContext });
+            }
 
-### STRATEGY
-1. **Parallelize**: Call multiple 'read_file' or 'grep_search' tools in one turn to gather context faster.
-2. **Verify**: Always read a file before editing it.
-3. **Accuracy**: Never guess paths. Use 'workspace_map' or 'grep_search' first.
-4. **No Hallucination**: If you don't find a symbol, use 'list_directory'.
+            // ═══════════════════════════════════════════════════════════════════
+            // NATIVE TOOL DEFINITIONS
+            // ═══════════════════════════════════════════════════════════════════
+            var toolDefinitions = _toolRegistry.GetOllamaToolDefinitions();
+            LocalPilotLogger.Log($"[Agent] Registered {toolDefinitions.Count} native tools for Ollama");
 
-### TOOL CALL FORMAT
-To use tools, return a JSON array of tool calls. You can call MULTIPLE tools at once for parallel execution.
-Always include a <thought> block before your tool calls.
+            // 🚀 SECTION-HEADER FORMAT: Structured system prompt loaded from template
+            var systemPrompt = PromptLoader.GetPrompt("SystemPrompt", new Dictionary<string, string> 
+            {
+                { "solutionPath", solutionPath }
+            });
 
-Example:
-<thought>I need to read the class definition and its implementation.</thought>
-```json
-[
-  {{ ""name"": ""read_file"", ""arguments"": {{ ""path"": ""Helper.cs"" }} }},
-  {{ ""name"": ""read_file"", ""arguments"": {{ ""path"": ""Processor.cs"" }} }}
-]
-```
-";
+            if (string.IsNullOrEmpty(systemPrompt))
+            {
+                // Fallback if file load fails
+                systemPrompt = $"## IDENTITY\nYou are LocalPilot.\n## WORKSPACE\nPath: {solutionPath}";
+            }
 
-            string projectMapContent = "";
+            messages.Insert(0, new ChatMessage { Role = "system", Content = systemPrompt });
+
             if (LocalPilot.Settings.LocalPilotSettings.Instance.EnableProjectMap)
             {
                 OnStatusUpdate?.Invoke(AgentStatus.Thinking, "Analyzing project structure...");
-                projectMapContent = await _projectMap.GenerateProjectMapAsync(solutionPath, 
+                string projectMapContent = await _projectMap.GenerateProjectMapAsync(solutionPath, 
                     maxTotalBytes: LocalPilot.Settings.LocalPilotSettings.Instance.MaxMapSizeKB * 1024);
                 
+                if (!string.IsNullOrEmpty(projectMapContent))
+                {
+                    messages.Add(new ChatMessage { Role = "system", Content = $"## PROJECT STRUCTURE\n{projectMapContent}" });
+                }
             }
-
-            var messages = new List<ChatMessage> { new ChatMessage { Role = "system", Content = systemPrompt } };
             
             // Context Injection: Fetch active selection for slash commands
             string activeSelection = "";
@@ -120,7 +134,6 @@ Example:
                                       ? activeDoc.TextView.Selection.SelectedSpans[0].GetText() 
                                       : "";
                     
-                    // Fallback to full file if no selection but we need a code block
                     if (string.IsNullOrWhiteSpace(activeSelection))
                     {
                         activeSelection = activeDoc.TextBuffer.CurrentSnapshot.GetText();
@@ -133,16 +146,15 @@ Example:
             string processedTask = taskDescription.Trim();
             if (processedTask.StartsWith("/") && !processedTask.Contains(" "))
             {
-                // Simple command without arguments: auto-inject selection
                 var cmd = processedTask.ToLowerInvariant();
                 var settings = LocalPilot.Settings.LocalPilotSettings.Instance;
 
-                if (cmd == "/explain")       processedTask = settings.ExplainPrompt.Replace("{codeBlock}", activeSelection);
-                else if (cmd == "/fix")      processedTask = settings.FixPrompt.Replace("{codeBlock}", activeSelection);
-                else if (cmd == "/test")     processedTask = settings.TestPrompt.Replace("{codeBlock}", activeSelection);
-                else if (cmd == "/refactor")  processedTask = settings.RefactorPrompt.Replace("{codeBlock}", activeSelection);
-                else if (cmd == "/review")    processedTask = settings.ReviewPrompt.Replace("{codeBlock}", activeSelection);
-                else if (cmd == "/doc" || cmd == "/document") processedTask = settings.DocumentPrompt.Replace("{codeBlock}", activeSelection);
+                if (cmd == "/explain")       processedTask = PromptLoader.GetPrompt("ExplainPrompt", new Dictionary<string, string> { { "codeBlock", activeSelection } });
+                else if (cmd == "/fix")      processedTask = PromptLoader.GetPrompt("FixPrompt", new Dictionary<string, string> { { "codeBlock", activeSelection } });
+                else if (cmd == "/test")     processedTask = PromptLoader.GetPrompt("TestPrompt", new Dictionary<string, string> { { "codeBlock", activeSelection } });
+                else if (cmd == "/refactor")  processedTask = PromptLoader.GetPrompt("RefactorPrompt", new Dictionary<string, string> { { "codeBlock", activeSelection } });
+                else if (cmd == "/review")    processedTask = PromptLoader.GetPrompt("ReviewPrompt", new Dictionary<string, string> { { "codeBlock", activeSelection } });
+                else if (cmd == "/doc" || cmd == "/document") processedTask = PromptLoader.GetPrompt("DocumentPrompt", new Dictionary<string, string> { { "codeBlock", activeSelection } });
                 else if (cmd == "/map")      
                 {
                     OnStatusUpdate?.Invoke(AgentStatus.Thinking, "Updating Project Map...");
@@ -152,137 +164,214 @@ Example:
             }
             else if (processedTask.StartsWith("/"))
             {
-                // Command with arguments: use the arguments as the context
                 var parts = processedTask.Split(new[] { ' ' }, 2);
                 var cmd = parts[0].ToLowerInvariant();
                 var args = parts[1].Trim();
-                var settings = LocalPilot.Settings.LocalPilotSettings.Instance;
 
-                if (cmd == "/explain")       processedTask = settings.ExplainPrompt.Replace("{codeBlock}", args);
-                else if (cmd == "/fix")      processedTask = settings.FixPrompt.Replace("{codeBlock}", args);
-                else if (cmd == "/test")     processedTask = settings.TestPrompt.Replace("{codeBlock}", args);
-                else if (cmd == "/refactor")  processedTask = settings.RefactorPrompt.Replace("{codeBlock}", args);
-                else if (cmd == "/review")    processedTask = settings.ReviewPrompt.Replace("{codeBlock}", args);
-                else if (cmd == "/doc" || cmd == "/document") processedTask = settings.DocumentPrompt.Replace("{codeBlock}", args);
+                if (cmd == "/explain")       processedTask = PromptLoader.GetPrompt("ExplainPrompt", new Dictionary<string, string> { { "codeBlock", args } });
+                else if (cmd == "/fix")      processedTask = PromptLoader.GetPrompt("FixPrompt", new Dictionary<string, string> { { "codeBlock", args } });
+                else if (cmd == "/test")     processedTask = PromptLoader.GetPrompt("TestPrompt", new Dictionary<string, string> { { "codeBlock", args } });
+                else if (cmd == "/refactor")  processedTask = PromptLoader.GetPrompt("RefactorPrompt", new Dictionary<string, string> { { "codeBlock", args } });
+                else if (cmd == "/review")    processedTask = PromptLoader.GetPrompt("ReviewPrompt", new Dictionary<string, string> { { "codeBlock", args } });
+                else if (cmd == "/doc" || cmd == "/document") processedTask = PromptLoader.GetPrompt("DocumentPrompt", new Dictionary<string, string> { { "codeBlock", args } });
             }
 
-            if (!string.IsNullOrEmpty(projectMapContent))
+            // Finally, the user request with a task header
+            messages.Add(new ChatMessage { Role = "user", Content = $"## TASK\n{processedTask}" });
+
+            // 🔍 FILE NESTING: Use Roslyn to find definitions for potential symbols in the task
+            var words = processedTask.Split(new[] { ' ', '.', '(', ')', '[', ']', '<', '>', ',', ';', ':', '!', '?' }, StringSplitOptions.RemoveEmptyEntries);
+            var PascalNames = words.Where(w => w.Length >= 3 && char.IsUpper(w[0])).Distinct();
+
+            foreach (var name in PascalNames)
             {
-                messages.Add(new ChatMessage { Role = "user", Content = projectMapContent });
+                var locs = await SymbolIndexService.Instance.FindDefinitionsAsync(name);
+                if (locs != null && locs.Any())
+                {
+                    var loc = locs.First();
+                    messages.Add(new ChatMessage { Role = "system", Content = $"[LSP CONTEXT] Symbol '{name}' ({loc.Kind}) is defined at: {loc.FilePath}:{loc.Line}" });
+                }
             }
-
-            messages.Add(new ChatMessage { Role = "user", Content = processedTask });
 
             // Fetch initial grounding context from the project
             string groundingContext = await _projectContext.SearchContextAsync(_ollama, taskDescription, topN: 5);
             if (!string.IsNullOrEmpty(groundingContext))
             {
-                messages.Add(new ChatMessage { Role = "system", Content = groundingContext });
+                messages.Add(new ChatMessage { Role = "system", Content = $"## GROUNDING CONTEXT (VECTORS)\n{groundingContext}" });
             }
 
+            // Inject known symbols for fuzzy matching
+            string symbolSummary = SymbolIndexService.Instance.GetSummary();
+            if (!string.IsNullOrEmpty(symbolSummary))
+            {
+                messages.Add(new ChatMessage { Role = "system", Content = $"## WORKSPACE SYMBOLS\n{symbolSummary}" });
+            }
 
-            // Enterprise Intelligence: Inject Active Document context for better grounding
+            // Inject Active Document context for better grounding
             try
             {
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                 var activeDoc = await VS.Documents.GetActiveDocumentViewAsync();
                 if (activeDoc?.FilePath != null)
                 {
+                    // 🚀 AUTO-RAG: Inject semantic neighborhood awareness
+                    string neighborhood = await SymbolIndexService.Instance.GetNeighborhoodContextAsync(activeDoc.FilePath);
+                    if (!string.IsNullOrEmpty(neighborhood))
+                    {
+                        messages.Add(new ChatMessage { Role = "system", Content = neighborhood });
+                    }
+
                     string content = activeDoc.TextBuffer.CurrentSnapshot.GetText();
-                    if (content.Length > 5000) content = content.Substring(0, 5000) + "... [truncated]";
+                    if (content.Length > 3000) content = content.Substring(0, 3000) + "... [truncated]";
                     
                     messages.Add(new ChatMessage { 
                         Role = "system", 
-                        Content = $"[REFERENCE: ACTIVE EDITOR SNIPPET]\nPath: {activeDoc.FilePath}\nContent:\n{content}\n\nNOTE: This is just a snippet from the editor. Use read_file for the full, latest content." 
+                        Content = $"## ACTIVE EDITOR SNIPPET\nPath: {activeDoc.FilePath}\nCode:\n```\n{content}\n```" 
                     });
                 }
             }
             catch { }
 
-            // User task is already added as 'processedTask' above for recency after the map.
-
-
+            // ═══════════════════════════════════════════════════════════════════
+            // AGENT LOOP: Native tool calling — no parsing, no nudging
+            // ═══════════════════════════════════════════════════════════════════
             bool isDone = false;
             int maxSteps = 20;
             int step = 0;
             _stagedChanges.Clear();
+            string lastToolCallSignature = null;
+            int repeatCount = 0;
 
             while (!isDone && step < maxSteps)
             {
                 step++;
                 OnStatusUpdate?.Invoke(AgentStatus.Thinking, string.Empty);
 
-                // 1. Get LLM reasoning + optional tool call
+                // 1. Get LLM response with native tool support
                 var responseBuilder = new System.Text.StringBuilder();
-                bool isUserOutputSuppressed = false;
+                var toolCallsThisTurn = new List<ToolCallRequest>();
 
                 string contextModel = LocalPilot.Settings.LocalPilotSettings.Instance.ChatModel;
                 var options = ApplyPerformancePresets(LocalPilot.Settings.LocalPilotSettings.Instance.Mode);
 
-                await foreach (var token in _ollama.StreamChatAsync(contextModel, messages, options, ct))
-
+                // Stream with native tool calling
+                await foreach (var result in _ollama.StreamChatWithToolsAsync(contextModel, messages, toolDefinitions, options, ct))
                 {
-                    responseBuilder.Append(token);
-
-                    // Stop showing fragments to user once we hit a JSON block
-                    string currentText = responseBuilder.ToString();
-                    if (!isUserOutputSuppressed && (currentText.Contains("```json") || currentText.Contains("<|") || currentText.Contains("< |")))
+                    if (result.IsTextToken)
                     {
-                        isUserOutputSuppressed = true;
+                        responseBuilder.Append(result.TextToken);
+                        OnMessageFragment?.Invoke(result.TextToken);
                     }
-
-                    if (!isUserOutputSuppressed)
+                    else if (result.IsToolCall)
                     {
-                        // Heuristic: If we detect reasoning patterns without tags, wrap them visually for segments
-                        string frag = token;
-                        if (currentText.Length < 200 && (frag.ToLower().Contains("let me") || frag.ToLower().Contains("first, i") || frag.ToLower().Contains("analyzing")))
+                        // Structured tool call from Ollama — no parsing needed!
+                        toolCallsThisTurn.Add(new ToolCallRequest
                         {
-                            // Wrap the fragment in a pseudo-thought block if it looks like the start of reasoning
-                            frag = "[Reasoning] " + frag;
-                        }
-                        OnMessageFragment?.Invoke(frag);
+                            Name = result.ToolName,
+                            Arguments = result.ToolArguments
+                        });
                     }
                 }
 
-                var response = responseBuilder.ToString();
+                var responseText = responseBuilder.ToString();
 
-
-                // Show final clean message if it was a direct reply, 
-                // OR just end the fragment stream if we was performing tools.
-                if (!isUserOutputSuppressed)
+                // Show completed message text (if any)
+                if (!string.IsNullOrWhiteSpace(responseText))
                 {
-                    OnMessageCompleted?.Invoke(response);
-                }
-                else
-                {
-                    // If we suppressed, just close the visible message box with the pre-JSON/pre-tag text
-                    var cleanText = response.Split(new[] { "```json", "<|", "< |" }, StringSplitOptions.None)[0].Trim();
-                    OnMessageCompleted?.Invoke(cleanText);
+                    OnMessageCompleted?.Invoke(responseText);
                 }
 
                 // Add assistant response to history
-                messages.Add(new ChatMessage { Role = "assistant", Content = response });
+                messages.Add(new ChatMessage { Role = "assistant", Content = responseText });
 
-                // 2. Parse for ALL tool calls in response
-                var toolCalls = ParseAllToolCalls(response);
-                if (toolCalls.Any())
+                // 2. Process tool calls (if any)
+                if (toolCallsThisTurn.Any())
                 {
-                    OnStatusUpdate?.Invoke(AgentStatus.Executing, $"Running {toolCalls.Count} tools...");
+                    // Filter out unknown tools
+                    var validToolCalls = toolCallsThisTurn
+                        .Where(tc => _toolRegistry.HasTool(tc.Name))
+                        .ToList();
 
-                    var toolTasks = toolCalls.Select(async toolCall =>
+                    if (!validToolCalls.Any())
                     {
-                        if (ct.IsCancellationRequested) return;
+                        LocalPilotLogger.Log("[Agent] All tool calls were for unknown tools — skipping.");
+                        foreach (var unknownTc in toolCallsThisTurn)
+                        {
+                            LocalPilotLogger.Log($"[Agent] Unknown tool: {unknownTc.Name}");
+                        }
+                        // Add error feedback so model can correct itself
+                        messages.Add(new ChatMessage
+                        {
+                            Role = "tool",
+                            Content = $"Error: Tool(s) not found: {string.Join(", ", toolCallsThisTurn.Select(t => t.Name))}. Available tools: {string.Join(", ", _toolRegistry.GetAllTools().Select(t => t.Name))}"
+                        });
+                        continue;
+                    }
+
+                    OnStatusUpdate?.Invoke(AgentStatus.Executing, $"Running {validToolCalls.Count} tools...");
+
+                    // Loop detection
+                    string currentSignature = string.Join(";", validToolCalls.OrderBy(t => t.Name).Select(t => BuildToolSignature(t)));
+                    if (currentSignature == lastToolCallSignature)
+                    {
+                        repeatCount++;
+                        if (repeatCount >= 2)
+                        {
+                            LocalPilotLogger.Log("[Agent] Loop detected — forcing completion.");
+                            isDone = true;
+                            OnStatusUpdate?.Invoke(AgentStatus.Completed, "Task stopped (agent was repeating actions).");
+                            break;
+                        }
+                    }
+                    else
+                    {
+                        repeatCount = 0;
+                    }
+                    lastToolCallSignature = currentSignature;
+
+                    // Execute tools in parallel (or sequence for risky ones)
+                    foreach (var toolCall in validToolCalls)
+                    {
+                        if (ct.IsCancellationRequested) break;
+
+                        // 🛡️ USER CHECKPOINT: For risky actions, wait for permission
+                        bool isRisky = toolCall.Name == "write_to_file" || toolCall.Name == "replace_file_content" || toolCall.Name == "delete_file";
+                        if (isRisky && RequestPermissionAsync != null)
+                        {
+                            OnStatusUpdate?.Invoke(AgentStatus.ActionPending, $"Waiting for permission to {toolCall.Name}...");
+                            bool granted = await RequestPermissionAsync(toolCall);
+                            if (!granted)
+                            {
+                                messages.Add(new ChatMessage { Role = "tool", Content = "Error: User denied permission to execute this tool." });
+                                continue;
+                            }
+                        }
 
                         OnToolCallPending?.Invoke(toolCall);
                         
-                        // Track changes instead of immediate commit
-                        if (toolCall.Name == "write_to_file" || toolCall.Name == "replace_file_content")
+                        // Track changes for staging
+                        bool isWrite = toolCall.Name == "write_to_file" || toolCall.Name == "replace_file_content";
+                        string target = null;
+                        string code = null;
+
+                        if (isWrite)
                         {
-                            var target = toolCall.Arguments?["TargetFile"]?.ToString();
-                            var code = toolCall.Arguments?["CodeContent"]?.ToString() ?? toolCall.Arguments?["ReplacementContent"]?.ToString();
+                            target = toolCall.Arguments?.ContainsKey("TargetFile") == true
+                                ? toolCall.Arguments["TargetFile"]?.ToString()
+                                : toolCall.Arguments?.ContainsKey("path") == true
+                                    ? toolCall.Arguments["path"]?.ToString()
+                                    : null;
+                            code = toolCall.Arguments?.ContainsKey("CodeContent") == true
+                                ? toolCall.Arguments["CodeContent"]?.ToString()
+                                : toolCall.Arguments?.ContainsKey("content") == true
+                                    ? toolCall.Arguments["content"]?.ToString()
+                                    : null;
+                            
+                            // 🚀 DIFF PREVIEW: Show native VS comparison before writing
                             if (!string.IsNullOrEmpty(target) && !string.IsNullOrEmpty(code))
                             {
                                 lock (_stagedChanges) _stagedChanges[target] = code;
+                                _ = ShowDiffAsync(_toolRegistry.ResolvePath(target), code);
                             }
                         }
 
@@ -296,16 +385,29 @@ Example:
                         {
                             messages.Add(new ChatMessage
                             {
-                                Role = "user",
-                                Content = $"[Observation: Tool '{toolCall.Name}' executed]\nResult:\n{output}"
+                                Role = "tool",
+                                Content = $"[Tool '{toolCall.Name}' result]\n{output}"
                             });
                         }
-                    });
 
-                    await Task.WhenAll(toolTasks);
+                        // 🚀 AUTO-VERIFICATION: If we edited code, immediately check for errors
+                        if (isWrite && !result.IsError)
+                        {
+                            var diagResult = await GetVisibleDiagnosticsAsync();
+                            string verificationMsg = !string.IsNullOrEmpty(diagResult)
+                                ? $"[AUTO-VERIFY] Code changes detected new or existing errors:\n{diagResult}\n\nPlease fix these errors before proceeding."
+                                : "[AUTO-VERIFY] No compilation errors detected in the Error List.";
+                            
+                            lock (messages)
+                            {
+                                messages.Add(new ChatMessage { Role = "system", Content = verificationMsg });
+                            }
+                        }
+                    }
                 }
                 else
                 {
+                    // No tool calls — the model is done (or gave a text-only response)
                     isDone = true;
                     OnStatusUpdate?.Invoke(AgentStatus.Completed, "Task finished.");
                 }
@@ -333,192 +435,12 @@ Example:
             }
         }
 
-
-
-        private AgentPlan TryParsePlan(string response)
-        {
-            if (string.IsNullOrWhiteSpace(response)) return null;
-
-            // Plan should appear before the first tool-call JSON block.
-            string preJson = response.Split(new[] { "```json" }, StringSplitOptions.None)[0];
-            int stepsHeader = preJson.IndexOf("Steps:", StringComparison.OrdinalIgnoreCase);
-            if (stepsHeader < 0) return null;
-
-            string planBlock = preJson.Substring(stepsHeader);
-            string[] lines = planBlock.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
-
-            var plan = new AgentPlan();
-            string preamble = preJson.Substring(0, stepsHeader).Trim();
-            if (!string.IsNullOrWhiteSpace(preamble))
-            {
-                plan.Preamble = preamble;
-            }
-
-            foreach (var raw in lines)
-            {
-                string line = raw.Trim();
-                if (string.IsNullOrWhiteSpace(line)) continue;
-                if (line.Equals("Steps:", StringComparison.OrdinalIgnoreCase)) continue;
-
-                if (System.Text.RegularExpressions.Regex.IsMatch(line, @"^(\d+[\.\)]|-)\s+"))
-                {
-                    string stepText = System.Text.RegularExpressions.Regex
-                        .Replace(line, @"^(\d+[\.\)]|-)\s+", string.Empty)
-                        .Trim();
-
-                    if (!string.IsNullOrWhiteSpace(stepText))
-                    {
-                        plan.Steps.Add(stepText);
-                    }
-                }
-                else if (plan.Steps.Count > 0)
-                {
-                    // Continuation line for the previous step only when explicitly indented.
-                    // If not indented, this is likely normal narrative text after the plan.
-                    if (raw.StartsWith(" ") || raw.StartsWith("\t"))
-                    {
-                        plan.Steps[plan.Steps.Count - 1] += " " + line;
-                    }
-                    else
-                    {
-                        break;
-                    }
-                }
-            }
-
-            return plan.Steps.Count > 0 ? plan : null;
-        }
-
-        private List<ToolCallRequest> ParseAllToolCalls(string content)
-        {
-            var results = new List<ToolCallRequest>();
-            try
-            {
-                int pos = 0;
-                while ((pos = content.IndexOf("```json", pos, StringComparison.OrdinalIgnoreCase)) != -1)
-                {
-                    int start = pos + 7;
-                    int end = content.IndexOf("```", start);
-                    if (end == -1) { pos = start; continue; }
-
-                    string json = content.Substring(start, end - start).Trim();
-                    pos = end + 3;
-
-                    // Skip empty blocks
-                    if (string.IsNullOrWhiteSpace(json)) continue;
-
-                    try
-                    {
-                        var tokenObj = SafeParseJson(json);
-                        
-                        // Handle both array [...] and single object {...}
-                        IEnumerable<JToken> items = tokenObj is JArray arr ? (IEnumerable<JToken>)arr : new[] { tokenObj };
-
-                        foreach (var item in items)
-                        {
-                            if (item is not JObject obj) continue;
-
-                            // Support BOTH formats:
-                            // { "name": "tool", "arguments": {...} }          <- preferred, clean format  
-                            // { "action": "tool_call", "name": ..., ... }     <- legacy format
-                            string name = obj["name"]?.ToString();
-                            var arguments = obj["arguments"]?.ToObject<Dictionary<string, object>>()
-                                         ?? obj["parameters"]?.ToObject<Dictionary<string, object>>()
-                                         ?? new Dictionary<string, object>();
-
-                            // Only skip if no name found at all (completely malformed)
-                            if (string.IsNullOrWhiteSpace(name)) continue;
-
-                            // Validate it's a known tool (prevents hallucinated tool calls)
-                            if (!_toolRegistry.HasTool(name)) 
-                            {
-                                LocalPilotLogger.Log($"[Agent] Unknown tool '{name}' in response - skipping.");
-                                continue;
-                            }
-
-                            results.Add(new ToolCallRequest { Name = name, Arguments = arguments });
-                            LocalPilotLogger.Log($"[Agent] Parsed tool call: {name}");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        LocalPilotLogger.Log($"[Agent] JSON parse error in block: {ex.Message}\nBlock: {json.Substring(0, Math.Min(200, json.Length))}");
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                LocalPilotLogger.Log($"[Agent] ParseAllToolCalls outer error: {ex.Message}");
-            }
-            return results;
-        }
-
-        private JToken SafeParseJson(string json)
-        {
-            string repaired = json.Trim();
-
-            // 1. Try standard parse first
-            try { return JToken.Parse(repaired); } catch { }
-
-            // 2. Intelligent Repair: LLMs often forget to close the nested 'arguments' object 
-            // especially when the content contains C# braces.
-            
-            // Strip trailing brackets/braces to find the actual 'end' of content
-            string baseJson = repaired.TrimEnd(']', '}', ' ', '\n', '\r', '\t');
-            
-            // Try wrapping combinations to close unclosed objects/arrays properly
-            string[] suffixes = { 
-                "}",         // Just close one object
-                "}}",        // Close arguments AND tool object
-                "}]",        // Close tool object AND array
-                "}}] ",      // Close arguments, tool object, AND array
-                "}]}"        // Close tool object, array, AND accidentally opened outer brace
-            };
-
-            foreach (var s in suffixes)
-            {
-                try { return JToken.Parse(baseJson + s); } catch { }
-            }
-
-            // 3. Last resort: If we can't repair it, maybe it's missing quotes? 
-            // Actually, just re-throw to trigger the standard error logging.
-            return JToken.Parse(json);
-        }
-
-        private ToolCallRequest ParseSingleToolCall(JToken obj)
-        {
-            return new ToolCallRequest
-            {
-                Name = obj["name"]?.ToString(),
-                Arguments = obj["arguments"]?.ToObject<Dictionary<string, object>>() ?? new Dictionary<string, object>()
-            };
-        }
-        private bool IsWriteTool(string name)
-        {
-            return name == "write_file" || name == "replace_text" || name == "delete_file" || name == "run_terminal";
-        }
-
         private string BuildToolSignature(ToolCallRequest toolCall)
         {
             string argsJson = JsonConvert.SerializeObject(toolCall?.Arguments ?? new Dictionary<string, object>());
             return $"{toolCall?.Name}|{argsJson}";
         }
 
-        private bool IsTransientToolError(string output)
-        {
-            if (string.IsNullOrWhiteSpace(output)) return false;
-            string t = output.ToLowerInvariant();
-
-            return t.Contains("timeout")
-                || t.Contains("temporar")
-                || t.Contains("rate limit")
-                || t.Contains("busy")
-                || t.Contains("network")
-                || t.Contains("connection")
-                || t.Contains("io exception")
-                || t.Contains("access is denied")
-                || t.Contains("locked");
-        }
         private OllamaOptions ApplyPerformancePresets(LocalPilot.Settings.PerformanceMode mode)
         {
             var options = new OllamaOptions();
@@ -537,7 +459,7 @@ Example:
                     break;
                 case LocalPilot.Settings.PerformanceMode.HighAccuracy:
                     options.NumCtx = 16384; 
-                    options.RepeatPenalty = 1.25; // Stronger penalty for greedy sampling
+                    options.RepeatPenalty = 1.25;
                     options.TopP = 0.8;
                     options.TopK = 20;
                     break;
@@ -550,6 +472,114 @@ Example:
                     break;
             }
             return options;
+        }
+
+        // ── IMPLICIT CONTEXT PIPELINE ──────────────────────────────────────────
+
+        private async Task<string> GetUnifiedContextAsync(string solutionPath)
+        {
+            var sb = new System.Text.StringBuilder();
+
+            // 1. Diagnostics (Errors/Warnings)
+            string diags = await GetVisibleDiagnosticsAsync();
+            if (!string.IsNullOrEmpty(diags))
+            {
+                sb.AppendLine("## ACTIVE DIAGNOSTICS (ERROR LIST)");
+                sb.AppendLine(diags);
+                sb.AppendLine();
+            }
+
+            // 2. Git State
+            string gitState = await GetGitStateAsync(solutionPath);
+            if (!string.IsNullOrEmpty(gitState))
+            {
+                sb.AppendLine("## GIT STATE");
+                sb.AppendLine(gitState);
+                sb.AppendLine();
+            }
+
+            return sb.ToString();
+        }
+
+        private async Task<string> GetVisibleDiagnosticsAsync()
+        {
+            try
+            {
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                var dte = Microsoft.VisualStudio.Shell.Package.GetGlobalService(typeof(global::EnvDTE.DTE)) as global::EnvDTE80.DTE2;
+                if (dte == null) return null;
+
+                var items = dte.ToolWindows.ErrorList.ErrorItems;
+                if (items.Count == 0) return null;
+
+                var sb = new System.Text.StringBuilder();
+                int count = 0;
+                for (int i = 1; i <= items.Count; i++)
+                {
+                    var item = items.Item(i);
+                    // Only show Errors (not warnings/info) to save tokens (1 = vsBuildErrorLevelHigh)
+                    if ((int)item.ErrorLevel == 1)
+                    {
+                        sb.AppendLine($"[ERROR] {item.Description} (at {Path.GetFileName(item.FileName)}:{item.Line})");
+                        count++;
+                        if (count >= 10) break; 
+                    }
+                }
+                return sb.ToString();
+            }
+            catch { return null; }
+        }
+
+        private async Task<string> GetGitStateAsync(string root)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(root) || !Directory.Exists(Path.Combine(root, ".git"))) return null;
+
+                var startInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "git",
+                    Arguments = "status --short",
+                    WorkingDirectory = root,
+                    RedirectStandardOutput = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+
+                using (var proc = System.Diagnostics.Process.Start(startInfo))
+                {
+                    string output = await proc.StandardOutput.ReadToEndAsync();
+                    if (!string.IsNullOrWhiteSpace(output))
+                        return $"Modified files:\n{output.Trim()}";
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        private async Task ShowDiffAsync(string originalPath, string newContent)
+        {
+            try
+            {
+                if (!File.Exists(originalPath)) return;
+
+                string tempDir = Path.Combine(Path.GetTempPath(), "LocalPilot_Previews");
+                if (!Directory.Exists(tempDir)) Directory.CreateDirectory(tempDir);
+                
+                string tempPath = Path.Combine(tempDir, "Preview_" + Path.GetFileName(originalPath));
+                File.WriteAllText(tempPath, newContent);
+                
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                
+                // Use native DTE command to ensure compatibility across VS versions
+                var dte = Microsoft.VisualStudio.Shell.Package.GetGlobalService(typeof(global::EnvDTE.DTE)) as global::EnvDTE80.DTE2;
+                if (dte != null)
+                {
+                    // Tools.DiffFiles "file1" "file2"
+                    dte.ExecuteCommand("Tools.DiffFiles", $"\"{originalPath}\" \"{tempPath}\"");
+                }
+            }
+            catch { }
         }
     }
 }
