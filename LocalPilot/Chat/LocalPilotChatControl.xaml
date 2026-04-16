@@ -64,35 +64,55 @@
             </Setter>
         </Style>
 
-        <!-- ═══ Ghost Icon Button ═══ -->
+        <!-- ═══ Ghost Icon Button (Sexy & Professional) ═══ -->
         <Style x:Key="IconButtonStyle" TargetType="Button">
-            <Setter Property="Background"      Value="{DynamicResource LpWindowBgBrush}"/>
-            <Setter Property="BorderBrush"     Value="{DynamicResource LpMenuBorderBrush}"/>
-            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Background"      Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Foreground"      Value="{DynamicResource LpMutedFgBrush}"/>
             <Setter Property="Cursor"          Value="Hand"/>
-            <Setter Property="Width"           Value="32"/>
-            <Setter Property="Height"          Value="30"/>
+            <Setter Property="Width"           Value="22"/>
+            <Setter Property="Height"          Value="22"/>
+            <Setter Property="Margin"          Value="0,0,2,0"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
                         <Border x:Name="Bd"
-                                Background="{TemplateBinding Background}"
-                                BorderBrush="{TemplateBinding BorderBrush}"
-                                BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="6">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                Background="Transparent"
+                                CornerRadius="4">
+                            <ContentPresenter x:Name="Cp" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="2">
+                                <ContentPresenter.RenderTransform>
+                                    <ScaleTransform x:Name="IconScale" ScaleX="1" ScaleY="1" CenterX="12" CenterY="12"/>
+                                </ContentPresenter.RenderTransform>
+                            </ContentPresenter>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="Bd" Property="Background" Value="{DynamicResource LpHoverBgBrush}"/>
                                 <Setter Property="Foreground" Value="{DynamicResource LpWindowFgBrush}"/>
+                                <Trigger.EnterActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="IconScale" Storyboard.TargetProperty="ScaleX" To="1.1" Duration="0:0:0.1"/>
+                                            <DoubleAnimation Storyboard.TargetName="IconScale" Storyboard.TargetProperty="ScaleY" To="1.1" Duration="0:0:0.1"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.EnterActions>
+                                <Trigger.ExitActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="IconScale" Storyboard.TargetProperty="ScaleX" To="1.0" Duration="0:0:0.1"/>
+                                            <DoubleAnimation Storyboard.TargetName="IconScale" Storyboard.TargetProperty="ScaleY" To="1.0" Duration="0:0:0.1"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.ExitActions>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Bd" Property="Opacity" Value="0.82"/>
-                            </Trigger>
-                            <Trigger Property="IsEnabled" Value="False">
-                                <Setter TargetName="Bd" Property="Opacity" Value="0.5"/>
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.7"/>
+                                <Setter TargetName="Cp" Property="RenderTransform">
+                                    <Setter.Value>
+                                        <ScaleTransform ScaleX="0.95" ScaleY="0.95" CenterX="14" CenterY="14"/>
+                                    </Setter.Value>
+                                </Setter>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -193,30 +213,104 @@
             <Setter Property="Opacity"    Value="0.8"/>
         </Style>
 
-        <!-- ── Send Button (Primary Composer Action) ─────────────────────── -->
-        <Style x:Key="LpSendButtonStyle" TargetType="Button" BasedOn="{StaticResource LpButtonStyle}">
+        <!-- ── Send Button (Premium Glow Aesthetic) ─────────────────────── -->
+        <!-- 💼 Premium Work Summary Styles -->
+        <Style x:Key="WorkSummaryHeaderStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="4,6"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="border" Background="{TemplateBinding Background}" CornerRadius="4">
+                            <ContentPresenter />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="{DynamicResource LpMenuBorderBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="WorkRowStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="24,4,8,4"/> <!-- Indented for hierarchy -->
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="border" Background="{TemplateBinding Background}" CornerRadius="4">
+                            <ContentPresenter />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="border" Property="Background" Value="{DynamicResource LpMenuBorderBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- 🚀 Updated Send/Action Styles -->
+        <Style x:Key="LpSendButtonStyle" TargetType="Button">
             <Setter Property="Background" Value="{DynamicResource LpAntigravityBlue}"/>
             <Setter Property="Foreground" Value="White"/>
-            <Setter Property="Width" Value="34"/>
-            <Setter Property="Height" Value="30"/>
-            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Width" Value="22"/>
+            <Setter Property="Height" Value="22"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
                         <Border x:Name="Bd"
                                 Background="{TemplateBinding Background}"
-                                CornerRadius="7">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                CornerRadius="11"> <!-- Perfect Circle -->
+                            <ContentPresenter x:Name="Cp" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="2">
+                                 <ContentPresenter.RenderTransform>
+                                    <ScaleTransform x:Name="SendScale" ScaleX="1" ScaleY="1" CenterX="14" CenterY="14"/>
+                                </ContentPresenter.RenderTransform>
+                            </ContentPresenter>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Opacity" Value="0.92"/>
+                                <Setter TargetName="Bd" Property="Opacity" Value="1.0"/>
+                                <Setter TargetName="Bd" Property="Background" Value="#3a96ff"/> <!-- Slightly brighter on hover -->
+                                <Trigger.EnterActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="SendScale" Storyboard.TargetProperty="ScaleX" To="1.08" Duration="0:0:0.12"/>
+                                            <DoubleAnimation Storyboard.TargetName="SendScale" Storyboard.TargetProperty="ScaleY" To="1.08" Duration="0:0:0.12"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.EnterActions>
+                                <Trigger.ExitActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="SendScale" Storyboard.TargetProperty="ScaleX" To="1.0" Duration="0:0:0.12"/>
+                                            <DoubleAnimation Storyboard.TargetName="SendScale" Storyboard.TargetProperty="ScaleY" To="1.0" Duration="0:0:0.12"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.ExitActions>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Bd" Property="Opacity" Value="0.82"/>
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.8"/>
+                                <Setter TargetName="Cp" Property="RenderTransform">
+                                    <Setter.Value>
+                                        <ScaleTransform ScaleX="0.94" ScaleY="0.94" CenterX="16" CenterY="16"/>
+                                    </Setter.Value>
+                                </Setter>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
-                                <Setter TargetName="Bd" Property="Opacity" Value="0.5"/>
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.4"/>
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource LpMutedFgBrush}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -280,7 +374,31 @@
                                 <Setter TargetName="Bd" Property="Opacity" Value="0.82"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
-                                <Setter TargetName="Bd" Property="Opacity" Value="0.5"/>
+                                <Setter Property="Opacity" Value="0.5"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="LpModeButtonStyle" TargetType="Button" BasedOn="{StaticResource LpButtonStyle}">
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="BorderBrush"     Value="{DynamicResource LpMenuBorderBrush}"/>
+            <Setter Property="Padding"         Value="6,2"/>
+            <Setter Property="Background"      Value="Transparent"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="12">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource LpHoverBgBrush}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -319,6 +437,7 @@
                                FontSize="13" FontWeight="SemiBold"
                                Foreground="{DynamicResource LpWindowFgBrush}"
                                Margin="8,0,0,0" VerticalAlignment="Center"/>
+
                 </StackPanel>
 
                 <!-- Right: icon buttons -->
@@ -359,7 +478,7 @@
                 Background="{DynamicResource LpMenuBgBrush}"
                 BorderBrush="{DynamicResource LpMenuBorderBrush}"
                 BorderThickness="0,1,0,0"
-                Padding="14,12,14,14">
+                Padding="14,10,14,6">
             <StackPanel>
 
                 <!-- Agent status row — inline, minimal -->
@@ -494,26 +613,26 @@
                     <TextBox x:Name="TxtInput"
                              Style="{StaticResource ChatInputStyle}"
                              MinHeight="44" MaxHeight="160"
-                             Padding="12,12,85,12"
+                             Padding="12,12,65,12"
                              AcceptsReturn="True"
                              TextWrapping="Wrap"
                              VerticalContentAlignment="Top"
                              PreviewKeyDown="TxtInput_PreviewKeyDown"
                              FontSize="13"/>
 
-                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,8,8">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,2,2">
                         <!-- Quick Actions Left of Send -->
                         <Button x:Name="BtnQuickActions"
                                 Style="{StaticResource IconButtonStyle}"
                                 ToolTip="Quick Actions"
                                 Click="BtnQuickActions_Click"
-                                Margin="0,0,6,0">
-                            <Path Data="M7,2V13H10V22L17,10H13L17,2H7Z"
-                                  Fill="{DynamicResource LpAntigravityBlue}"
-                                  Width="13" Height="13"
-                                  Stretch="Uniform"
-                                  VerticalAlignment="Center"
-                                  HorizontalAlignment="Center"/>
+                                Margin="0,0,1,1"> 
+                            <TextBlock Text="&#xE945;" 
+                                       FontFamily="Segoe MDL2 Assets" 
+                                       FontSize="10" 
+                                       Foreground="{DynamicResource LpAntigravityBlue}"
+                                       VerticalAlignment="Center"
+                                       HorizontalAlignment="Center"/>
                             <Button.ContextMenu>
                                 <ContextMenu x:Name="QuickActionsMenu" Style="{StaticResource ThemedContextMenuStyle}">
                                     <MenuItem x:Name="MenuExplain" Header="Explain Code" Tag="explain" Click="MenuQuickAction_Click" Style="{StaticResource ThemedMenuItemStyle}">
@@ -537,16 +656,17 @@
                                 </ContextMenu>
                             </Button.ContextMenu>
                         </Button>
-
+                        
                         <!-- Send Button -->
                         <Button x:Name="BtnSend"
                                 Style="{StaticResource LpSendButtonStyle}"
                                 Click="BtnSend_Click"
-                                ToolTip="Send (Enter)">
+                                ToolTip="Send (Enter)"
+                                Margin="1,0,3,1"> 
                             <Path x:Name="BtnSendIcon"
                                   Data="M3.4,20.4l17.45-7.48c0.81-0.35,0.81-1.49,0-1.84L3.4,3.6C2.71,3.3,2,3.8,2,4.55l1.6,7.45L2,19.45C2,20.2,2.71,20.7,3.4,20.4z"
                                   Fill="White"
-                                  Width="15" Height="15"
+                                  Width="8" Height="8"
                                   Stretch="Uniform"
                                   VerticalAlignment="Center"
                                   HorizontalAlignment="Center"

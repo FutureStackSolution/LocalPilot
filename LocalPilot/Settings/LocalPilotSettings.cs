@@ -84,6 +84,7 @@ namespace LocalPilot.Settings
         public int    ChatHistoryMaxItems { get; set; } = 50;
 
         // ── Agent ─────────────────────────────────────────────────────────────
+        public bool   AutonomousModeEnabled    { get; set; } = true;
         public bool   RequireApprovalForWrites { get; set; } = true;
         public bool   EnableExplain      { get; set; } = true;
         public bool   EnableRefactor     { get; set; } = true;
@@ -92,7 +93,12 @@ namespace LocalPilot.Settings
         public bool   EnableFix          { get; set; } = true;
         public bool   EnableUnitTest     { get; set; } = true;
 
+        // ── Workspace Snapshot ────────────────────────────────────────────────
+        public bool   EnableProjectMap   { get; set; } = true;
+        public int    MaxMapSizeKB       { get; set; } = 600;
+
         // ── UI Preferences ────────────────────────────────────────────────────
+
         public string AccentColor        { get; set; } = "#7C6AF7";    // purple
         public bool   ShowStatusBar      { get; set; } = true;
         public bool   EnableLogging      { get; set; } = false;

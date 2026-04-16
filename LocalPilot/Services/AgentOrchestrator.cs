@@ -21,6 +21,7 @@ namespace LocalPilot.Services
         private readonly OllamaService _ollama;
         private readonly ToolRegistry _toolRegistry;
         private readonly ProjectContextService _projectContext;
+        private readonly ProjectMapService _projectMap;
 
         public event Action<AgentStatus, string> OnStatusUpdate;
         public event Action<ToolCallRequest> OnToolCallPending;
@@ -28,13 +29,18 @@ namespace LocalPilot.Services
         public event Action<string> OnMessageFragment;
         public event Action<string> OnMessageCompleted;
         public event Action<AgentPlan> OnPlanReady;
+        public event Action<Dictionary<string, string>> OnTurnModificationsPending; // 🚀 Antigravity Stage UX
+        
         public Func<ToolCallRequest, Task<bool>> RequestPermissionAsync;
 
-        public AgentOrchestrator(OllamaService ollama, ToolRegistry toolRegistry, ProjectContextService projectContext)
+        private Dictionary<string, string> _stagedChanges = new Dictionary<string, string>();
+
+        public AgentOrchestrator(OllamaService ollama, ToolRegistry toolRegistry, ProjectContextService projectContext, ProjectMapService projectMap)
         {
             _ollama = ollama;
             _toolRegistry = toolRegistry;
             _projectContext = projectContext;
+            _projectMap = projectMap;
         }
 
         /// <summary>
@@ -67,56 +73,106 @@ namespace LocalPilot.Services
             _toolRegistry.WorkspaceRoot = solutionPath;
             string toolList = string.Join("\n", _toolRegistry.GetAllTools().Select(t => $"- {t.Name}: {t.Description}\n  Parameters: {t.ParameterSchema}"));
 
-            var systemPrompt = $@"You are LocalPilot Agent Mode, a highly capable autonomous coding assistant inside Visual Studio.
-WORKSPACE ROOT: {solutionPath}
+            var systemPrompt = $@"You are LocalPilot, an elite AI developer inside Visual Studio.
+WORKSPACE: {solutionPath}
 
-### STEP 1 — PLAN (REQUIRED ON FIRST TURN ONLY)
-Before doing any work, output a short, human-friendly plan using EXACTLY this format:
+### STRATEGY
+1. **Parallelize**: Call multiple 'read_file' or 'grep_search' tools in one turn to gather context faster.
+2. **Verify**: Always read a file before editing it.
+3. **Accuracy**: Never guess paths. Use 'workspace_map' or 'grep_search' first.
+4. **No Hallucination**: If you don't find a symbol, use 'list_directory'.
 
-Steps:
-1. <Bold label>: brief description of first action
-2. <Bold label>: brief description of second action
-...
-
-Then add a blank line and begin executing.
-Do NOT repeat the plan on subsequent turns.
-
-### OPERATIONAL RULES
-1. **THINK BEFORE ACTING**: Use a <thought> block to deliberate on the context, potential pitfalls, and your next move.
-2. **FOCUS ON THE TASK**: Your primary goal is to perform the requested edit correctly.
-3. **READ BEFORE WRITE**: Always 'read_file' to get the latest content before performing a 'replace_text'.
-4. **VERIFY BEFORE MODIFYING**: If you are unsure where a symbol is defined, use 'grep_search'.
-5. **INTELLIGENT RECOVERY**: If 'read_file' fails (path not found), use 'list_directory' to explore and find the correct path.
-6. **NO HALLUCINATIONS**: Never assume a file exists or an API is available without evidence.
-7. **CITATIONS**: Always cite your sources using the [source: Filename.cs] format when referencing code from the project snippets.
-8. **AMBIGUITY**: If the task is unclear, ask the user for clarification instead of guessing.
-
-### AVAILABLE TOOLS
-{toolList}
-
-### RESPONSE FORMAT
-For the FIRST turn: output the Steps plan, then a <thought> block, then tool call(s).
-For ALL turns: Provide your tool call(s) in a single ```json block.
-The content MUST be a JSON array of objects with ""name"" and ""arguments"".
+### TOOL CALL FORMAT
+To use tools, return a JSON array of tool calls. You can call MULTIPLE tools at once for parallel execution.
+Always include a <thought> block before your tool calls.
 
 Example:
-Steps:
-1. **Read file**: Read Calculator.cs to see the current Add method.
-2. **Update method**: Rename Add to Sum.
-
-<thought>
-I need to examine Calculator.cs first to ensure I have the exact content for replacement.
-</thought>
+<thought>I need to read the class definition and its implementation.</thought>
 ```json
 [
-  {{
-    ""name"": ""read_file"",
-    ""arguments"": {{ ""path"": ""Calculator.cs"" }}
-  }}
+  {{ ""name"": ""read_file"", ""arguments"": {{ ""path"": ""Helper.cs"" }} }},
+  {{ ""name"": ""read_file"", ""arguments"": {{ ""path"": ""Processor.cs"" }} }}
 ]
-```";
+```
+";
+
+            string projectMapContent = "";
+            if (LocalPilot.Settings.LocalPilotSettings.Instance.EnableProjectMap)
+            {
+                OnStatusUpdate?.Invoke(AgentStatus.Thinking, "Analyzing project structure...");
+                projectMapContent = await _projectMap.GenerateProjectMapAsync(solutionPath, 
+                    maxTotalBytes: LocalPilot.Settings.LocalPilotSettings.Instance.MaxMapSizeKB * 1024);
+                
+            }
 
             var messages = new List<ChatMessage> { new ChatMessage { Role = "system", Content = systemPrompt } };
+            
+            // Context Injection: Fetch active selection for slash commands
+            string activeSelection = "";
+            string activeFilePath = "";
+            try
+            {
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                var activeDoc = await VS.Documents.GetActiveDocumentViewAsync();
+                if (activeDoc?.TextView != null)
+                {
+                    activeFilePath = activeDoc.FilePath;
+                    activeSelection = activeDoc.TextView.Selection.SelectedSpans.Count > 0 
+                                      ? activeDoc.TextView.Selection.SelectedSpans[0].GetText() 
+                                      : "";
+                    
+                    // Fallback to full file if no selection but we need a code block
+                    if (string.IsNullOrWhiteSpace(activeSelection))
+                    {
+                        activeSelection = activeDoc.TextBuffer.CurrentSnapshot.GetText();
+                    }
+                }
+            }
+            catch { }
+
+            // Handle Slash Commands
+            string processedTask = taskDescription.Trim();
+            if (processedTask.StartsWith("/") && !processedTask.Contains(" "))
+            {
+                // Simple command without arguments: auto-inject selection
+                var cmd = processedTask.ToLowerInvariant();
+                var settings = LocalPilot.Settings.LocalPilotSettings.Instance;
+
+                if (cmd == "/explain")       processedTask = settings.ExplainPrompt.Replace("{codeBlock}", activeSelection);
+                else if (cmd == "/fix")      processedTask = settings.FixPrompt.Replace("{codeBlock}", activeSelection);
+                else if (cmd == "/test")     processedTask = settings.TestPrompt.Replace("{codeBlock}", activeSelection);
+                else if (cmd == "/refactor")  processedTask = settings.RefactorPrompt.Replace("{codeBlock}", activeSelection);
+                else if (cmd == "/review")    processedTask = settings.ReviewPrompt.Replace("{codeBlock}", activeSelection);
+                else if (cmd == "/doc" || cmd == "/document") processedTask = settings.DocumentPrompt.Replace("{codeBlock}", activeSelection);
+                else if (cmd == "/map")      
+                {
+                    OnStatusUpdate?.Invoke(AgentStatus.Thinking, "Updating Project Map...");
+                    await _projectMap.GenerateProjectMapAsync(solutionPath, maxTotalBytes: settings.MaxMapSizeKB * 1024);
+                    processedTask = "Please provide an executive summary of the project structure based on the updated map.";
+                }
+            }
+            else if (processedTask.StartsWith("/"))
+            {
+                // Command with arguments: use the arguments as the context
+                var parts = processedTask.Split(new[] { ' ' }, 2);
+                var cmd = parts[0].ToLowerInvariant();
+                var args = parts[1].Trim();
+                var settings = LocalPilot.Settings.LocalPilotSettings.Instance;
+
+                if (cmd == "/explain")       processedTask = settings.ExplainPrompt.Replace("{codeBlock}", args);
+                else if (cmd == "/fix")      processedTask = settings.FixPrompt.Replace("{codeBlock}", args);
+                else if (cmd == "/test")     processedTask = settings.TestPrompt.Replace("{codeBlock}", args);
+                else if (cmd == "/refactor")  processedTask = settings.RefactorPrompt.Replace("{codeBlock}", args);
+                else if (cmd == "/review")    processedTask = settings.ReviewPrompt.Replace("{codeBlock}", args);
+                else if (cmd == "/doc" || cmd == "/document") processedTask = settings.DocumentPrompt.Replace("{codeBlock}", args);
+            }
+
+            if (!string.IsNullOrEmpty(projectMapContent))
+            {
+                messages.Add(new ChatMessage { Role = "user", Content = projectMapContent });
+            }
+
+            messages.Add(new ChatMessage { Role = "user", Content = processedTask });
 
             // Fetch initial grounding context from the project
             string groundingContext = await _projectContext.SearchContextAsync(_ollama, taskDescription, topN: 5);
@@ -124,6 +180,7 @@ I need to examine Calculator.cs first to ensure I have the exact content for rep
             {
                 messages.Add(new ChatMessage { Role = "system", Content = groundingContext });
             }
+
 
             // Enterprise Intelligence: Inject Active Document context for better grounding
             try
@@ -143,18 +200,19 @@ I need to examine Calculator.cs first to ensure I have the exact content for rep
             }
             catch { }
 
-            // User task MUST be the final message for recency bias
-            messages.Add(new ChatMessage { Role = "user", Content = $"Task: {taskDescription}" });
+            // User task is already added as 'processedTask' above for recency after the map.
+
 
             bool isDone = false;
+            bool planEmitted = false;
             int maxSteps = 20;
             int step = 0;
-            bool planEmitted = false;
+            _stagedChanges.Clear();
 
             while (!isDone && step < maxSteps)
             {
                 step++;
-                OnStatusUpdate?.Invoke(AgentStatus.Thinking, $"Reasoning step {step}...");
+                OnStatusUpdate?.Invoke(AgentStatus.Thinking, string.Empty);
 
                 // 1. Get LLM reasoning + optional tool call
                 var responseBuilder = new System.Text.StringBuilder();
@@ -222,104 +280,63 @@ I need to examine Calculator.cs first to ensure I have the exact content for rep
                 var toolCalls = ParseAllToolCalls(response);
                 if (toolCalls.Any())
                 {
-                    var seenToolCalls = new HashSet<string>(StringComparer.Ordinal);
-                    foreach (var toolCall in toolCalls)
+                    OnStatusUpdate?.Invoke(AgentStatus.Executing, $"Running {toolCalls.Count} tools...");
+
+                    var toolTasks = toolCalls.Select(async toolCall =>
                     {
-                        if (ct.IsCancellationRequested) break;
-
-                        string signature = BuildToolSignature(toolCall);
-                        if (!seenToolCalls.Add(signature))
-                        {
-                            LocalPilotLogger.Log($"[Agent] Skipping duplicate tool call in same turn: {toolCall.Name}");
-                            continue;
-                        }
-
-                        OnStatusUpdate?.Invoke(AgentStatus.Executing, $"Agent executing tool: {toolCall.Name}");
-
-                        // PAUSE FOR APPROVAL if it's a 'Write' tool and setting is enabled
-                        if (LocalPilot.Settings.LocalPilotSettings.Instance.RequireApprovalForWrites && IsWriteTool(toolCall.Name))
-                        {
-                            OnStatusUpdate?.Invoke(AgentStatus.Thinking, $"Waiting for approval to run {toolCall.Name}...");
-                            if (RequestPermissionAsync != null)
-                            {
-                                bool approved = await RequestPermissionAsync(toolCall);
-                                if (!approved)
-                                {
-                                    OnStatusUpdate?.Invoke(AgentStatus.Idle, "User rejected tool execution. Task cancelled.");
-                                    return; // Stop the whole agent loop
-                                }
-                            }
-                        }
+                        if (ct.IsCancellationRequested) return;
 
                         OnToolCallPending?.Invoke(toolCall);
-
-                        ToolResponse toolResult = null;
-                        int attempts = 0;
-                        const int maxAttempts = 3;
-                        bool shouldRetry;
-                        do
+                        
+                        // Track changes instead of immediate commit
+                        if (toolCall.Name == "write_to_file" || toolCall.Name == "replace_file_content")
                         {
-                            attempts++;
-                            toolResult = await _toolRegistry.ExecuteToolAsync(toolCall.Name, toolCall.Arguments, ct);
-                            if (!toolResult.IsError || ct.IsCancellationRequested) break;
-
-                            shouldRetry = attempts < maxAttempts && IsTransientToolError(toolResult.Output);
-                            if (shouldRetry)
+                            var target = toolCall.Arguments?["TargetFile"]?.ToString();
+                            var code = toolCall.Arguments?["CodeContent"]?.ToString() ?? toolCall.Arguments?["ReplacementContent"]?.ToString();
+                            if (!string.IsNullOrEmpty(target) && !string.IsNullOrEmpty(code))
                             {
-                                OnStatusUpdate?.Invoke(AgentStatus.Thinking, $"Tool failed (attempt {attempts}/{maxAttempts}). Retrying...");
-                                await Task.Delay(500, ct);
+                                lock (_stagedChanges) _stagedChanges[target] = code;
                             }
                         }
-                        while (attempts < maxAttempts && toolResult != null && toolResult.IsError && !ct.IsCancellationRequested && shouldRetry);
 
-                        if (toolResult != null && toolResult.IsError)
-                        {
-                            var retryInfo = attempts > 1 ? $" after {attempts} attempt(s)" : string.Empty;
-                            OnStatusUpdate?.Invoke(AgentStatus.Thinking, $"Tool '{toolCall.Name}' failed{retryInfo}.");
-                        }
+                        var result = await _toolRegistry.ExecuteToolAsync(toolCall.Name, toolCall.Arguments, ct);
+                        OnToolCallCompleted?.Invoke(toolCall, result);
 
-                        OnToolCallCompleted?.Invoke(toolCall, toolResult);
-
-                        // Add tool result back as a system observation
-                        string output = toolResult.Output ?? string.Empty;
+                        string output = result.Output ?? string.Empty;
+                        if (output.Length > 8000) output = output.Substring(0, 8000) + "... [Truncated]";
                         
-                        // Intelligent Truncation: Save context window for local models
-                        if (output.Length > 8000) 
+                        lock (messages)
                         {
-                            output = output.Substring(0, 8000) + "... [Output heavily truncated]";
+                            messages.Add(new ChatMessage
+                            {
+                                Role = "user",
+                                Content = $"[Observation: Tool '{toolCall.Name}' executed]\nResult:\n{output}"
+                            });
                         }
+                    });
 
-                        messages.Add(new ChatMessage
-                        {
-                            Role = "user",
-                            Content = $"[Observation: Tool '{toolCall.Name}' executed]\nResult:\n{output}"
-                        });
-                    }
+                    await Task.WhenAll(toolTasks);
                 }
                 else
                 {
-                    // No tool call means the agent has provided a final answer or is just talking
                     isDone = true;
-
-                    if (response.ToLower().Contains("failed") || response.ToLower().Contains("unable to"))
-                    {
-                        OnStatusUpdate?.Invoke(AgentStatus.Completed, "Task stopped (check response).");
-                    }
-                    else
-                    {
-                        OnStatusUpdate?.Invoke(AgentStatus.Completed, "Task finished.");
-                    }
+                    OnStatusUpdate?.Invoke(AgentStatus.Completed, "Task finished.");
                 }
+            }
 
+            // Signal completion with pending file modifications for UI Review
+            if (_stagedChanges.Count > 0)
+            {
+                OnTurnModificationsPending?.Invoke(new Dictionary<string, string>(_stagedChanges));
             }
 
             if (!isDone && !ct.IsCancellationRequested && step >= maxSteps)
             {
-                OnStatusUpdate?.Invoke(AgentStatus.Completed, "Task stopped at maximum reasoning steps.");
+                OnStatusUpdate?.Invoke(AgentStatus.Completed, "Task stopped at maximum step limit.");
             }
-            }
-            catch (OperationCanceledException)
-            {
+        }
+        catch (OperationCanceledException)
+        {
                 OnStatusUpdate?.Invoke(AgentStatus.Idle, "Task cancelled by user.");
             }
             catch (Exception ex)

@@ -15,10 +15,12 @@ namespace LocalPilot.Services
         public string FilePath { get; set; }
         public string Content { get; set; }
         public float[] Vector { get; set; }
+        public DateTime LastModified { get; set; } // 🚀 For Smart Delta Sync
     }
 
     /// <summary>
     /// Local RAG Service: Indexes the Visual Studio solution and provides semantic search.
+    /// Supports persistence to disk in the .localpilot directory.
     /// </summary>
     public class ProjectContextService
     {
@@ -28,6 +30,7 @@ namespace LocalPilot.Services
         private readonly List<CodeChunk> _index = new List<CodeChunk>();
         private readonly SemaphoreSlim _indexLock = new SemaphoreSlim(1, 1);
         private DateTime _lastIndexTime = DateTime.MinValue;
+        private DateTime _lastDiskSaveTime = DateTime.MinValue;
 
         private ProjectContextService() { }
 
@@ -40,16 +43,24 @@ namespace LocalPilot.Services
             if (!await _indexLock.WaitAsync(0)) return;
             try
             {
-                LocalPilotLogger.Log("[Index] Starting DTE-based background scan...");
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                
-                // 🚦 Professional Status Bar Feedback
-                await VS.StatusBar.ShowMessageAsync("LocalPilot: Indexing solution context...");
+                var solution = await VS.Solutions.GetCurrentSolutionAsync();
+                if (solution == null || string.IsNullOrEmpty(solution.FullPath)) return;
+                string solutionRoot = Path.GetDirectoryName(solution.FullPath);
+
+                // 1. Load existing brain from disk if memory is empty
+                if (_index.Count == 0)
+                {
+                    await LoadIndexAsync(solutionRoot);
+                }
+
+                LocalPilotLogger.Log("[Index] Starting differential brain synchronization...");
+                await VS.StatusBar.ShowMessageAsync("LocalPilot: Synchronizing brain context...");
 
                 var dte = Package.GetGlobalService(typeof(global::EnvDTE.DTE)) as global::EnvDTE.DTE;
                 if (dte == null || dte.Solution == null) return;
 
-                _index.Clear();
+                int initialCount = _index.Count;
                 foreach (global::EnvDTE.Project project in dte.Solution.Projects)
                 {
                     if (project == null) continue;
@@ -57,21 +68,62 @@ namespace LocalPilot.Services
                 }
 
                 _lastIndexTime = DateTime.Now;
-                LocalPilotLogger.Log($"[Index] Finished! Solution indexed with {_index.Count} semantic chunks.");
-                
-                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                await VS.StatusBar.ShowMessageAsync("LocalPilot: Indexing complete! Semantic memory active.");
+
+                // 2. Persist updated brain if changes were made
+                if (_index.Count > initialCount || _lastIndexTime > _lastDiskSaveTime)
+                {
+                    await SaveIndexAsync(solutionRoot);
+                }
+
+                LocalPilotLogger.Log($"[Index] Finished! Brain active with {_index.Count} semantic chunks.");
+                await VS.StatusBar.ShowMessageAsync("LocalPilot: Brain synchronized and persistent.");
             }
             catch (Exception ex)
             {
-                LocalPilotLogger.LogError("[Index] Failed to process solution context (DTE mode)", ex);
-                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                await VS.StatusBar.ShowMessageAsync("LocalPilot: Indexing failed. Check logs.");
+                LocalPilotLogger.LogError("[Index] Failed to synchronize brain", ex);
             }
             finally
             {
                 _indexLock.Release();
             }
+        }
+
+        private async Task SaveIndexAsync(string root)
+        {
+            try
+            {
+                string dir = Path.Combine(root, ".localpilot");
+                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                
+                string path = Path.Combine(dir, "index.json");
+                string json = Newtonsoft.Json.JsonConvert.SerializeObject(_index);
+                await Task.Run(() => File.WriteAllText(path, json));
+                _lastDiskSaveTime = DateTime.Now;
+                LocalPilotLogger.Log($"[Index] Persisted brain to {path}");
+            }
+            catch (Exception ex) { LocalPilotLogger.LogError("[Index] Save failed", ex); }
+        }
+
+        private async Task LoadIndexAsync(string root)
+        {
+            try
+            {
+                string path = Path.Combine(root, ".localpilot", "index.json");
+                if (File.Exists(path))
+                {
+                    string json = await Task.Run(() => File.ReadAllText(path));
+                    var loaded = Newtonsoft.Json.JsonConvert.DeserializeObject<List<CodeChunk>>(json);
+                    if (loaded != null)
+                    {
+                        _index.Clear();
+                        _index.AddRange(loaded);
+                        _lastIndexTime = File.GetLastWriteTime(path);
+                        _lastDiskSaveTime = _lastIndexTime;
+                        LocalPilotLogger.Log($"[Index] Loaded persistent brain ({_index.Count} chunks)");
+                    }
+                }
+            }
+            catch (Exception ex) { LocalPilotLogger.LogError("[Index] Load failed", ex); }
         }
 
         private async Task ScanProjectItemsAsync(global::EnvDTE.ProjectItems items, OllamaService ollama, CancellationToken ct)
@@ -82,13 +134,11 @@ namespace LocalPilot.Services
             {
                 if (ct.IsCancellationRequested) break;
 
-                // 1. Recurse into folders / projects
                 if (item.ProjectItems != null && item.ProjectItems.Count > 0)
                 {
                     await ScanProjectItemsAsync(item.ProjectItems, ollama, ct);
                 }
 
-                // 2. Process Files (Efficiently)
                 string fullPath = string.Empty;
                 try { fullPath = item.FileNames[1]; } catch { continue; }
 
@@ -97,7 +147,19 @@ namespace LocalPilot.Services
                 try
                 {
                     var fileInfo = new FileInfo(fullPath);
-                    if (fileInfo.Length > 512000) continue; // Skip files > 500KB to save memory/CPU
+                    if (fileInfo.Length > 512000) continue;
+
+                    // 🚀 SMART DELTA: Only update if the file has changed since it was last indexed
+                    var existing = _index.FirstOrDefault(c => c.FilePath == item.Name);
+                    if (existing != null && fileInfo.LastWriteTime <= existing.LastModified)
+                    {
+                        continue; 
+                    }
+
+                    if (existing != null)
+                    {
+                        _index.RemoveAll(c => c.FilePath == item.Name);
+                    }
 
                     string content = File.ReadAllText(fullPath);
                     if (string.IsNullOrWhiteSpace(content)) continue;
@@ -108,20 +170,20 @@ namespace LocalPilot.Services
                         var vector = await ollama.GetEmbeddingsAsync(LocalPilotSettings.Instance.ChatModel, chunkText, ct);
                         if (vector != null)
                         {
-                            _index.Add(new CodeChunk { FilePath = Path.GetFileName(fullPath), Content = chunkText, Vector = vector });
+                            _index.Add(new CodeChunk { 
+                                FilePath = item.Name, 
+                                Content = chunkText, 
+                                Vector = vector, 
+                                LastModified = fileInfo.LastWriteTime 
+                            });
                         }
-                        
-                        // Adaptive Throttling: Let the CPU breathe between AI requests
-                        await Task.Delay(100, ct); 
+                        await Task.Delay(50, ct); 
                     }
                 }
-                catch { /* Silent skip for stability */ }
+                catch { }
             }
         }
 
-        /// <summary>
-        /// Searches the indexed solution for the top semantic matches to a user query.
-        /// </summary>
         public async Task<string> SearchContextAsync(OllamaService ollama, string query, int topN = 5)
         {
             if (string.IsNullOrWhiteSpace(query)) return string.Empty;
@@ -129,34 +191,25 @@ namespace LocalPilot.Services
             var queryVector = await ollama.GetEmbeddingsAsync(LocalPilotSettings.Instance.ChatModel, query);
             if (queryVector == null || _index.Count == 0) return string.Empty;
 
-            // 1. Semantic Similarity Match with Dynamic Boosting
             var results = _index
                 .Select(c => 
                 {
                     double score = CosineSimilarity(queryVector, c.Vector);
-                    
-                    // POWER BOOST: If the query mentions the filename, give it a massive priority bump (+0.4)
                     if (query.IndexOf(c.FilePath, StringComparison.OrdinalIgnoreCase) >= 0)
                     {
                         score += 0.4; 
                     }
-                        
                     return new { Chunk = c, Score = score };
                 })
-                .Where(r => r.Score > 0.35) // Optimized sensitivity threshold (V2.0)
+                .Where(r => r.Score > 0.35)
                 .OrderByDescending(r => r.Score)
                 .Take(topN)
                 .ToList();
 
-            if (!results.Any()) 
-            {
-                // Hallucination Guard: Inform the AI that it needs to be careful
-                return "\n<context_warning>\n[ZERO_LOCAL_CONTEXT_MATCHES]\nNOTE: I could not find any specific code in the current project that relates to this query. Please answer based on general knowledge but warn the user that this feature was not found in their solution. If appropriate, use 'list_directory' to explore the project manually.\n</context_warning>\n";
-            }
+            if (!results.Any()) return string.Empty;
 
             var sb = new System.Text.StringBuilder();
             sb.AppendLine($"\n<grounding_context last_indexed=\"{_lastIndexTime:yyyy-MM-dd HH:mm:ss}\">");
-            sb.AppendLine("The following snippets from the current solution are semantically relevant to the task (use for grounding):");
             foreach (var r in results)
             {
                 int lineCount = r.Chunk.Content.Count(c => c == '\n') + 1;
@@ -171,13 +224,12 @@ namespace LocalPilot.Services
         private bool IsRelevantFile(string path)
         {
             var ext = Path.GetExtension(path).ToLower();
-            string[] allowed = { ".cs", ".xaml", ".json", ".xml", ".css", ".js", ".md", ".csproj", ".sln", ".slnx", ".vsixmanifest" };
+            string[] allowed = { ".cs", ".xaml", ".json", ".xml", ".css", ".js", ".md", ".csproj", ".sln", ".slnx" };
             return allowed.Contains(ext) && !path.Contains("\\obj\\") && !path.Contains("\\bin\\");
         }
 
         private List<string> ChunkContent(string path, string content)
         {
-            // Lightweight 50-line chunking for efficiency
             var lines = content.Split('\n');
             var chunks = new List<string>();
             for (int i = 0; i < lines.Length; i += 50)

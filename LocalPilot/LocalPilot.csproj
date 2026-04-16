@@ -59,6 +59,7 @@
     <Compile Include="Services\LocalPilotLogger.cs" />
     <Compile Include="Services\ProjectContextService.cs" />
     <Compile Include="Services\AgentOrchestrator.cs" />
+    <Compile Include="Services\ProjectMapService.cs" />
     <Compile Include="Services\ToolRegistry.cs" />
     <!-- Models -->
     <Compile Include="Models\AgentModels.cs" />
