@@ -81,17 +81,16 @@ namespace LocalPilot.Commands
             ThreadHelper.ThrowIfNotOnUIThread();
             _ = _package.JoinableTaskFactory.RunAsync(async () =>
             {
-                var win = await _package.ShowToolWindowAsync(
-                    typeof(LocalPilotChatWindow), 0, true, _package.DisposalToken);
+                await LocalPilotCommandRouter.Instance.OpenChatAsync();
             });
         }
 
-        private void ExplainCode(object sender, EventArgs e) => _ = OpenChatWithActionAsync("explain");
-        private void RefactorCode(object sender, EventArgs e) => _ = OpenChatWithActionAsync("refactor");
-        private void GenerateDoc(object sender, EventArgs e) => _ = OpenChatWithActionAsync("document");
-        private void ReviewCode(object sender, EventArgs e) => _ = OpenChatWithActionAsync("review");
-        private void FixCode(object sender, EventArgs e) => _ = OpenChatWithActionAsync("fix");
-        private void GenerateTest(object sender, EventArgs e) => _ = OpenChatWithActionAsync("test");
+        private void ExplainCode(object sender, EventArgs e) => _ = OpenChatWithCommandCapabilityAsync(CmdIdExplainCode);
+        private void RefactorCode(object sender, EventArgs e) => _ = OpenChatWithCommandCapabilityAsync(CmdIdRefactorCode);
+        private void GenerateDoc(object sender, EventArgs e) => _ = OpenChatWithCommandCapabilityAsync(CmdIdGenerateDoc);
+        private void ReviewCode(object sender, EventArgs e) => _ = OpenChatWithCommandCapabilityAsync(CmdIdReviewCode);
+        private void FixCode(object sender, EventArgs e) => _ = OpenChatWithCommandCapabilityAsync(CmdIdFixCode);
+        private void GenerateTest(object sender, EventArgs e) => _ = OpenChatWithCommandCapabilityAsync(CmdIdGenerateTest);
 
         private void OpenInlineChat(object sender, EventArgs e)
         {
@@ -110,57 +109,15 @@ namespace LocalPilot.Commands
             });
         }
 
-        private async Task OpenChatWithActionAsync(string action)
+        private Task OpenChatWithCommandCapabilityAsync(int commandId)
         {
-            LocalPilotLogger.Log($"[Commands] OpenChatWithActionAsync started for action: {action}");
-            
-            // 1. Capture context immediately on the original thread/context if possible
-            string selectedCode = string.Empty;
-            try
+            var capability = CapabilityCatalog.FromCommandId(commandId);
+            if (capability == null || !capability.IsEnabled(LocalPilotSettings.Instance))
             {
-                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                
-                // Primary: Modern Toolkit approach (usually more stable)
-                var docView = await VS.Documents.GetActiveDocumentViewAsync();
-                if (docView?.TextView?.Selection != null && docView.TextView.Selection.SelectedSpans.Count > 0)
-                {
-                    selectedCode = docView.TextView.Selection.SelectedSpans[0].GetText();
-                    if (!string.IsNullOrWhiteSpace(selectedCode))
-                        LocalPilotLogger.Log("[Commands] Captured code via Toolkit TextView");
-                }
-                
-                // Fallback: DTE Selection
-                if (string.IsNullOrWhiteSpace(selectedCode))
-                {
-                    var dte = await _package.GetServiceAsync(typeof(EnvDTE.DTE)) as EnvDTE.DTE;
-                    if (dte?.ActiveDocument?.Selection is EnvDTE.TextSelection sel && !string.IsNullOrWhiteSpace(sel.Text))
-                    {
-                        selectedCode = sel.Text;
-                        LocalPilotLogger.Log("[Commands] Captured code via DTE Selection");
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                LocalPilotLogger.LogError("Failed to capture code selection", ex);
+                return Task.CompletedTask;
             }
 
-            LocalPilotLogger.Log($"[Commands] Final captured code length: {selectedCode?.Length ?? 0}");
-
-            // 2. Ensure window is visible (This triggers Load events)
-            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-            var win = await _package.ShowToolWindowAsync(
-                typeof(LocalPilotChatWindow), 0, true, _package.DisposalToken)
-                as LocalPilotChatWindow;
-
-            // 3. Dispatch to control
-            if (win?.Content is LocalPilotChatControl ctrl)
-            {
-                // Force a small yield to let the window finish its own Load/Layout events 
-                // before we hammer it with a new AI request.
-                await Task.Delay(50).ConfigureAwait(true);
-                ctrl.FireQuickAction(action, selectedCode);
-            }
+            return LocalPilotCommandRouter.Instance.ExecuteQuickActionAsync(capability.Action);
         }
     }
 }

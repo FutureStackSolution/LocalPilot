@@ -48,6 +48,7 @@ namespace LocalPilot
 
             // Register all commands
             await LocalPilotCommands.InitializeAsync(this);
+            LocalPilotCommandRouter.Instance.Initialize(this);
             InlineChatOverlayManager.Instance.Initialize(this);
 
             // Auto-Index Project Context in background (v1.3)

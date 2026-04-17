@@ -29,8 +29,13 @@ namespace LocalPilot.Services
             });
         }
 
+        private DateTime _lastIndexTime = DateTime.MinValue;
         private void OnDocumentSaved(string filePath)
         {
+            // 🚀 THROTTLE ENGINE: Prevent "Saving Storm" from pinning the CPU
+            if ((DateTime.Now - _lastIndexTime).TotalMilliseconds < 2000) return;
+            _lastIndexTime = DateTime.Now;
+
             // Trigger background re-indexing of the saved file
             _ = Task.Run(async () => {
                 try {
@@ -51,11 +56,11 @@ namespace LocalPilot.Services
                 } catch { /* Silent fail for background indexing */ }
             });
         }
-        private static readonly string[] ExcludedDirs = {
+        private static readonly HashSet<string> ExcludedDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
             "bin", "obj", ".git", ".vs", "node_modules", "packages", "vendor", "dist", "build", "testresults", "artifacts", ".localpilot"
         };
 
-        private static readonly string[] AllowedExtensions = {
+        private static readonly HashSet<string> AllowedExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
             ".cs", ".js", ".ts", ".tsx", ".jsx", ".vue", ".svelte", ".py", ".go", ".rs", ".cpp", ".h", ".hpp", ".swift", ".java", ".kt", ".dart", ".rb", ".php", ".sh", ".ps1", ".sql", ".yml", ".yaml", ".json", ".xml", ".md", ".txt", ".tf", ".dockerfile", ".csproj", ".sln", ".slnx"
         };
 
@@ -139,16 +144,16 @@ namespace LocalPilot.Services
                     }
 
                     string block = $"\nFILE: {res.Path}{symbolSummary}\n{res.Content}\n---";
-                    byte[] b = Encoding.UTF8.GetBytes(block);
+                    int blockLength = Encoding.UTF8.GetByteCount(block);
                     
-                    if (currentBytes + b.Length > maxTotalBytes)
+                    if (currentBytes + blockLength > maxTotalBytes)
                     {
                         sb.AppendLine("\n[Snapshot truncated: context limit reached]");
                         break;
                     }
 
                     sb.Append(block);
-                    currentBytes += b.Length;
+                    currentBytes += blockLength;
                 }
 
                 sb.AppendLine("\n</PROJECT_MAP>");
@@ -202,8 +207,7 @@ namespace LocalPilot.Services
         private IEnumerable<FileInfo> GetProjectFiles(DirectoryInfo dir)
         {
             return dir.EnumerateFiles("*", SearchOption.AllDirectories)
-                .Where(f => !IsExcluded(f.FullName))
-                .Where(f => AllowedExtensions.Contains(f.Extension.ToLowerInvariant()))
+                .Where(f => !IsExcluded(f.FullName) && AllowedExtensions.Contains(f.Extension))
                 .OrderBy(f => f.Extension == ".sln" || f.Extension == ".csproj" ? 0 : 1)
                 .Take(400); 
         }
@@ -290,11 +294,11 @@ namespace LocalPilot.Services
             // 🚀 Lightning Fast Polyglot Indexer
             // Targets: Classes, Interfaces, Methods, Functions, Components (inc. Angular)
             var patterns = new[] {
-                @"(?:class|interface|struct|type|trait)\s+(?<name>[a-zA-Z_]\w*)", // Type declarations
-                @"@(?:Component|Injectable|Directive|NgModule|Pipe)\s*\(\s*\{", // Angular Decorators
-                @"(?:func|def|function)\s+(?<name>[a-zA-Z_]\w*)\s*\(", // Keyword functions
-                @"(?:export\s+)?(?:const|let|var)\s+(?<name>[a-zA-Z_]\w*)\s*[:=]\s*(?:\(.*\))\s*=>", // Arrow Functions / Components
-                @"(?:public|private|internal|protected|static|async|virtual)?\s+(?:(?<type>[a-zA-Z_][\w\<\>\[\]]*)\s+)?(?<name>[a-zA-Z_]\w*)\s*\((?<args>[^\)]*)\)\s*\{" // C-style Methods
+                @"(?<!\/\/\s*)(?:class|interface|struct|type|trait)\s+(?<name>[a-zA-Z_]\w*)", // Type declarations
+                @"(?<!\/\/\s*)@(?:Component|Injectable|Directive|NgModule|Pipe)\s*\(\s*\{", // Angular Decorators
+                @"(?<!\/\/\s*)(?:func|def|function)\s+(?<name>[a-zA-Z_]\w*)\s*\(", // Keyword functions
+                @"(?<!\/\/\s*)(?:export\s+)?(?:const|let|var)\s+(?<name>[a-zA-Z_]\w*)\s*[:=]\s*(?:\(.*\))\s*=>", // Arrow Functions 
+                @"(?<!\/\/\s*)(?:public|private|internal|protected|static|async|virtual)?\s+(?:(?<type>[a-zA-Z_][\w\<\>\[\]]*)\s+)?(?<name>[a-zA-Z_]\w*)\s*\((?<args>[^\)]*)\)\s*\{" // C-style Methods
             };
 
             foreach (var pattern in patterns)

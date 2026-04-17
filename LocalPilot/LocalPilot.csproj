@@ -63,10 +63,12 @@
     <Compile Include="Services\ProjectContextService.cs" />
     <Compile Include="Services\AgentOrchestrator.cs" />
     <Compile Include="Services\InlineChatOverlayManager.cs" />
+    <Compile Include="Services\LocalPilotCommandRouter.cs" />
     <Compile Include="Services\ProjectMapService.cs" />
     <Compile Include="Services\ToolRegistry.cs" />
     <Compile Include="Services\SymbolIndexService.cs" />
     <Compile Include="Services\PromptLoader.cs" />
+    <Compile Include="Services\CapabilityCatalog.cs" />
     <Compile Include="Services\ISemanticProvider.cs" />
     <Compile Include="Services\RoslynSemanticProvider.cs" />
     <Compile Include="Services\LspSemanticProvider.cs" />
@@ -91,6 +93,12 @@
     <Compile Include="Chat\LocalPilotChatControl.xaml.cs">
       <DependentUpon>LocalPilotChatControl.xaml</DependentUpon>
     </Compile>
+    <Compile Include="Chat\ViewModels\AgentTurnViewModel.cs" />
+    <Compile Include="Chat\ViewModels\AgentTurnCoordinator.cs" />
+    <Compile Include="Chat\ViewModels\AgentTurnLayoutBuilder.cs" />
+    <Compile Include="Chat\ViewModels\AgentUiRenderer.cs" />
+    <Compile Include="Chat\ViewModels\StagingPanelBuilder.cs" />
+    <Compile Include="Chat\ViewModels\ChatSessionViewModel.cs" />
     <Compile Include="UI\InlineChatOverlay.xaml.cs">
       <DependentUpon>InlineChatOverlay.xaml</DependentUpon>
     </Compile>

@@ -1,6 +1,7 @@
 using LocalPilot.Models;
 using LocalPilot.Services;
 using LocalPilot.Settings;
+using LocalPilot.Chat.ViewModels;
 using System.IO;
 using Microsoft.VisualStudio.PlatformUI;
 using Microsoft.VisualStudio.Shell;
@@ -38,6 +39,11 @@ namespace LocalPilot.Chat
         private StringBuilder _agentResponseSb = new StringBuilder();
         private readonly ProjectMapService _projectMap;
         private bool _isStreaming = false;
+        private readonly ChatSessionViewModel _sessionViewModel;
+        private readonly AgentTurnCoordinator _agentTurnCoordinator;
+        private readonly AgentUiRenderer _agentUiRenderer;
+        private readonly AgentTurnLayoutBuilder _agentTurnLayoutBuilder;
+        private readonly StagingPanelBuilder _stagingPanelBuilder;
         
         
         // 🚀 UI Performance State
@@ -48,6 +54,9 @@ namespace LocalPilot.Chat
         private DateTime _lastUiUpdateTime = DateTime.MinValue;
         private StringBuilder _currentChunkSb = new StringBuilder(); // 🚀 Text since last activity
         private StackPanel _currentNarrativeContainer = null;
+        private StackPanel _currentActivityContainer;
+        private FrameworkElement _currentNarrativeLabel;
+        private FrameworkElement _currentActivityLabel;
 
         private Brush ThemeWindowBg => (Brush)this.Resources["LpWindowBgBrush"];
         private Brush ThemeWindowFg => (Brush)this.Resources["LpWindowFgBrush"];
@@ -61,6 +70,12 @@ namespace LocalPilot.Chat
         public LocalPilotChatControl()
         {
             InitializeComponent();
+            _sessionViewModel = new ChatSessionViewModel();
+            _agentTurnCoordinator = new AgentTurnCoordinator();
+            _agentUiRenderer = new AgentUiRenderer();
+            _agentTurnLayoutBuilder = new AgentTurnLayoutBuilder();
+            _stagingPanelBuilder = new StagingPanelBuilder();
+            DataContext = _sessionViewModel;
             _ollama = new OllamaService(LocalPilotSettings.Instance.OllamaBaseUrl);
             
             // Initialize Agent Services
@@ -155,6 +170,7 @@ namespace LocalPilot.Chat
             }
 
             VSColorTheme.ThemeChanged += OnThemeChanged;
+            RefreshQuickActionBar();
 
             // 🚀 Professional Background Grounding
             if (LocalPilotSettings.Instance.EnableProjectMap)
@@ -221,23 +237,39 @@ namespace LocalPilot.Chat
                 this.Resources["LpMenuBorderBrush"] = borderBrush;
                 this.Resources["LpMutedFgBrush"] = grayText;
                 
+                // 💎 Adaptive Ghost Engine Tokens
+                if (isDark)
+                {
+                    this.Resources["LpGlassBgBrush"] = new SolidColorBrush(Color.FromArgb(0x18, 0xFF, 0xFF, 0xFF)); // Subtle White Glass
+                    this.Resources["LpGlassBorderBrush"] = new SolidColorBrush(Color.FromArgb(0x25, 0xFF, 0xFF, 0xFF));
+                    this.Resources["LpTimelineLineBrush"] = new SolidColorBrush(Color.FromArgb(0x33, 0xFF, 0xFF, 0xFF));
+                    ((System.Windows.Media.Effects.DropShadowEffect)this.Resources["LpGhostShadow"]).Opacity = 0.5;
+                }
+                else
+                {
+                    this.Resources["LpGlassBgBrush"] = new SolidColorBrush(Color.FromArgb(0x0F, 0x00, 0x00, 0x00)); // Slightly darker Glass
+                    this.Resources["LpGlassBorderBrush"] = new SolidColorBrush(Color.FromArgb(0x20, 0x00, 0x00, 0x00));
+                    this.Resources["LpTimelineLineBrush"] = new SolidColorBrush(Color.FromArgb(0x30, 0x00, 0x00, 0x00));
+                    this.Resources["LpMutedFgBrush"] = new SolidColorBrush(Color.FromRgb(0x40, 0x40, 0x40)); // Force Dark Gray for readability
+                    ((System.Windows.Media.Effects.DropShadowEffect)this.Resources["LpGhostShadow"]).Opacity = 0.15;
+                }
+
                 // 🎨 Accent & Highlight area
-                // Using standard VS link color as our primary accent
                 var accentBrush = Application.Current.FindResource(VsBrushes.ControlLinkTextKey) as Brush
                                   ?? Brushes.DodgerBlue;
                 
                 this.Resources["LpAccentBrush"]    = accentBrush;
-                this.Resources["LpStopBrush"]      = new SolidColorBrush(Color.FromRgb(0xE5, 0x14, 0x00)); // Modern Red
+                var accentColor = (accentBrush as SolidColorBrush)?.Color ?? Color.FromRgb(0x2D, 0x8C, 0xFF);
+                this.Resources["LpAccentHoverBrush"] = new SolidColorBrush(AdjustColor(accentColor, isDark ? 14 : -10));
+                this.Resources["LpStopBrush"]      = new SolidColorBrush(Color.FromRgb(0xE5, 0x14, 0x00)); 
                 this.Resources["LpHoverBgBrush"]   = Application.Current.FindResource(VsBrushes.CommandBarHoverKey) as Brush
                                                     ?? new SolidColorBrush(AdjustColor(baseBgColor, isDark ? 16 : -16));
                 this.Resources["LpHoverFgBrush"]   = toolWindowFg;
-
-                // 🫧 User Bubble Background
                 this.Resources["LpUserBubbleBgBrush"] = new SolidColorBrush(userBubbleColor);
+                this.Resources["LpSuccessBrush"]    = new SolidColorBrush(Color.FromRgb(0x4E, 0xC9, 0xB0)); // VS Tealer/Green
+                this.Resources["LpConsoleBgBrush"] = new SolidColorBrush(AdjustColor(baseBgColor, isDark ? -12 : -6));
 
-                // 🌈 Syntax Highlighting Palette (Theme-Aware)
                 UpdateSyntaxBrushes();
-                
                 ChatScroll.Background = (Brush)this.Resources["LpWindowBgBrush"];
             }
             catch { }
@@ -313,7 +345,7 @@ namespace LocalPilot.Chat
             });
 
             // Modern introductory text is now partly in XAML, but we can add a greet
-            AppendAIBubble("👋 Hi! I'm ready to help with your code. Select some text and use the actions above, or just ask me a question below.");
+            AppendAIBubble("Hi, I am ready to help with your code. Select text and use the actions above, or ask a question below.");
         }
 
         // ── Send message ──────────────────────────────────────────────────────
@@ -395,14 +427,13 @@ namespace LocalPilot.Chat
             _agentResponseSb.Clear();
             _currentChunkSb.Clear();
             _currentNarrativeContainer = null;
-
-            // 🎨 Standardized Agent Turn Container — aligned with designer tokens
-            _agentTurnContainer = new StackPanel { Margin = new Thickness(12, 8, 12, 20) };
-            _agentCurrentContainer = _agentTurnContainer; 
-
-            // Brand Header: Logo + Muted Label
-            var labelRow = CreateAIHeader(out _);
-            _agentTurnContainer.Children.Add(labelRow);
+            var layout = _agentTurnLayoutBuilder.BuildTurnLayout(() => CreateAIHeader(out _), this.Resources);
+            _agentTurnContainer = layout.TurnContainer;
+            _agentCurrentContainer = layout.CurrentContainer;
+            _currentActivityContainer = layout.ActivityContainer;
+            _currentNarrativeContainer = layout.NarrativeContainer;
+            _currentNarrativeLabel = layout.NarrativeLabel;
+            _currentActivityLabel = layout.ActivityLabel;
 
             MessagesContainer.Children.Add(_agentTurnContainer);
             ChatScroll.ScrollToEnd();
@@ -413,66 +444,7 @@ namespace LocalPilot.Chat
             _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
             {
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                
-                string displayName = request.Name;
-                string icon = "\uE76C"; // Chevron right
-                string detail = null;
-
-                if (request.Name == "read_file")
-                {
-                    displayName = "Reading file";
-                    object val = null;
-                    request.Arguments?.TryGetValue("path", out val);
-                    detail = System.IO.Path.GetFileName(val?.ToString() ?? "unknown");
-                }
-                else if (request.Name == "grep_search")
-                {
-                    displayName = "Searching codebase";
-                    detail = null; 
-                }
-                else if (request.Name == "list_directory")
-                {
-                    displayName = "Exploring directory";
-                    detail = null;
-                }
-                else if (request.Name == "write_file" || request.Name == "replace_text" || request.Name == "write_to_file" || request.Name == "replace_file_content")
-                {
-                    displayName = "Updating code";
-                    object val = null;
-                    if (request.Arguments?.TryGetValue("TargetFile", out val) != true)
-                        request.Arguments?.TryGetValue("path", out val);
-
-                    detail = System.IO.Path.GetFileName(val?.ToString() ?? "unknown");
-                }
-                else if (request.Name == "run_terminal")
-                {
-                    displayName = "Running command";
-                    detail = null;
-                }
-                else if (request.Name == "delete_file")
-                {
-                    displayName = "Deleting file";
-                    object val = null;
-                    request.Arguments?.TryGetValue("path", out val);
-                    detail = System.IO.Path.GetFileName(val?.ToString() ?? "unknown");
-                }
-                else if (request.Name == "rename_symbol")
-                {
-                    displayName = "Refactoring symbol";
-                    object val = null;
-                    request.Arguments?.TryGetValue("new_name", out val);
-                    detail = val?.ToString();
-                }
-                else if (request.Name == "list_errors")
-                {
-                    displayName = "Checking for errors";
-                    detail = null;
-                }
-                else if (request.Name == "run_tests")
-                {
-                    displayName = "Running tests";
-                    detail = null;
-                }
+                var display = _agentUiRenderer.GetToolCallDisplayInfo(request);
 
                 // Reset chunk tracking to force a NEW narrative block for any text following this action
                 _currentChunkSb.Clear();
@@ -480,104 +452,32 @@ namespace LocalPilot.Chat
                 _lastRenderedMarkdown = "";
                 _lastActiveBlockElement = null;
 
-                // Append the activity row at the current position
-                AddWorkRow(displayName, icon, detail);
+                // Append the activity row to the DEDICATED activity container
+                AddWorkRow(display.Label, display.Icon, display.Detail);
             });
         }
 
         private void AddWorkRow(string label, string icon, string detail = null)
         {
-            // 🛡️ Robustness Check: Ensure we have a turn container to append to
-            // This prevents NullReferenceException if a tool call returns after a turn was finalized or before it fully started.
-            if (_agentTurnContainer == null)
+            if (_agentTurnContainer == null) StartNewAgentTurn();
+            if (_currentActivityContainer == null) return;
+
+            var node = _agentUiRenderer.CreateWorkRow(label, icon, detail, this.Resources);
+            _currentActivityContainer.Children.Add(node);
+
+            // Show ACTIVITY header when the first row is added
+            if (_currentActivityLabel != null && _currentActivityLabel.Visibility != Visibility.Visible)
             {
-                StartNewAgentTurn();
+                _currentActivityLabel.Visibility = Visibility.Visible;
             }
-
-            var rowStack = new StackPanel { Margin = new Thickness(0, 4, 0, 8) };
-            
-            var row = new Grid { Margin = new Thickness(0, 2, 0, 2) };
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-            var iconBlock = new TextBlock
-            {
-                Text = icon,
-                FontFamily = new FontFamily("Segoe MDL2 Assets"),
-                FontSize = 10,
-                Foreground = (Brush)this.Resources["LpMutedFgBrush"],
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(0, 0, 8, 0),
-                Opacity = 0.7
-            };
-            Grid.SetColumn(iconBlock, 0);
-            row.Children.Add(iconBlock);
-
-            var labelBlock = new TextBlock
-            {
-                Text = label,
-                FontSize = 11,
-                Foreground = (Brush)this.Resources["LpMutedFgBrush"],
-                VerticalAlignment = VerticalAlignment.Center,
-                Opacity = 0.8
-            };
-            Grid.SetColumn(labelBlock, 1);
-            row.Children.Add(labelBlock);
-
-            if (!string.IsNullOrEmpty(detail))
-            {
-                var chevron = new TextBlock
-                {
-                    Text = ">",
-                    FontSize = 10,
-                    Foreground = (Brush)this.Resources["LpMutedFgBrush"],
-                    VerticalAlignment = VerticalAlignment.Center,
-                    Cursor = Cursors.Hand,
-                    Opacity = 0.5,
-                    Margin = new Thickness(4, 0, 0, 0)
-                };
-                Grid.SetColumn(chevron, 2);
-                row.Children.Add(chevron);
-
-                var detailPanel = new StackPanel 
-                { 
-                    Visibility = Visibility.Collapsed, 
-                    Margin = new Thickness(18, 2, 0, 6) 
-                };
-                detailPanel.Children.Add(new TextBlock 
-                { 
-                    Text = detail, 
-                    FontSize = 10, 
-                    Foreground = (Brush)this.Resources["LpMutedFgBrush"], 
-                    TextWrapping = TextWrapping.Wrap,
-                    Opacity = 0.6
-                });
-
-                row.PreviewMouseLeftButtonUp += (s, e) => {
-                    detailPanel.Visibility = detailPanel.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
-                    chevron.RenderTransform = new RotateTransform(detailPanel.Visibility == Visibility.Visible ? 90 : 0);
-                    chevron.RenderTransformOrigin = new Point(0.5, 0.5);
-                };
-
-                rowStack.Children.Add(row);
-                rowStack.Children.Add(detailPanel);
-            }
-            else
-            {
-                rowStack.Children.Add(row);
-            }
-
-            _agentTurnContainer.Children.Add(rowStack);
         }
 
 
         private void EnsureAgentBubble()
         {
-            if (_agentCurrentContainer != null) return;
-
-            // Create the main bubble container and store the content area reference
-            _agentCurrentContainer = AppendAIBubble(string.Empty);
+            _agentCurrentContainer = _agentTurnLayoutBuilder.EnsureAgentBubble(
+                _agentCurrentContainer,
+                () => AppendAIBubble(string.Empty));
         }
 
         private void OnAgentMessageFragment(string fragment)
@@ -589,6 +489,12 @@ namespace LocalPilot.Chat
 
                 _agentResponseSb.Append(fragment);
                 _currentChunkSb.Append(fragment);
+
+                // Show the RESPONSE header once we actually have text from the model
+                if (_currentNarrativeLabel != null && _currentNarrativeLabel.Visibility != Visibility.Visible)
+                {
+                    _currentNarrativeLabel.Visibility = Visibility.Visible;
+                }
 
                 if (_currentNarrativeContainer == null)
                 {
@@ -627,138 +533,12 @@ namespace LocalPilot.Chat
 
         private FrameworkElement BuildStagingPanel(Dictionary<string, string> changes)
         {
-            var border = new Border
-            {
-                Background = (Brush)this.Resources["LpMenuBgBrush"],
-                BorderBrush = (Brush)this.Resources["LpMenuBorderBrush"],
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(8),
-                Padding = new Thickness(12),
-                Margin = new Thickness(0, 12, 0, 16)
-            };
-
-            var stack = new StackPanel();
-            
-            // Header
-            var header = new Grid { Margin = new Thickness(0, 0, 0, 12) };
-            header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-            var title = new TextBlock
-            {
-                Text = $"{changes.Count} proposed changes",
-                FontSize = 13,
-                FontWeight = FontWeights.Bold,
-                Foreground = (Brush)this.Resources["LpWindowFgBrush"],
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            Grid.SetColumn(title, 0);
-            header.Children.Add(title);
-
-            var actions = new StackPanel { Orientation = Orientation.Horizontal };
-            Grid.SetColumn(actions, 1);
-            
-            var btnAcceptAll = CreateGhostButton("Accept All", "\uE73E", (Brush)this.Resources["LpAccentBrush"]);
-            btnAcceptAll.Click += (s, e) => {
-                _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () => {
-                    foreach (var kvp in changes)
-                    {
-                        await WriteFileAsync(kvp.Key, kvp.Value);
-                    }
-                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                    border.Visibility = Visibility.Collapsed;
-                    AppendAIBubble("✅ All changes accepted.");
-                });
-            };
-            
-            var btnRejectAll = CreateGhostButton("Reject All", "\uE711", (Brush)this.Resources["LpMutedFgBrush"]);
-            btnRejectAll.Click += (s, e) => {
-                border.Visibility = Visibility.Collapsed;
-                AppendAIBubble("❌ All changes rejected.");
-            };
-
-            actions.Children.Add(btnAcceptAll);
-            actions.Children.Add(btnRejectAll);
-            header.Children.Add(actions);
-            stack.Children.Add(header);
-
-            // File Rows
-            foreach (var kvp in changes)
-            {
-                var row = new Grid { Margin = new Thickness(0, 4, 0, 4) };
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-                var fileName = new TextBlock
-                {
-                    Text = System.IO.Path.GetFileName(kvp.Key),
-                    ToolTip = kvp.Key,
-                    FontSize = 12,
-                    Foreground = (Brush)this.Resources["LpWindowFgBrush"],
-                    VerticalAlignment = VerticalAlignment.Center
-                };
-                Grid.SetColumn(fileName, 0);
-                row.Children.Add(fileName);
-
-                var rowActions = new StackPanel { Orientation = Orientation.Horizontal };
-                Grid.SetColumn(rowActions, 1);
-
-                var btnDiff = CreateGhostButton("Diff", "\uE8A1", (Brush)this.Resources["LpMutedFgBrush"]);
-                btnDiff.Click += (s, e) => {
-                    _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () => await ShowDiffAsync(kvp.Key, kvp.Value));
-                };
-
-                var btnAccept = CreateGhostButton("Accept", "\uE73E", (Brush)this.Resources["LpAccentBrush"]);
-                btnAccept.Click += (s, e) => {
-                    _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () => {
-                        await WriteFileAsync(kvp.Key, kvp.Value);
-                        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                        row.Opacity = 0.5;
-                        row.IsEnabled = false;
-                    });
-                };
-
-                rowActions.Children.Add(btnDiff);
-                rowActions.Children.Add(btnAccept);
-                row.Children.Add(rowActions);
-                stack.Children.Add(row);
-            }
-
-            border.Child = stack;
-            return border;
-        }
-
-        private Button CreateGhostButton(string label, string icon, Brush fg)
-        {
-            var btn = new Button
-            {
-                Background = Brushes.Transparent,
-                BorderThickness = new Thickness(0),
-                Cursor = Cursors.Hand,
-                Margin = new Thickness(4, 0, 4, 0),
-                Padding = new Thickness(6, 4, 6, 4)
-            };
-
-            var sp = new StackPanel { Orientation = Orientation.Horizontal };
-            sp.Children.Add(new TextBlock 
-            { 
-                Text = icon, 
-                FontFamily = new FontFamily("Segoe MDL2 Assets"), 
-                FontSize = 10, 
-                Foreground = fg, 
-                Margin = new Thickness(0, 0, 4, 0),
-                VerticalAlignment = VerticalAlignment.Center
-            });
-            sp.Children.Add(new TextBlock 
-            { 
-                Text = label, 
-                FontSize = 11, 
-                Foreground = fg,
-                VerticalAlignment = VerticalAlignment.Center
-            });
-
-            btn.Content = sp;
-            return btn;
+            return _stagingPanelBuilder.Build(
+                changes,
+                this.Resources,
+                WriteFileAsync,
+                ShowDiffAsync,
+                message => AppendAIBubble(message));
         }
 
         private async Task WriteFileAsync(string path, string content)
@@ -880,60 +660,30 @@ namespace LocalPilot.Chat
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                 
                 string model = LocalPilotSettings.Instance.ChatModel;
-                TxtAgentStatus.Text = $"LocalPilot ({model}) {status}";
-                TxtAgentDetail.Text = detail;
+                var statusState = _agentTurnCoordinator.BuildStatusState(model, status, detail);
+                _sessionViewModel.AgentTurn.StatusText = statusState.HeaderText;
+                _sessionViewModel.AgentTurn.DetailText = statusState.DetailText;
                 
-                if (status != AgentStatus.Completed)
+                if (!statusState.IsCompletion)
                 {
-                    if (status == AgentStatus.Idle || status == AgentStatus.Failed)
+                    if (statusState.IsCancelled || statusState.IsFailure)
                     {
                         var container = _agentCurrentContainer;
                         _agentCurrentContainer = null;
 
                         if (container != null)
                         {
-                            var badge = new Border
-                            {
-                                Background = (Brush)this.Resources["LpMenuBgBrush"],
-                                BorderBrush = (Brush)this.Resources["LpMenuBorderBrush"],
-                                BorderThickness = new Thickness(1),
-                                CornerRadius = new CornerRadius(6),
-                                Padding = new Thickness(10, 7, 10, 7),
-                                Margin = new Thickness(0, 8, 0, 4),
-                                HorizontalAlignment = HorizontalAlignment.Left
-                            };
-
-                            var sp = new StackPanel { Orientation = Orientation.Horizontal };
-                            sp.Children.Add(new TextBlock
-                            {
-                                Text = status == AgentStatus.Idle ? "\uE71A" : "\uE7BA",
-                                FontFamily = new FontFamily("Segoe MDL2 Assets"),
-                                FontSize = 12,
-                                Margin = new Thickness(0, 0, 8, 0),
-                                VerticalAlignment = VerticalAlignment.Center,
-                                Foreground = status == AgentStatus.Idle
-                                    ? (Brush)this.Resources["LpMutedFgBrush"]
-                                    : (Brush)this.Resources["LpAccentBrush"]
-                            });
-                            sp.Children.Add(new TextBlock
-                            {
-                                Text = status == AgentStatus.Idle ? "Task cancelled by user." : "Task stopped due to an error.",
-                                FontWeight = FontWeights.SemiBold,
-                                FontSize = 12,
-                                Foreground = (Brush)this.Resources["LpWindowFgBrush"],
-                                VerticalAlignment = VerticalAlignment.Center
-                            });
-                            badge.Child = sp;
+                            var badge = _agentUiRenderer.CreateTerminalBadge(statusState, this.Resources);
                             container.Children.Add(badge);
                         }
                         else
                         {
-                            AppendAIBubble(status == AgentStatus.Idle
+                            AppendAIBubble(statusState.IsCancelled
                                 ? "**Task cancelled by user.**"
                                 : "**Task stopped due to an error.**");
                         }
 
-                        await Task.Delay(800);
+                        await Task.Delay(400); // Brief pause for visual confirmation
                         SetStreaming(false);
                     }
                     else
@@ -944,30 +694,17 @@ namespace LocalPilot.Chat
                 }
                 else
                 {
-                    // Save reference before clearing state
-                    var container = _agentCurrentContainer;
-                    _agentCurrentContainer = null;
-                    
-                    // Show a graceful completion chip in the chat
-                    if (container != null)
+                    // 🏁 Task Completed Successfully - Clean exit
+                    if (_currentActivityContainer != null)
                     {
-                         var sp = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0,8,0,4) };
-                         sp.Children.Add(new TextBlock { Text = "\uE73E", FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 13, Margin = new Thickness(0,0,8,0), VerticalAlignment = VerticalAlignment.Center, Foreground = (Brush)this.Resources["LpAccentBrush"] });
-                         sp.Children.Add(new TextBlock { 
-                             Text = "Completed", 
-                             FontWeight = FontWeights.SemiBold, 
-                             FontSize = 12,
-                             Foreground = (Brush)this.Resources["LpWindowFgBrush"],
-                             VerticalAlignment = VerticalAlignment.Center 
-                         });
-                         container.Children.Add(sp);
+                         AddWorkRow("Task Completed", "\uE73E", null);
                     }
                     else
                     {
-                         AppendAIBubble("**Completed**");
+                         AppendAIBubble("**Task completed successfully.**");
                     }
                     
-                    await Task.Delay(2000);
+                    _agentCurrentContainer = null;
                     SetStreaming(false);
                 }
                 ChatScroll.ScrollToEnd();
@@ -985,6 +722,7 @@ namespace LocalPilot.Chat
         {
             if (string.IsNullOrEmpty(action)) return;
             _currentAction = action;
+            _sessionViewModel.CurrentAction = action;
             LocalPilotLogger.Log($"[Chat] Handling Quick Action: {action}");
 
             try 
@@ -999,7 +737,7 @@ namespace LocalPilot.Chat
                 if (string.IsNullOrWhiteSpace(selectedCode))
                 {
                     await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                    AppendAIBubble("⚠️ **No code selected**. I couldn't find any code highlighted in your editor. Please select some code and try again.");
+                    AppendAIBubble("**No code selected.** I could not find highlighted code in your editor. Select code and try again.");
                     return;
                 }
 
@@ -1131,7 +869,7 @@ namespace LocalPilot.Chat
                         if (!isOllamaUp)
                         {
                             await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                            AppendAIBubble("❌ **Connection Error**: Could not reach local Ollama.\n\nPlease check if Ollama is running at: " + LocalPilotSettings.Instance.OllamaBaseUrl);
+                            AppendAIBubble("**Connection error:** Could not reach local Ollama.\n\nCheck that Ollama is running at: " + LocalPilotSettings.Instance.OllamaBaseUrl);
                             return;
                         }
                     }
@@ -1291,24 +1029,18 @@ namespace LocalPilot.Chat
 
         private void AppendUserBubble(string text)
         {
-            // ── Layout: single-column Grid so the bubble is ALWAYS constrained
-            //    to the actual panel width. Previous bug: Auto column + MaxWidth=480
-            //    overflowed narrow VS sidebars (~350px), clipping the text.
             var row = new Grid { Margin = new Thickness(0, 8, 4, 16) };
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-
-            // 'Ghost' capsule style — right-aligned, left margin creates 
-            // the visual offset so short messages don't span full width.
+            
             var bubble = new Border
             {
-                Background      = (Brush)this.Resources["LpUserBubbleBgBrush"],
+                Background      = (Brush)this.Resources["LpGlassBgBrush"],
+                BorderBrush     = (Brush)this.Resources["LpGlassBorderBrush"],
+                BorderThickness = new Thickness(1),
                 CornerRadius    = new CornerRadius(14, 14, 2, 14),
-                Padding         = new Thickness(16, 10, 16, 10),
-                Margin          = new Thickness(40, 0, 0, 0),
+                Padding         = new Thickness(14, 10, 14, 10),
+                Margin          = new Thickness(60, 0, 8, 0),
                 HorizontalAlignment = HorizontalAlignment.Right,
-                // No MaxWidth — the Star column constrains us to panel width
-                BorderBrush     = new SolidColorBrush(Color.FromArgb(0x15, 0x80, 0x80, 0x80)),
-                BorderThickness = new Thickness(1)
+                Effect          = (System.Windows.Media.Effects.Effect)this.Resources["LpGhostShadow"]
             };
 
             var body = new TextBlock
@@ -1316,22 +1048,21 @@ namespace LocalPilot.Chat
                 Text            = text,
                 TextWrapping    = TextWrapping.Wrap,
                 Foreground      = (Brush)this.Resources["LpWindowFgBrush"],
-                FontSize        = 13,
-                FontFamily      = UIFont
+                FontSize        = 12.5,
+                FontFamily      = UIFont,
+                Opacity         = 0.95
             };
-            ApplySimpleMarkdown(body, text);
 
             bubble.Child = body;
-            Grid.SetColumn(bubble, 0);
             row.Children.Add(bubble);
 
             MessagesContainer.Children.Add(row);
-
-            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
-            {
-                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                ChatScroll.ScrollToEnd();
-            });
+            ChatScroll.ScrollToEnd();
+            
+            // Enter animation
+            var slide = new System.Windows.Media.Animation.DoubleAnimation(10, 0, new Duration(TimeSpan.FromSeconds(0.4))) { EasingFunction = new System.Windows.Media.Animation.CubicEase { EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut } };
+            row.RenderTransform = new TranslateTransform();
+            row.RenderTransform.BeginAnimation(TranslateTransform.YProperty, slide);
         }
 
         private void ApplySimpleMarkdown(TextBlock tb, string text)
@@ -1459,6 +1190,12 @@ namespace LocalPilot.Chat
             var container = new StackPanel { Margin = new Thickness(0, 4, 0, 8) };
             _agentTurnContainer.Children.Add(container);
             _currentNarrativeContainer = container;
+
+            if (_currentNarrativeLabel != null && _currentNarrativeLabel.Visibility != Visibility.Visible)
+            {
+                _currentNarrativeLabel.Visibility = Visibility.Visible;
+            }
+
             return container;
         }
 
@@ -1630,7 +1367,7 @@ namespace LocalPilot.Chat
             var para = rtb.Document.Blocks.LastBlock as Paragraph;
             if (para == null)
             {
-                para = new Paragraph { Margin = new Thickness(0, 0, 0, 8) };
+                para = new Paragraph { Margin = new Thickness(0) };
                 rtb.Document.Blocks.Add(para);
             }
             para.Inlines.Add(new Run(text));
@@ -1677,7 +1414,7 @@ namespace LocalPilot.Chat
                 {
                     var rtb = CreateRichTextBox();
                     RenderMarkdown(rtb, textPart);
-                    container.Children.Add(rtb);
+                    _currentNarrativeContainer.Children.Add(rtb);
                     _lastActiveBlockElement = rtb;
                 }
 
@@ -1731,7 +1468,7 @@ namespace LocalPilot.Chat
                     // don't render the header and grid yet to avoid "Empty Code" flicker.
                     if (string.IsNullOrWhiteSpace(cleanCode)) continue;
 
-                    var codeGrid = new Grid { Margin = new Thickness(0, 8, 0, 16) };
+                    var codeGrid = new Grid { Margin = new Thickness(0, 2, 0, 6) };
                     codeGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
                     codeGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
@@ -1851,11 +1588,11 @@ namespace LocalPilot.Chat
                 var trimmed = line.Trim();
                 if (string.IsNullOrEmpty(trimmed)) 
                 {
-                    rtb.Document.Blocks.Add(new Paragraph { Margin = new Thickness(0, 0, 0, 8) });
+                    rtb.Document.Blocks.Add(new Paragraph { Margin = new Thickness(0), FontSize = 4 });
                     continue;
                 }
 
-                var paragraph = new Paragraph { Margin = new Thickness(0, 0, 0, 4) };
+                var paragraph = new Paragraph { Margin = new Thickness(0, 0, 0, 1) };
 
                 // 1. Headings (# ## ###)
                 if (trimmed.StartsWith("#"))
@@ -1871,12 +1608,12 @@ namespace LocalPilot.Chat
                         Foreground = ThemeWindowFg
                     };
                     paragraph.Inlines.Add(run);
-                    paragraph.Margin = new Thickness(0, 8, 0, 4);
+                    paragraph.Margin = new Thickness(0, 4, 0, 2);
                 }
                 // 2. Lists (- * 1.)
                 else if (trimmed.StartsWith("-") || trimmed.StartsWith("*") || (trimmed.Length > 2 && char.IsDigit(trimmed[0]) && trimmed[1] == '.'))
                 {
-                    paragraph.Margin = new Thickness(12, 0, 0, 2);
+                    paragraph.Margin = new Thickness(12, 0, 0, 1);
                     RenderInlineMarkdown(paragraph, trimmed);
                 }
                 // 3. Normal Paragraph
@@ -2023,14 +1760,18 @@ namespace LocalPilot.Chat
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                 
                 _isStreaming = streaming;
+                string model = modelName ?? LocalPilotSettings.Instance.ChatModel;
+                var streamingState = _agentTurnCoordinator.BuildStreamingState(streaming, model);
+
+                _sessionViewModel.IsStreaming = streamingState.IsStreaming;
+                _sessionViewModel.IsInputEnabled = streamingState.IsInputEnabled;
+                _sessionViewModel.InputOpacity = streamingState.InputOpacity;
                 
                 if (streaming)
                 {
-                    AgentStatusBar.Visibility = Visibility.Visible;
-                    
-                    string model = modelName ?? LocalPilotSettings.Instance.ChatModel;
-                    TxtAgentStatus.Text = $"LocalPilot ({model}) working";
-                    TxtAgentDetail.Text = "Autonomous logic active";
+                    AgentStatusBar.Visibility = streamingState.ShowStatusBar ? Visibility.Visible : Visibility.Collapsed;
+                    _sessionViewModel.AgentTurn.StatusText = streamingState.StatusText;
+                    _sessionViewModel.AgentTurn.DetailText = streamingState.DetailText;
                     
                     // Change Send icon to Stop (Square)
                     BtnSendIcon.Data = Geometry.Parse("M6,6H18V18H6V6Z"); 
@@ -2053,8 +1794,6 @@ namespace LocalPilot.Chat
                 BtnSend.IsEnabled           = true; 
                 BtnClear.IsEnabled          = !streaming;
                 BtnQuickActions.IsEnabled    = !streaming;
-                TxtInput.IsEnabled          = !streaming;
-                TxtInput.Opacity           = streaming ? 0.6 : 1.0;
 
                 if (!streaming) TxtInput.Focus();
             });
@@ -2088,6 +1827,7 @@ namespace LocalPilot.Chat
             if (menu == null) return;
 
             var s = LocalPilotSettings.Instance;
+            var capabilities = CapabilityCatalog.All.ToDictionary(c => c.Action, c => c, StringComparer.OrdinalIgnoreCase);
 
             // In WPF, items in a ContextMenu are not generated as fields for the UserControl.
             // We find them by name or tag to safely toggle visibility.
@@ -2096,21 +1836,54 @@ namespace LocalPilot.Chat
                 if (item is MenuItem mi)
                 {
                     string action = mi.Tag?.ToString();
-                    mi.Visibility = action switch
+                    if (string.IsNullOrWhiteSpace(action))
                     {
-                        "explain"  => s.EnableExplain  ? Visibility.Visible : Visibility.Collapsed,
-                        "refactor" => s.EnableRefactor ? Visibility.Visible : Visibility.Collapsed,
-                        "document" => s.EnableDocGen   ? Visibility.Visible : Visibility.Collapsed,
-                        "review"   => s.EnableReview   ? Visibility.Visible : Visibility.Collapsed,
-                        "fix"      => s.EnableFix      ? Visibility.Visible : Visibility.Collapsed,
-                        "test"     => s.EnableUnitTest ? Visibility.Visible : Visibility.Collapsed,
-                        _          => Visibility.Visible
-                    };
+                        mi.Visibility = Visibility.Visible;
+                        continue;
+                    }
+
+                    if (capabilities.TryGetValue(action, out var capability))
+                    {
+                        mi.Visibility = capability.IsEnabled(s) ? Visibility.Visible : Visibility.Collapsed;
+                    }
+                    else
+                    {
+                        mi.Visibility = Visibility.Visible;
+                    }
                 }
             }
 
             menu.PlacementTarget = BtnQuickActions;
             menu.IsOpen = true;
+        }
+
+        private void RefreshQuickActionBar()
+        {
+            if (QuickActionBar == null) return;
+
+            var settings = LocalPilotSettings.Instance;
+            var capabilities = CapabilityCatalog.All.ToDictionary(c => c.Action, c => c, StringComparer.OrdinalIgnoreCase);
+            bool hasVisible = false;
+
+            foreach (var child in QuickActionBar.Children)
+            {
+                if (child is Button button)
+                {
+                    var action = button.Tag?.ToString();
+                    if (!string.IsNullOrWhiteSpace(action) && capabilities.TryGetValue(action, out var capability))
+                    {
+                        button.Visibility = capability.IsEnabled(settings) ? Visibility.Visible : Visibility.Collapsed;
+                        hasVisible = hasVisible || button.Visibility == Visibility.Visible;
+                    }
+                    else
+                    {
+                        button.Visibility = Visibility.Visible;
+                        hasVisible = true;
+                    }
+                }
+            }
+
+            QuickActionBar.Visibility = hasVisible ? Visibility.Visible : Visibility.Collapsed;
         }
 
         private void MenuQuickAction_Click(object sender, RoutedEventArgs e)
@@ -2165,12 +1938,12 @@ namespace LocalPilot.Chat
                         sel.Insert(newCode, 0);
                         
                         LocalPilotLogger.Log("[Chat] Successfully applied AI refactor to editor.");
-                        AppendAIBubble("✅ Code successfully updated in your editor!");
+                        AppendAIBubble("Code was successfully updated in your editor.");
                     }
                 }
                 else
                 {
-                    AppendAIBubble("⚠️ **Editor context lost**. I couldn't find an active document to apply the changes. Please click into your editor and try again.");
+                    AppendAIBubble("**Editor context lost.** I could not find an active document to apply the changes. Click into your editor and try again.");
                 }
             }
             catch (Exception ex)

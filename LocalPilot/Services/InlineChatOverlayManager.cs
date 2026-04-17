@@ -3,10 +3,8 @@ using System.Threading.Tasks;
 using System.Windows;
 using Community.VisualStudio.Toolkit;
 using LocalPilot.UI;
-using LocalPilot.Models;
 using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Text.Editor;
-using System.IO;
 
 namespace LocalPilot.Services
 {
@@ -19,13 +17,11 @@ namespace LocalPilot.Services
         private static readonly InlineChatOverlayManager _instance = new InlineChatOverlayManager();
         public static InlineChatOverlayManager Instance => _instance;
 
-        private AsyncPackage _package;
-
         private InlineChatOverlayManager() { }
 
         public void Initialize(AsyncPackage package)
         {
-            _package = package;
+            LocalPilotCommandRouter.Instance.Initialize(package);
         }
 
         public async Task ShowAsync()
@@ -55,34 +51,34 @@ namespace LocalPilot.Services
 
             if (!overlay.IsCancelled && !string.IsNullOrWhiteSpace(overlay.Result))
             {
-                _ = ExecuteInlineActionAsync(overlay.Result, docView.FilePath);
+                _ = ExecuteInlineActionAsync(overlay.Result);
             }
         }
 
-        private async Task ExecuteInlineActionAsync(string prompt, string filePath)
+        private async Task ExecuteInlineActionAsync(string prompt)
         {
-            // For Inline Chat, we want a high-accuracy model if available
-            // This will use the same AgentOrchestrator but with a focused "Refactor" context.
-            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-            
-            // We can't use the standard side-panel control easily here, 
-            // so we'll trigger the Orchestrator directly.
-            // Requirement: "This overlay should only suggest code changes, not broad chat."
-            
-            // In a future version, we'll implement a 'Staged Change' ghost view.
-            // For now, let's trigger the orchestrator with an 'Inline' flag.
-            
-            // Dispatch to the main chat window so the user sees progress
-            if (_package == null) return;
-
-            var win = await _package.ShowToolWindowAsync(
-                typeof(LocalPilot.Chat.LocalPilotChatWindow), 0, true, _package.DisposalToken)
-                as LocalPilot.Chat.LocalPilotChatWindow;
-
-            if (win?.Content is LocalPilot.Chat.LocalPilotChatControl ctrl)
+            if (string.IsNullOrWhiteSpace(prompt))
             {
-                ctrl.FireQuickAction("refactor", prompt);
+                return;
             }
+
+            string normalized = prompt.Trim();
+            if (normalized.StartsWith("/"))
+            {
+                // Phase C consistency: inline entry can use the same slash actions as chat.
+                var slashToken = normalized.Split(new[] { ' ' }, 2, StringSplitOptions.RemoveEmptyEntries)[0]
+                    .Trim()
+                    .ToLowerInvariant();
+
+                if (CapabilityCatalog.TryResolveActionFromSlash(slashToken, out var action))
+                {
+                    await LocalPilotCommandRouter.Instance.ExecuteQuickActionAsync(action);
+                    return;
+                }
+            }
+
+            // Backward-compatible default behavior for free-form inline prompt.
+            await LocalPilotCommandRouter.Instance.ExecuteQuickActionAsync("refactor", prompt);
         }
     }
 }

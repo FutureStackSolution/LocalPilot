@@ -11,18 +11,13 @@
         ResizeMode="NoResize"
         BorderThickness="0">
     
-    <Window.Resources>
-        <Color x:Key="OverlayBgColor">#1E1E1E</Color>
-        <Color x:Key="AccentColor">#2D8CFF</Color>
-    </Window.Resources>
-
     <Grid>
-        <Border Background="#212121" 
-                BorderBrush="#444444" 
+        <Border Background="{DynamicResource {x:Static SystemColors.WindowBrushKey}}" 
+                BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}" 
                 BorderThickness="1" 
-                CornerRadius="8">
+                CornerRadius="4">
             <Border.Effect>
-                <DropShadowEffect BlurRadius="15" Color="Black" Opacity="0.5" ShadowDepth="2"/>
+                <DropShadowEffect BlurRadius="6" Color="Black" Opacity="0.2" ShadowDepth="1"/>
             </Border.Effect>
             
             <Grid Margin="12,8">
@@ -32,13 +27,13 @@
                 </Grid.RowDefinitions>
 
                 <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,6">
-                    <TextBlock Text="LocalPilot summon" 
-                               Foreground="#AAAAAA" 
+                    <TextBlock Text="LocalPilot Inline" 
+                               Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}" 
                                FontSize="10" 
                                FontWeight="SemiBold" 
                                VerticalAlignment="Center"/>
-                    <TextBlock Text=" (Enter to apply, Esc to cancel)" 
-                               Foreground="#666666" 
+                    <TextBlock Text=" (Enter to run, Esc to cancel)" 
+                               Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}" 
                                FontSize="9" 
                                VerticalAlignment="Center"
                                Margin="4,0,0,0"/>
@@ -47,9 +42,9 @@
                 <Grid Grid.Row="1">
                     <TextBox x:Name="InputBox"
                              Background="Transparent"
-                             Foreground="White"
+                             Foreground="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}"
                              BorderThickness="0"
-                             CaretBrush="#2D8CFF"
+                             CaretBrush="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}"
                              FontSize="13"
                              VerticalContentAlignment="Center"
                              Padding="4,0"
@@ -57,8 +52,8 @@
                              AcceptsReturn="False"/>
                     
                     <TextBlock x:Name="Placeholder"
-                               Text="Try: 'add unit tests' or 'optimize this loop'..."
-                               Foreground="#555555"
+                               Text="Try: '/explain', '/fix', or 'optimize this loop'..."
+                               Foreground="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}"
                                FontSize="13"
                                IsHitTestVisible="False"
                                VerticalAlignment="Center"

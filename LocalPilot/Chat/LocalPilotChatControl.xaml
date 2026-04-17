@@ -17,11 +17,19 @@
         <SolidColorBrush x:Key="LpHoverFgBrush"       Color="Transparent"/>
         <SolidColorBrush x:Key="LpMutedFgBrush"       Color="Transparent"/>
         <SolidColorBrush x:Key="LpAccentBrush"        Color="Transparent"/>
+        <SolidColorBrush x:Key="LpAccentHoverBrush"   Color="Transparent"/>
         <SolidColorBrush x:Key="LpUserBubbleBgBrush"  Color="Transparent"/>
+        <SolidColorBrush x:Key="LpConsoleBgBrush"     Color="Transparent"/>
         <SolidColorBrush x:Key="LpCodeKwBrush"        Color="Transparent"/>
         <SolidColorBrush x:Key="LpCodeCommentBrush"   Color="Transparent"/>
         <SolidColorBrush x:Key="LpCodeStringBrush"    Color="Transparent"/>
         <SolidColorBrush x:Key="LpAntigravityBlue"   Color="#2D8CFF"/>
+        
+        <!-- 💎 Ghost Engine Glass Tokens -->
+        <SolidColorBrush x:Key="LpGlassBgBrush"       Color="#18FFFFFF"/>
+        <SolidColorBrush x:Key="LpGlassBorderBrush"   Color="#25FFFFFF"/>
+        <DropShadowEffect x:Key="LpGhostShadow"       BlurRadius="8" ShadowDepth="0" Color="Black" Opacity="0.18"/>
+        <SolidColorBrush x:Key="LpTimelineLineBrush" Color="#33FFFFFF"/>
 
         <!-- ═══ Minimalist Scrollbar ═══ -->
         <Style TargetType="{x:Type ScrollBar}">
@@ -210,7 +218,7 @@
         <Style x:Key="LpMutedLabel" TargetType="TextBlock">
             <Setter Property="Foreground" Value="{DynamicResource LpMutedFgBrush}"/>
             <Setter Property="FontSize"   Value="10"/>
-            <Setter Property="Opacity"    Value="0.8"/>
+            <Setter Property="Opacity"    Value="1.0"/>
         </Style>
 
         <!-- ── Send Button (Premium Glow Aesthetic) ─────────────────────── -->
@@ -272,17 +280,17 @@
                     <ControlTemplate TargetType="Button">
                         <Border x:Name="Bd"
                                 Background="{TemplateBinding Background}"
-                                CornerRadius="11"> <!-- Perfect Circle -->
+                                CornerRadius="15"> <!-- Balanced Circle -->
                             <ContentPresenter x:Name="Cp" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="2">
                                  <ContentPresenter.RenderTransform>
-                                    <ScaleTransform x:Name="SendScale" ScaleX="1" ScaleY="1" CenterX="14" CenterY="14"/>
+                                    <ScaleTransform x:Name="SendScale" ScaleX="1" ScaleY="1" CenterX="15" CenterY="15"/>
                                 </ContentPresenter.RenderTransform>
                             </ContentPresenter>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="Bd" Property="Opacity" Value="1.0"/>
-                                <Setter TargetName="Bd" Property="Background" Value="#3a96ff"/> <!-- Slightly brighter on hover -->
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource LpAccentHoverBrush}"/>
                                 <Trigger.EnterActions>
                                     <BeginStoryboard>
                                         <Storyboard>
@@ -382,23 +390,79 @@
             </Setter>
         </Style>
 
-        <Style x:Key="LpModeButtonStyle" TargetType="Button" BasedOn="{StaticResource LpButtonStyle}">
+        <!-- 🏛️ Chronicle Styles (Hierarchical Activity Timeline) -->
+        <Style x:Key="ActionNodeStyle" TargetType="Border">
+            <Setter Property="Margin" Value="0,2,0,4"/>
+            <Setter Property="Padding" Value="10,6"/>
+            <Setter Property="CornerRadius" Value="8"/>
+            <Setter Property="Background" Value="{DynamicResource LpGlassBgBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource LpGlassBorderBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="BorderBrush"     Value="{DynamicResource LpMenuBorderBrush}"/>
-            <Setter Property="Padding"         Value="6,2"/>
-            <Setter Property="Background"      Value="Transparent"/>
+            <Setter Property="Opacity" Value="0.9"/>
+        </Style>
+
+        <Style x:Key="ActionNodeIconStyle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Margin" Value="0,0,10,0"/>
+            <Setter Property="Foreground" Value="{DynamicResource LpAccentBrush}"/>
+        </Style>
+
+        <Style x:Key="ActionNodeHeaderStyle" TargetType="TextBlock" BasedOn="{StaticResource LpMutedLabel}">
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="{DynamicResource LpWindowFgBrush}"/>
+            <Setter Property="Opacity" Value="1.0"/>
+        </Style>
+
+        <!-- 🌊 Delta Staging Card Styles -->
+        <Style x:Key="DeltaCardStyle" TargetType="Border">
+            <Setter Property="Margin" Value="0,12,0,16"/>
+            <Setter Property="Padding" Value="16"/>
+            <Setter Property="CornerRadius" Value="12"/>
+            <Setter Property="Background" Value="{DynamicResource LpGlassBgBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource LpGlassBorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Effect" Value="{StaticResource LpGhostShadow}"/>
+        </Style>
+
+        <Style x:Key="DeltaCodeStyle" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="Consolas, Lucida Console, monospace"/>
+            <Setter Property="FontSize" Value="11.5"/>
+            <Setter Property="LineHeight" Value="18"/>
+        </Style>
+
+        <!-- 🏷️ Ghost Chip Style (Modern & Interactive) -->
+        <Style x:Key="LpChipStyle" TargetType="Button">
+            <Setter Property="Background"      Value="{DynamicResource LpGlassBgBrush}"/>
+            <Setter Property="Foreground"      Value="{DynamicResource LpWindowFgBrush}"/>
+            <Setter Property="BorderBrush"     Value="{DynamicResource LpGlassBorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding"         Value="12,6"/>
+            <Setter Property="FontSize"        Value="11"/>
+            <Setter Property="FontWeight"      Value="Medium"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+            <Setter Property="Margin"          Value="0,0,8,8"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                        <Border x:Name="Bd" 
+                                Background="{TemplateBinding Background}"
                                 BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="12">
+                                CornerRadius="14" 
+                                Padding="{TemplateBinding Padding}"
+                                SnapsToDevicePixels="True">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource LpHoverBgBrush}"/>
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource LpGlassBorderBrush}"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource LpAccentBrush}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource LpAccentBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.7"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -474,6 +538,28 @@
                            Margin="24,12,24,8"
                            Opacity="0.85"
                            TextWrapping="Wrap"/>
+                <TextBlock Text="Tip: use slash actions like /explain, /fix, /review, or /test."
+                           FontSize="10"
+                           Foreground="{DynamicResource LpMutedFgBrush}"
+                           Margin="24,0,24,10"
+                           Opacity="0.8"
+                           TextWrapping="Wrap"/>
+                <TextBlock Text="ACTIONS"
+                           FontSize="9"
+                           FontWeight="Bold"
+                           Foreground="{DynamicResource LpMutedFgBrush}"
+                           Margin="20,0,20,6"
+                           Opacity="0.85"/>
+
+                <!-- Quick action shortcuts for discoverability -->
+                <WrapPanel x:Name="QuickActionBar" Margin="20,0,20,10">
+                    <Button Content="Explain Code" Tag="explain" ToolTip="Explain selected code" Click="QuickAction_Click" Style="{StaticResource LpChipStyle}"/>
+                    <Button Content="Refactor Code" Tag="refactor" ToolTip="Refactor selected code" Click="QuickAction_Click" Style="{StaticResource LpChipStyle}"/>
+                    <Button Content="Generate Documentation" Tag="document" ToolTip="Generate documentation from selected code" Click="QuickAction_Click" Style="{StaticResource LpChipStyle}"/>
+                    <Button Content="Review Code" Tag="review" ToolTip="Review selected code for issues and improvements" Click="QuickAction_Click" Style="{StaticResource LpChipStyle}"/>
+                    <Button Content="Fix Issues" Tag="fix" ToolTip="Fix issues in selected code" Click="QuickAction_Click" Style="{StaticResource LpChipStyle}"/>
+                    <Button Content="Generate Unit Tests" Tag="test" ToolTip="Generate unit tests for selected code" Click="QuickAction_Click" Style="{StaticResource LpChipStyle}"/>
+                </WrapPanel>
 
                 <!-- All messages rendered here -->
                 <StackPanel x:Name="MessagesContainer" VerticalAlignment="Top"/>
@@ -508,7 +594,7 @@
                     </Border>
 
                     <!-- Console Feed -->
-                    <ScrollViewer Grid.Row="1" x:Name="ConsoleScroll" Padding="8" Background="#0C0C0C">
+                    <ScrollViewer Grid.Row="1" x:Name="ConsoleScroll" Padding="8" Background="{DynamicResource LpConsoleBgBrush}">
                         <StackPanel x:Name="ConsoleContainer">
                             <!-- Log entries will be added here -->
                         </StackPanel>
@@ -517,211 +603,101 @@
             </Border>
         </Grid>
 
-        <!-- ═══════════════════════  FOOTER  ════════════════════════════════ -->
-        <Border Grid.Row="2"
-                Background="{DynamicResource LpMenuBgBrush}"
-                BorderBrush="{DynamicResource LpMenuBorderBrush}"
-                BorderThickness="0,1,0,0"
-                Padding="14,10,14,6">
-            <StackPanel>
-
-                <!-- Agent status row — inline, minimal -->
-                <Border x:Name="AgentStatusBar"
-                        Visibility="Collapsed"
-                        Margin="2,0,2,10"
-                        Padding="10,6"
-                        Background="{DynamicResource LpWindowBgBrush}"
-                        BorderBrush="{DynamicResource LpMenuBorderBrush}"
-                        BorderThickness="1"
-                        CornerRadius="6">
-                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                        <Ellipse Width="8" Height="8" Margin="0,0,10,0" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
-                            <Ellipse.RenderTransform>
-                                <ScaleTransform ScaleX="1" ScaleY="1"/>
-                            </Ellipse.RenderTransform>
+        <!-- ═══════════════════════  FOOTER (GHOST HUD)  ═══════════════════════ -->
+        <Grid Grid.Row="2">
+            <StackPanel Margin="16,0,16,16">
+                <!-- Status Bar (Chronicle Phase) -->
+                <Border x:Name="AgentStatusBar" Visibility="Collapsed" Margin="8,0,8,12" Padding="12,8" 
+                        Background="{DynamicResource LpMenuBgBrush}" CornerRadius="6" Effect="{StaticResource LpGhostShadow}"
+                        BorderBrush="{DynamicResource LpGlassBorderBrush}" BorderThickness="1"
+                        RenderTransformOrigin="0.5,0.5">
+                    <Border.RenderTransform>
+                        <TranslateTransform Y="0"/>
+                    </Border.RenderTransform>
+                    <StackPanel Orientation="Horizontal">
+                        <Ellipse Width="8" Height="8" Fill="{DynamicResource LpAccentBrush}" Margin="4,0,12,0">
                             <Ellipse.Style>
                                 <Style TargetType="Ellipse">
-                                    <Setter Property="Fill" Value="{DynamicResource LpAccentBrush}"/>
                                     <Style.Triggers>
-                                        <Trigger Property="IsVisible" Value="True">
+                                        <Trigger Property="Visibility" Value="Visible">
                                             <Trigger.EnterActions>
-                                                <BeginStoryboard x:Name="PulseAnimation">
-                                                    <Storyboard RepeatBehavior="Forever" AutoReverse="True">
-                                                        <DoubleAnimation Storyboard.TargetProperty="Opacity" From="1" To="0.4" Duration="0:0:0.8"/>
-                                                        <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" From="1" To="1.2" Duration="0:0:0.8"/>
-                                                        <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" From="1" To="1.2" Duration="0:0:0.8"/>
+                                                <BeginStoryboard>
+                                                    <Storyboard RepeatBehavior="Forever">
+                                                        <DoubleAnimation Storyboard.TargetProperty="Opacity" From="1" To="0.3" Duration="0:0:0.8" AutoReverse="True"/>
                                                     </Storyboard>
                                                 </BeginStoryboard>
                                             </Trigger.EnterActions>
-                                            <Trigger.ExitActions>
-                                                <StopStoryboard BeginStoryboardName="PulseAnimation"/>
-                                            </Trigger.ExitActions>
                                         </Trigger>
                                     </Style.Triggers>
                                 </Style>
                             </Ellipse.Style>
                         </Ellipse>
-                        <TextBlock x:Name="TxtAgentStatus"
-                                   Text="LocalPilot working"
-                                   Foreground="{DynamicResource LpWindowFgBrush}"
-                                   FontSize="11" FontWeight="SemiBold"
-                                   VerticalAlignment="Center"/>
-                        <TextBlock x:Name="TxtDots"
-                                   Text="..."
-                                   Foreground="{DynamicResource LpWindowFgBrush}"
-                                   FontSize="11" FontWeight="SemiBold"
-                                   VerticalAlignment="Center"
-                                   Width="20">
-                            <TextBlock.Style>
-                                <Style TargetType="TextBlock">
-                                    <Style.Triggers>
-                                        <Trigger Property="IsVisible" Value="True">
-                                            <Trigger.EnterActions>
-                                                <BeginStoryboard x:Name="DotsStoryboard">
-                                                    <Storyboard RepeatBehavior="Forever">
-                                                        <StringAnimationUsingKeyFrames Storyboard.TargetProperty="Text" Duration="0:0:1.5">
-                                                            <DiscreteStringKeyFrame Value="" KeyTime="0:0:0"/>
-                                                            <DiscreteStringKeyFrame Value="." KeyTime="0:0:0.375"/>
-                                                            <DiscreteStringKeyFrame Value=".." KeyTime="0:0:0.75"/>
-                                                            <DiscreteStringKeyFrame Value="..." KeyTime="0:0:1.125"/>
-                                                        </StringAnimationUsingKeyFrames>
-                                                    </Storyboard>
-                                                </BeginStoryboard>
-                                            </Trigger.EnterActions>
-                                            <Trigger.ExitActions>
-                                                <StopStoryboard BeginStoryboardName="DotsStoryboard"/>
-                                            </Trigger.ExitActions>
-                                        </Trigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </TextBlock.Style>
-                        </TextBlock>
-                        <TextBlock x:Name="TxtAgentDetail"
-                                   Text=""
-                                   Foreground="{DynamicResource LpMutedFgBrush}"
-                                   FontSize="10"
-                                   Margin="10,0,0,0"
-                                   VerticalAlignment="Center"/>
+                        <TextBlock x:Name="TxtAgentStatus" Text="{Binding AgentTurn.StatusText}" Foreground="{DynamicResource LpWindowFgBrush}" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="TxtAgentDetail" Text="{Binding AgentTurn.DetailText}" Foreground="{DynamicResource LpMutedFgBrush}" FontSize="11" Margin="10,0,0,0" VerticalAlignment="Center" Opacity="0.7"/>
                     </StackPanel>
                 </Border>
 
-                <!-- Premium Antigravity Confirmation Panel -->
-                <Border x:Name="ConfirmationPanel"
-                        Background="{DynamicResource LpMenuBgBrush}"
-                        BorderBrush="{DynamicResource LpMenuBorderBrush}"
-                        BorderThickness="1"
-                        CornerRadius="6"
-                        Visibility="Collapsed"
-                        Padding="16,14"
-                        Margin="0,0,0,10">
-                    <StackPanel Orientation="Vertical">
-                        <DockPanel Margin="0,0,0,10">
-                            <TextBlock Text="&#xE946;" FontFamily="Segoe MDL2 Assets" FontSize="12"
-                                       Foreground="{DynamicResource LpAccentBrush}" Margin="0,0,6,0" VerticalAlignment="Center"/>
-                            <TextBlock Text="Confirm Action"
-                                       FontWeight="SemiBold"
-                                       Foreground="{DynamicResource LpWindowFgBrush}"
-                                       FontSize="12"
-                                       VerticalAlignment="Center"/>
-                        </DockPanel>
-
-                        <Border Background="{DynamicResource LpWindowBgBrush}"
-                                BorderBrush="{DynamicResource LpMenuBorderBrush}"
-                                BorderThickness="1"
-                                CornerRadius="6"
-                                Padding="12,10">
-                            <TextBlock x:Name="TxtConfirmDetail"
-                                       Text="The agent is requesting permission to continue."
-                                       TextWrapping="Wrap"
-                                       Foreground="{DynamicResource LpWindowFgBrush}"
-                                       Opacity="0.95"
-                                       FontSize="12"
-                                       LineHeight="18"
-                                       FontFamily="Segoe UI"/>
-                        </Border>
-
-                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
-                            <Button x:Name="BtnDeny" Content="Cancel" Click="BtnDeny_Click" Style="{StaticResource LpSecondaryActionButtonStyle}" Margin="0,0,10,0"/>
-                            <Button x:Name="BtnApprove" Content="Allow" Click="BtnApprove_Click" Style="{StaticResource LpPrimaryActionButtonStyle}"/>
+                <!-- Confirmation Panel -->
+                <Border x:Name="ConfirmationPanel" Visibility="Collapsed" Margin="0,0,0,12" Padding="16" 
+                        Background="{DynamicResource LpMenuBgBrush}" CornerRadius="6" Effect="{StaticResource LpGhostShadow}"
+                        BorderBrush="{DynamicResource LpGlassBorderBrush}" BorderThickness="1"
+                        RenderTransformOrigin="0.5,0.5">
+                    <Border.RenderTransform>
+                        <TranslateTransform Y="0"/>
+                    </Border.RenderTransform>
+                    <StackPanel>
+                        <TextBlock Text="APPROVAL"
+                                   Foreground="{DynamicResource LpMutedFgBrush}"
+                                   FontSize="9"
+                                   FontWeight="Bold"
+                                   Margin="0,0,0,6"/>
+                        <TextBlock Text="Permission Required" FontWeight="Bold" Foreground="{DynamicResource LpWindowFgBrush}" FontSize="14" Margin="0,0,0,10"/>
+                        <TextBlock x:Name="TxtConfirmDetail" TextWrapping="Wrap" Foreground="{DynamicResource LpWindowFgBrush}" Opacity="0.7" FontSize="13" LineHeight="18"/>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
+                            <Button x:Name="BtnDeny" Content="Deny" Click="BtnDeny_Click" Style="{StaticResource LpSecondaryActionButtonStyle}" Margin="0,0,12,0"/>
+                            <Button x:Name="BtnApprove" Content="Approve" Click="BtnApprove_Click" Style="{StaticResource LpPrimaryActionButtonStyle}"/>
                         </StackPanel>
                     </StackPanel>
                 </Border>
 
-                <!-- Input row: TextBox + Send button area -->
-                <Border Background="{DynamicResource LpWindowBgBrush}"
-                        BorderBrush="{DynamicResource LpMenuBorderBrush}"
-                        BorderThickness="1"
-                        CornerRadius="10"
-                        Padding="6,6,6,6">
-                <Grid>
-                    <TextBox x:Name="TxtInput"
-                             Style="{StaticResource ChatInputStyle}"
-                             MinHeight="44" MaxHeight="160"
-                             Padding="12,12,65,12"
-                             AcceptsReturn="True"
-                             TextWrapping="Wrap"
-                             VerticalContentAlignment="Top"
-                             PreviewKeyDown="TxtInput_PreviewKeyDown"
-                             FontSize="13"/>
-
-                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,2,2">
-                        <!-- Quick Actions Left of Send -->
-                        <Button x:Name="BtnQuickActions"
-                                Style="{StaticResource IconButtonStyle}"
-                                ToolTip="Quick Actions"
-                                Click="BtnQuickActions_Click"
-                                Margin="0,0,1,1"> 
-                            <TextBlock Text="&#xE945;" 
-                                       FontFamily="Segoe MDL2 Assets" 
-                                       FontSize="10" 
-                                       Foreground="{DynamicResource LpMutedFgBrush}"
-                                       VerticalAlignment="Center"
-                                       HorizontalAlignment="Center"/>
-                            <Button.ContextMenu>
-                                <ContextMenu x:Name="QuickActionsMenu" Style="{StaticResource ThemedContextMenuStyle}">
-                                    <MenuItem x:Name="MenuExplain" Header="Explain Code" Tag="explain" Click="MenuQuickAction_Click" Style="{StaticResource ThemedMenuItemStyle}">
-                                        <MenuItem.Icon><TextBlock Text="&#xE946;" FontFamily="Segoe MDL2 Assets" Foreground="{DynamicResource LpWindowFgBrush}"/></MenuItem.Icon>
-                                    </MenuItem>
-                                    <MenuItem x:Name="MenuRefactor" Header="Refactor Code" Tag="refactor" Click="MenuQuickAction_Click" Style="{StaticResource ThemedMenuItemStyle}">
-                                        <MenuItem.Icon><TextBlock Text="&#xE70F;" FontFamily="Segoe MDL2 Assets" Foreground="{DynamicResource LpWindowFgBrush}"/></MenuItem.Icon>
-                                    </MenuItem>
-                                    <MenuItem x:Name="MenuDoc" Header="Generate Docs" Tag="document" Click="MenuQuickAction_Click" Style="{StaticResource ThemedMenuItemStyle}">
-                                        <MenuItem.Icon><TextBlock Text="&#xE8B5;" FontFamily="Segoe MDL2 Assets" Foreground="{DynamicResource LpWindowFgBrush}"/></MenuItem.Icon>
-                                    </MenuItem>
-                                    <MenuItem x:Name="MenuReview" Header="Code Review" Tag="review" Click="MenuQuickAction_Click" Style="{StaticResource ThemedMenuItemStyle}">
-                                        <MenuItem.Icon><TextBlock Text="&#xE928;" FontFamily="Segoe MDL2 Assets" Foreground="{DynamicResource LpWindowFgBrush}"/></MenuItem.Icon>
-                                    </MenuItem>
-                                    <MenuItem x:Name="MenuFix" Header="Fix Issues" Tag="fix" Click="MenuQuickAction_Click" Style="{StaticResource ThemedMenuItemStyle}">
-                                        <MenuItem.Icon><TextBlock Text="&#xEA8A;" FontFamily="Segoe MDL2 Assets" Foreground="{DynamicResource LpWindowFgBrush}"/></MenuItem.Icon>
-                                    </MenuItem>
-                                    <MenuItem x:Name="MenuTest" Header="Generate Tests" Tag="test" Click="MenuQuickAction_Click" Style="{StaticResource ThemedMenuItemStyle}">
-                                        <MenuItem.Icon><TextBlock Text="&#xEBE8;" FontFamily="Segoe MDL2 Assets" Foreground="{DynamicResource LpWindowFgBrush}"/></MenuItem.Icon>
-                                    </MenuItem>
-                                </ContextMenu>
-                            </Button.ContextMenu>
-                        </Button>
+                <!-- 🚀 Floating Pill HUD -->
+                <Border x:Name="InputHudBorder" Background="{DynamicResource LpMenuBgBrush}" CornerRadius="6" Padding="4" Effect="{StaticResource LpGhostShadow}"
+                        BorderBrush="{DynamicResource LpMenuBorderBrush}" BorderThickness="1">
+                    <Grid>
+                        <TextBox x:Name="TxtInput" Style="{StaticResource ChatInputStyle}" MinHeight="48" MaxHeight="200" 
+                                 Padding="18,12,100,12" AcceptsReturn="True" TextWrapping="Wrap" PreviewKeyDown="TxtInput_PreviewKeyDown"
+                                 FontSize="14"
+                                 IsEnabled="{Binding IsInputEnabled}"
+                                 Opacity="{Binding InputOpacity}"/>
                         
-                        <!-- Send Button -->
-                        <Button x:Name="BtnSend"
-                                Style="{StaticResource LpSendButtonStyle}"
-                                Click="BtnSend_Click"
-                                ToolTip="Send (Enter)"
-                                Margin="1,0,3,1"> 
-                            <Path x:Name="BtnSendIcon"
-                                  Data="M3.4,20.4l17.45-7.48c0.81-0.35,0.81-1.49,0-1.84L3.4,3.6C2.71,3.3,2,3.8,2,4.55l1.6,7.45L2,19.45C2,20.2,2.71,20.7,3.4,20.4z"
-                                  Fill="White"
-                                  Width="8" Height="8"
-                                  Stretch="Uniform"
-                                  VerticalAlignment="Center"
-                                  HorizontalAlignment="Center"
-                                  Margin="1,0,0,0"/>
-                        </Button>
-                    </StackPanel>
-                </Grid>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,8,8">
+                            <Button x:Name="BtnQuickActions" Style="{StaticResource IconButtonStyle}" Click="BtnQuickActions_Click" Margin="0,0,6,0" Width="32" Height="32">
+                                <TextBlock Text="&#xE945;" FontFamily="Segoe MDL2 Assets" FontSize="16" Opacity="0.7"/>
+                                <Button.ContextMenu>
+                                    <ContextMenu x:Name="QuickActionsMenu" Style="{StaticResource ThemedContextMenuStyle}">
+                                        <MenuItem Header="Explain Code" Tag="explain" Click="MenuQuickAction_Click" Style="{StaticResource ThemedMenuItemStyle}"/>
+                                        <MenuItem Header="Refactor Code" Tag="refactor" Click="MenuQuickAction_Click" Style="{StaticResource ThemedMenuItemStyle}"/>
+                                        <MenuItem Header="Generate Documentation" Tag="document" Click="MenuQuickAction_Click" Style="{StaticResource ThemedMenuItemStyle}"/>
+                                        <MenuItem Header="Review Code" Tag="review" Click="MenuQuickAction_Click" Style="{StaticResource ThemedMenuItemStyle}"/>
+                                        <MenuItem Header="Fix Issues" Tag="fix" Click="MenuQuickAction_Click" Style="{StaticResource ThemedMenuItemStyle}"/>
+                                        <MenuItem Header="Generate Unit Tests" Tag="test" Click="MenuQuickAction_Click" Style="{StaticResource ThemedMenuItemStyle}"/>
+                                    </ContextMenu>
+                                </Button.ContextMenu>
+                            </Button>
+                             <Button x:Name="BtnSend" Style="{StaticResource LpSendButtonStyle}" Click="BtnSend_Click" Width="30" Height="30">
+                                <Path x:Name="BtnSendIcon" Data="M3.4,20.4l17.45-7.48c0.81-0.35,0.81-1.49,0-1.84L3.4,3.6C2.71,3.3,2,3.8,2,4.55l1.6,7.45L2,19.45C2,20.2,2.71,20.7,3.4,20.4z" 
+                                      Fill="White" Width="14" Height="14" Stretch="Uniform" Margin="2,0,0,0"/>
+                            </Button>
+                        </StackPanel>
+                    </Grid>
                 </Border>
-
+                <TextBlock Text="Enter to send · Shift+Enter for newline"
+                           Foreground="{DynamicResource LpMutedFgBrush}"
+                           FontSize="10"
+                           Margin="10,8,10,0"
+                           Opacity="0.8"/>
             </StackPanel>
-        </Border>
+        </Grid>
 
     </Grid>
 </UserControl>
