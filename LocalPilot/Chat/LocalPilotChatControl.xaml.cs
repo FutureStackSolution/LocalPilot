@@ -170,7 +170,7 @@ namespace LocalPilot.Chat
             }
 
             VSColorTheme.ThemeChanged += OnThemeChanged;
-            RefreshQuickActionBar();
+
 
             // 🚀 Professional Background Grounding
             if (LocalPilotSettings.Instance.EnableProjectMap)
@@ -254,9 +254,10 @@ namespace LocalPilot.Chat
                     ((System.Windows.Media.Effects.DropShadowEffect)this.Resources["LpGhostShadow"]).Opacity = 0.15;
                 }
 
-                // 🎨 Accent & Highlight area
-                var accentBrush = Application.Current.FindResource(VsBrushes.ControlLinkTextKey) as Brush
-                                  ?? Brushes.DodgerBlue;
+                // 🎨 Accent & Highlight area - Aggressive Discovery for Brand Colors (e.g. Pink, Mango)
+                var accentBrush = Application.Current.FindResource(VsBrushes.HighlightKey) as Brush
+                                  ?? Application.Current.FindResource(VsBrushes.ControlLinkTextKey) as Brush
+                                  ?? new SolidColorBrush(Color.FromRgb(0x2D, 0x8C, 0xFF));
                 
                 this.Resources["LpAccentBrush"]    = accentBrush;
                 var accentColor = (accentBrush as SolidColorBrush)?.Color ?? Color.FromRgb(0x2D, 0x8C, 0xFF);
@@ -583,17 +584,27 @@ namespace LocalPilot.Chat
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                 
                 // Final full render to ensure all closing tags/backticks are perfectly handled.
-                // We target the current narrative block if available to preserve tool rows and previous turns.
                 if (_currentNarrativeContainer != null)
                 {
+                    // 🛡️ DUPLICATION PROTECTION:
+                    // If the full message is identical to what's already there (rare but possible with loops),
+                    // skip re-rendering to avoid flicker and visual duplication.
+                    if (fullMessage == _lastRenderedMarkdown) return;
+
                     RenderFullMarkdown(_currentNarrativeContainer, fullMessage);
                 }
-                else if (_agentTurnContainer != null)
+                else
                 {
-                    RenderFullMarkdown(_agentTurnContainer, fullMessage);
+                    // If no current narrative block, create one to ensure we don't clear the whole turn
+                    var narrative = AppendNarrativeBlock();
+                    if (narrative != null)
+                    {
+                        RenderFullMarkdown(narrative, fullMessage);
+                    }
                 }
                 
                 _lastUiUpdateTime = DateTime.Now;
+                _lastRenderedMarkdown = fullMessage;
 
                 // Reset narrative state for potential next turn in the same task
                 _currentNarrativeContainer = null;
@@ -701,7 +712,8 @@ namespace LocalPilot.Chat
                     }
                     else
                     {
-                         AppendAIBubble("**Task completed successfully.**");
+                         // No specific work row added, but model should have given a final summary narrative.
+                         // We avoid adding a generic bubble here to prevent duplication of intent.
                     }
                     
                     _agentCurrentContainer = null;
@@ -1414,7 +1426,7 @@ namespace LocalPilot.Chat
                 {
                     var rtb = CreateRichTextBox();
                     RenderMarkdown(rtb, textPart);
-                    _currentNarrativeContainer.Children.Add(rtb);
+                    container.Children.Add(rtb);
                     _lastActiveBlockElement = rtb;
                 }
 
@@ -1774,7 +1786,7 @@ namespace LocalPilot.Chat
                     _sessionViewModel.AgentTurn.DetailText = streamingState.DetailText;
                     
                     // Change Send icon to Stop (Square)
-                    BtnSendIcon.Data = Geometry.Parse("M6,6H18V18H6V6Z"); 
+                    BtnSendIcon.Data = Geometry.Parse("M6,6h12v12H6z"); 
                     BtnSendIcon.Fill = Brushes.White;
                     BtnSend.ToolTip = "Stop (Esc)";
                     BtnSend.Background = (Brush)this.Resources["LpStopBrush"];
@@ -1783,11 +1795,11 @@ namespace LocalPilot.Chat
                 {
                     AgentStatusBar.Visibility = Visibility.Collapsed;
                     
-                    // Restore Send icon (Plane)
-                    BtnSendIcon.Data = Geometry.Parse("M3.4,20.4l17.45-7.48c0.81-0.35,0.81-1.49,0-1.84L3.4,3.6C2.71,3.3,2,3.8,2,4.55l1.6,7.45L2,19.45C2,20.2,2.71,20.7,3.4,20.4z");
+                    // Restore Send icon (Sleeker Plane)
+                    BtnSendIcon.Data = Geometry.Parse("M2,21L23,12L2,3V10L17,12L2,14V21Z");
                     BtnSendIcon.Fill = Brushes.White;
                     BtnSend.ToolTip = "Send (Enter)";
-                    BtnSend.Background = (Brush)this.Resources["LpAntigravityBlue"];
+                    BtnSend.Background = (Brush)this.Resources["LpAccentBrush"];
                 }
                 
                 // Lock all interaction during streaming to prevent action queuing
@@ -1857,34 +1869,7 @@ namespace LocalPilot.Chat
             menu.IsOpen = true;
         }
 
-        private void RefreshQuickActionBar()
-        {
-            if (QuickActionBar == null) return;
 
-            var settings = LocalPilotSettings.Instance;
-            var capabilities = CapabilityCatalog.All.ToDictionary(c => c.Action, c => c, StringComparer.OrdinalIgnoreCase);
-            bool hasVisible = false;
-
-            foreach (var child in QuickActionBar.Children)
-            {
-                if (child is Button button)
-                {
-                    var action = button.Tag?.ToString();
-                    if (!string.IsNullOrWhiteSpace(action) && capabilities.TryGetValue(action, out var capability))
-                    {
-                        button.Visibility = capability.IsEnabled(settings) ? Visibility.Visible : Visibility.Collapsed;
-                        hasVisible = hasVisible || button.Visibility == Visibility.Visible;
-                    }
-                    else
-                    {
-                        button.Visibility = Visibility.Visible;
-                        hasVisible = true;
-                    }
-                }
-            }
-
-            QuickActionBar.Visibility = hasVisible ? Visibility.Visible : Visibility.Collapsed;
-        }
 
         private void MenuQuickAction_Click(object sender, RoutedEventArgs e)
         {

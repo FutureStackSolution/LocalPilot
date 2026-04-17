@@ -268,16 +268,19 @@ namespace LocalPilot.Services
                         responseBuilder.Append(token);
                         tokenBuffer.Append(token);
 
-                        // If we see a code block starting, we stop streaming to UI until we know what it is
-                        if (tokenBuffer.ToString().Contains("```"))
+                        // 🚀 NARRATIVE STREAMING: Pass tokens to UI for a 'live' feel.
+                        if (!isBuffering)
+                        {
+                            OnMessageFragment?.Invoke(token);
+                        }
+
+                        // Code block detection for adaptive buffering
+                        if (!isBuffering && tokenBuffer.ToString().Contains("```"))
                         {
                             isBuffering = true;
                         }
 
-                        // 🚫 BLACK-BOX ENFORCEMENT: Never stream raw text from the AI's 'Thinking' to the user UI.
-                        // We only keep it for context, but we don't show the 'Teacher/Step' chatter.
-                        
-                        if (tokenBuffer.ToString().TrimEnd().EndsWith("```") && tokenBuffer.Length > 5)
+                        if (isBuffering && tokenBuffer.ToString().TrimEnd().EndsWith("```") && tokenBuffer.Length > 5)
                         {
                             tokenBuffer.Clear();
                             isBuffering = false;
@@ -551,9 +554,12 @@ namespace LocalPilot.Services
             var rawPattern = @"(?s)\{\s*""(?:name|arguments|path|pattern)""\s*:\s*.*?\}.*?\}?";
             cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, rawPattern, string.Empty);
             
-            // 3. Remove thinking process / thought tags
-            cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, @"(?s)<thought>.*?</thought>", string.Empty);
-            cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, @"(?s)## PLAN\s*.*?(?=\n\n|\n#|$)", string.Empty);
+            // 3. Remove thinking process / thought tags ONLY if they are not meant to be shown
+            // (We preserve them now for Antigravity-style verbosity)
+            // cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, @"(?s)<thought>.*?</thought>", string.Empty);
+            
+            // 4. (v3.0) We NO LONGER strip plans, as users want to see the AI's intent.
+            // cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, @"(?s)## PLAN\s*.*?(?=\n\n|\n#|$)", string.Empty);
 
             return cleaned.Trim();
         }

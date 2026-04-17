@@ -61,14 +61,18 @@ namespace LocalPilot.Chat.ViewModels
             var globalActions = new StackPanel { Orientation = Orientation.Horizontal };
             var btnAcceptAll = CreateGhostButton("Accept All", "\uE73E", resources["LpAccentBrush"] as Brush);
             btnAcceptAll.Margin = new Thickness(0, 0, 8, 0);
-            btnAcceptAll.Click += async (s, e) =>
+            btnAcceptAll.Click += (s, e) =>
             {
-                if (writeFileAsync != null)
+                Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
                 {
-                    foreach (var kvp in changes) await writeFileAsync(kvp.Key, kvp.Value);
-                }
-                border.Visibility = Visibility.Collapsed;
-                appendMessage?.Invoke("✅ Changes integrated.");
+                    if (writeFileAsync != null)
+                    {
+                        foreach (var kvp in changes) await writeFileAsync(kvp.Key, kvp.Value);
+                    }
+                    await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    border.Visibility = Visibility.Collapsed;
+                    appendMessage?.Invoke("✅ Changes integrated.");
+                });
             };
 
             var btnRejectAll = CreateGhostButton(null, "\uE711", resources["LpMutedFgBrush"] as Brush);
@@ -121,17 +125,24 @@ namespace LocalPilot.Chat.ViewModels
 
                 var rowActions = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
                 var btnDiff = CreateGhostButton(null, "\uE8A1", resources["LpMutedFgBrush"] as Brush);
-                btnDiff.Click += async (s, e) =>
+                btnDiff.Click += (s, e) =>
                 {
-                    if (showDiffAsync != null) await showDiffAsync(kvp.Key, kvp.Value);
+                    Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+                    {
+                        if (showDiffAsync != null) await showDiffAsync(kvp.Key, kvp.Value);
+                    });
                 };
 
                 var btnAccept = CreateGhostButton(null, "\uE73E", resources["LpAccentBrush"] as Brush);
-                btnAccept.Click += async (s, e) =>
+                btnAccept.Click += (s, e) =>
                 {
-                    if (writeFileAsync != null) await writeFileAsync(kvp.Key, kvp.Value);
-                    card.Opacity = 0.4;
-                    card.IsEnabled = false;
+                    Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+                    {
+                        if (writeFileAsync != null) await writeFileAsync(kvp.Key, kvp.Value);
+                        await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                        card.Opacity = 0.4;
+                        card.IsEnabled = false;
+                    });
                 };
 
                 rowActions.Children.Add(btnDiff);
