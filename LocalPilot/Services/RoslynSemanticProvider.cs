@@ -186,10 +186,25 @@ namespace LocalPilot.Services
                 var semanticModel = await document.GetSemanticModelAsync(ct).ConfigureAwait(false);
                 var symbol = semanticModel.GetDeclaredSymbol(node, ct) ?? semanticModel.GetSymbolInfo(node, ct).Symbol;
 
-                if (symbol == null) return "Error: Could not find a refactorable symbol at the specified location.";
+                if (symbol == null)
+                {
+                    bool isStillLoading = solution.Projects.Any(p => !p.Documents.Any());
+                    string hint = isStillLoading ? " (Solution is likely still indexing background documents)" : "";
+                    return $"Error: Could not find a refactorable symbol at the specified location.{hint}";
+                }
 
-                // 🚀 MODERN RENAMER API: Use non-obsolete overload
-                var newSolution = await Microsoft.CodeAnalysis.Rename.Renamer.RenameSymbolAsync(solution, symbol, newName, (Microsoft.CodeAnalysis.Options.OptionSet)null, ct).ConfigureAwait(false);
+                // 🚀 MODERN RENAMER API: Using non-obsolete SymbolRenameOptions for deep semantic coverage
+                var options = new Microsoft.CodeAnalysis.Rename.SymbolRenameOptions(
+                    RenameOverloads: true, 
+                    RenameInStrings: true, 
+                    RenameInComments: true);
+
+                var newSolution = await Microsoft.CodeAnalysis.Rename.Renamer.RenameSymbolAsync(
+                    solution, 
+                    symbol, 
+                    options, 
+                    newName, 
+                    ct).ConfigureAwait(false);
                 
                 bool success = false;
                 int retries = 3;

@@ -14,6 +14,7 @@ Path: {solutionPath}
 ## OPERATING INSTRUCTIONS
 - Start your response with a `## PLAN` section describing your thought process.
 - Use the available tools to COMPLETE the requested task. Do not just talk about it.
+- **SILENT TOOL CALLING**: Do NOT print JSON tool calls or raw technical JSON blocks in your text response. Use the native tool call mechanism silently.
 - **NO HALLUCINATIONS**: Never claim you modified a file or completed a task if a tool execution failed or was skipped.
 - **FALLBACKS**: If a tool fails (e.g. `rename_symbol` failed), immediately try another way (e.g. `replace_text`).
 - Only report the task as done when you are certain the changes are physically applied and verified.

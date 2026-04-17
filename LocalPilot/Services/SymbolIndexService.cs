@@ -88,23 +88,40 @@ namespace LocalPilot.Services
 
         public async Task<string> RenameSymbolAsync(string filePath, int line, int column, string newName, CancellationToken ct)
         {
-            // 🛡️ CIRCUIT BREAKER: Tiered Execution
+            var reports = new List<string>();
+            
+            // 🛡️ CIRCUIT BREAKER: Tiered Execution with Diagnostic Aggregation
             using (var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(ct))
             {
-                timeoutSource.CancelAfter(4000); // 4s timeout
+                timeoutSource.CancelAfter(60000); // 60s timeout for deep semantic analysis
                 
                 foreach (var provider in GetOrderedProviders(filePath))
                 {
+                    string tierName = provider.GetType().Name.Replace("SemanticProvider", "");
                     try
                     {
                         string result = await provider.RenameSymbolAsync(filePath, line, column, newName, timeoutSource.Token);
                         if (!string.IsNullOrEmpty(result) && !result.StartsWith("Error")) return result;
+                        
+                        reports.Add($"{tierName}: {result ?? "No response"}");
                     }
-                    catch (OperationCanceledException) { break; }
-                    catch { continue; }
+                    catch (OperationCanceledException) 
+                    { 
+                        reports.Add($"{tierName}: Timed out (>60000ms)");
+                        break; 
+                    }
+                    catch (Exception ex) 
+                    { 
+                        reports.Add($"{tierName}: Failed ({ex.Message})");
+                        continue; 
+                    }
                 }
             }
-            return "Error: Refactoring failed across all semantic tiers. Please fall back to 'replace_text'.";
+
+            string fullReport = string.Join(" | ", reports);
+            LocalPilotLogger.Log($"[SymbolIndex] Rename failed. Tier Reports: {fullReport}");
+            
+            return $"Error: Refactoring failed. Detailed Diagnostics: [{fullReport}]. Suggestion: Fall back to 'replace_text'.";
         }
     }
 }

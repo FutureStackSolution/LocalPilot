@@ -389,8 +389,30 @@ namespace LocalPilot.Services
                             }
                         }
 
-                        var result = await _toolRegistry.ExecuteToolAsync(toolCall.Name, toolCall.Arguments, ct);
+                        // 🚀 DYNAMIC STATUS UPDATES: Let the user know exactly what the engine is doing
+                        string status = $"Executing {toolCall.Name}...";
+                        if (toolCall.Name == "rename_symbol") status = "Analyzing symbol with Roslyn (Tier 1)...";
+                        else if (toolCall.Name == "grep_search") status = "Searching project files...";
+                        else if (toolCall.Name == "list_errors") status = "Checking for build errors...";
+                        
+                        OnStatusUpdate?.Invoke(AgentStatus.Thinking, status);
+
+                        // 🛡️ REFACTORING FALLBACK STATUS: If a tool takes more than 5s, we give a 'Deep Analysis' update
+                        var toolTask = _toolRegistry.ExecuteToolAsync(toolCall.Name, toolCall.Arguments, ct);
+                        var delayTask = Task.Delay(5000); // 5s pulse
+                        
+                        var completedTask = await Task.WhenAny(toolTask, delayTask);
+                        if (completedTask == delayTask && toolCall.Name == "rename_symbol")
+                        {
+                            OnStatusUpdate?.Invoke(AgentStatus.Thinking, "Roslyn performing deep project-wide analysis...");
+                        }
+
+                        var sw = System.Diagnostics.Stopwatch.StartNew();
+                        var result = await toolTask;
+                        sw.Stop();
+                        
                         OnToolCallCompleted?.Invoke(toolCall, result);
+                        LocalPilotLogger.Log($"[Agent] Tool '{toolCall.Name}' executed in {sw.ElapsedMilliseconds}ms. Success: {!result.IsError}");
 
                         string output = result.Output ?? string.Empty;
                         if (output.Length > 8000) output = output.Substring(0, 8000) + "... [Truncated]";
@@ -502,6 +524,9 @@ namespace LocalPilot.Services
             var rawPattern = @"(?s)\{\s*""name""\s*:\s*""[^""]+""\s*,\s*""arguments"".*?\}";
             cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, rawPattern, string.Empty);
             
+            // 3. Remove thinking process if still present in raw text
+            cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, @"(?s)<thought>.*?</thought>", string.Empty);
+
             return cleaned.Trim();
         }
 

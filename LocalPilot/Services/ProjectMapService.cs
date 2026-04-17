@@ -51,7 +51,7 @@ namespace LocalPilot.Services
             });
         }
         private static readonly string[] ExcludedDirs = {
-            "bin", "obj", ".git", ".vs", "node_modules", "packages", "vendor", "dist", "build", "testresults", "artifacts"
+            "bin", "obj", ".git", ".vs", "node_modules", "packages", "vendor", "dist", "build", "testresults", "artifacts", ".localpilot"
         };
 
         private static readonly string[] AllowedExtensions = {
@@ -194,13 +194,8 @@ namespace LocalPilot.Services
 
         private bool IsExcluded(string path)
         {
-            foreach (var d in ExcludedDirs)
-            {
-                if (path.Contains(Path.DirectorySeparatorChar + d + Path.DirectorySeparatorChar) || 
-                    path.Contains(Path.AltDirectorySeparatorChar + d + Path.AltDirectorySeparatorChar))
-                    return true;
-            }
-            return false;
+            var segments = path.Split(new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar }, StringSplitOptions.RemoveEmptyEntries);
+            return segments.Any(s => ExcludedDirs.Contains(s, StringComparer.OrdinalIgnoreCase));
         }
 
         public async Task<string> GetLiveContentAsync(string filePath)

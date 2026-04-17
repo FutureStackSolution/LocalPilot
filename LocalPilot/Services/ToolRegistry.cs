@@ -140,6 +140,12 @@ namespace LocalPilot.Services
         {
             if (string.IsNullOrEmpty(path)) return WorkspaceRoot;
 
+            // 🛡️ SECURITY GUARD: Block access to internal metadata
+            if (IsInternalMetadata(path))
+            {
+                throw new UnauthorizedAccessException($"Access to internal metadata directory '.localpilot' is restricted. Please target source files in the project instead.");
+            }
+
             // 1. Already absolute and exists: use as-is
             if (Path.IsPathRooted(path) && File.Exists(path)) return path;
 
@@ -148,7 +154,6 @@ namespace LocalPilot.Services
             if (File.Exists(combined)) return combined;
 
             // 3. Fuzzy fallback: search workspace for a file with the same name.
-            // Handles the case where the model says "Program.cs" but it's in a subdirectory.
             if (!string.IsNullOrEmpty(WorkspaceRoot) && Directory.Exists(WorkspaceRoot))
             {
                 string fileName = Path.GetFileName(path);
@@ -157,7 +162,7 @@ namespace LocalPilot.Services
                     try
                     {
                         var matches = Directory.GetFiles(WorkspaceRoot, fileName, SearchOption.AllDirectories)
-                            .Where(f => !f.Contains("\\.git\\") && !f.Contains("\\bin\\") && !f.Contains("\\obj\\"))
+                            .Where(f => !f.Contains("\\.git\\") && !f.Contains("\\bin\\") && !f.Contains("\\obj\\") && !f.Contains("\\.localpilot\\"))
                             .ToList();
 
                         if (matches.Count == 1)
@@ -165,20 +170,21 @@ namespace LocalPilot.Services
                             LocalPilotLogger.Log($"[ResolvePath] Fuzzy matched '{path}' -> '{matches[0]}'");
                             return matches[0];
                         }
-                        if (matches.Count > 1)
-                        {
-                            var best = matches.FirstOrDefault(m => m.Replace("\\", "/").Contains(path.Replace("\\", "/")));
-                            if (best != null) return best;
-                            LocalPilotLogger.Log($"[ResolvePath] Multiple matches for '{fileName}', returning first.");
-                            return matches[0];
-                        }
                     }
                     catch { }
                 }
             }
 
-            // 4. Return combined path — tool will give a clear error if still not found
             return combined;
+        }
+
+        private bool IsInternalMetadata(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return false;
+            var pathLower = path.ToLowerInvariant();
+            return pathLower.Contains(Path.DirectorySeparatorChar + ".localpilot") || 
+                   pathLower.Contains(Path.AltDirectorySeparatorChar + ".localpilot") ||
+                   pathLower.StartsWith(".localpilot");
         }
     }
 
@@ -297,7 +303,9 @@ namespace LocalPilot.Services
             var path = _registry.ResolvePath(pathObj.ToString());
             if (!Directory.Exists(path)) return new ToolResponse { IsError = true, Output = $"Directory not found: {path}" };
 
-            var entries = Directory.GetFileSystemEntries(path);
+            var entries = Directory.GetFileSystemEntries(path)
+                .Where(e => !e.Contains(Path.DirectorySeparatorChar + ".localpilot") && !e.EndsWith(".localpilot"))
+                .ToList();
             return new ToolResponse { Output = string.Join("\n", entries) };
         }
     }
@@ -366,7 +374,7 @@ namespace LocalPilot.Services
             try
             {
                 var matches = new List<string>();
-                var excludedFolders = new[] { ".git", ".vs", "bin", "obj", "node_modules", ".gemini" };
+                var excludedFolders = new[] { ".git", ".vs", "bin", "obj", "node_modules", ".gemini", ".localpilot" };
 
                 // Optimization: Pre-enumerate files to avoid UI switches inside loop
                 var fileList = File.Exists(path) 
@@ -415,7 +423,7 @@ namespace LocalPilot.Services
         private readonly ToolRegistry _registry;
         public ReplaceTextTool(ToolRegistry registry) => _registry = registry;
         public string Name => "replace_text";
-        public string Description => "Replace a specific block of text in a file. The 'old_text' MUST match the file content EXACTLY, including whitespace and line endings. Use unique, small blocks for precision.";
+        public string Description => "Replace a specific block of text in a file. The 'path' MUST be a specific FILE (e.g., Program.cs), not a directory. The 'old_text' MUST match the file content EXACTLY.";
         public string ParameterSchema => "{ \"path\": \"string\", \"old_text\": \"string\", \"new_text\": \"string\" }";
 
         public async Task<ToolResponse> ExecuteAsync(Dictionary<string, object> args, CancellationToken ct)
@@ -597,7 +605,7 @@ namespace LocalPilot.Services
         private readonly ToolRegistry _registry;
         public RenameSymbolTool(ToolRegistry registry) => _registry = registry;
         public string Name => "rename_symbol";
-        public string Description => "Renames a symbol (method, class, variable) project-wide using Visual Studio's native refactoring engine. This is 100% accurate and faster than replace_text.";
+        public string Description => "Renames a symbol project-wide using Roslyn. The 'path' MUST be a specific file. YOU MUST RUN 'read_file' FIRST to get the current correct line and column numbers before calling this tool.";
         public string ParameterSchema => "{ \"path\": \"string\", \"line\": \"integer\", \"column\": \"integer\", \"new_name\": \"string\" }";
 
         public async Task<ToolResponse> ExecuteAsync(Dictionary<string, object> args, CancellationToken ct)

@@ -302,7 +302,12 @@ namespace LocalPilot.Services
         {
             var ext = Path.GetExtension(path).ToLower();
             string[] allowed = { ".cs", ".xaml", ".json", ".xml", ".css", ".js", ".md", ".csproj", ".sln", ".slnx" };
-            return allowed.Contains(ext) && !path.Contains("\\obj\\") && !path.Contains("\\bin\\");
+            
+            // 🛡️ ARCHITECT FIX: Hard exclude metadata and build artifacts
+            if (path.Contains("\\.localpilot\\") || path.Contains("\\obj\\") || path.Contains("\\bin\\") || path.Contains("\\.vs\\"))
+                return false;
+
+            return allowed.Contains(ext);
         }
 
         private List<string> ChunkContent(string path, string content)
