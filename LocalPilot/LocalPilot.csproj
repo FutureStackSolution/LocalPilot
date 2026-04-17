@@ -67,6 +67,10 @@
     <Compile Include="Services\ToolRegistry.cs" />
     <Compile Include="Services\SymbolIndexService.cs" />
     <Compile Include="Services\PromptLoader.cs" />
+    <Compile Include="Services\ISemanticProvider.cs" />
+    <Compile Include="Services\RoslynSemanticProvider.cs" />
+    <Compile Include="Services\LspSemanticProvider.cs" />
+    <Compile Include="Services\LocalParserProvider.cs" />
     <!-- Models -->
     <Compile Include="Models\AgentModels.cs" />
     <!-- Settings -->

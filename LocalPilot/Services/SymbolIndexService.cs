@@ -2,184 +2,109 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.FindSymbols;
-using Microsoft.VisualStudio.ComponentModelHost;
-using Microsoft.VisualStudio.LanguageServices;
-using Microsoft.VisualStudio.Shell;
+using LocalPilot.Models;
 
 namespace LocalPilot.Services
 {
     /// <summary>
-    /// Professional LSP-backed symbol service.
-    /// Replaces regex indexing with the native Roslyn (Microsoft.CodeAnalysis) engine.
+    /// Senior Architect Grade Dispatcher.
+    /// Implements the 3-Tier Semantic Priority Chain:
+    /// 1. Roslyn (Native .NET)
+    /// 2. LSP (Language Servers)
+    /// 3. Local Parser (Structural Heuristics)
     /// </summary>
     public class SymbolIndexService
     {
         private static readonly SymbolIndexService _instance = new SymbolIndexService();
         public static SymbolIndexService Instance => _instance;
 
-        private VisualStudioWorkspace _workspace;
-        private readonly object _lock = new object();
+        private readonly List<ISemanticProvider> _providers = new List<ISemanticProvider>();
 
         private SymbolIndexService() 
         {
-            InitializeWorkspaceSync();
+            // 🛡️ ARCHITECTURE STRATEGY: Priority Registry
+            _providers.Add(new RoslynSemanticProvider()); // Priority 1
+            _providers.Add(new LspSemanticProvider());    // Priority 2
+            _providers.Add(new LocalParserProvider());   // Priority 3 (Fallback)
         }
 
-        private void InitializeWorkspaceSync()
+        public RoslynSemanticProvider GetRoslynProvider()
         {
-            ThreadHelper.JoinableTaskFactory.Run(async () =>
-            {
-                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                var componentModel = (IComponentModel)Package.GetGlobalService(typeof(SComponentModel));
-                _workspace = componentModel.GetService<VisualStudioWorkspace>();
-            });
+            return _providers.OfType<RoslynSemanticProvider>().FirstOrDefault();
         }
 
-        public async Task<List<SymbolLocation>> FindDefinitionsAsync(string symbolName)
+        private IEnumerable<ISemanticProvider> GetOrderedProviders(string filePath)
         {
-            if (_workspace == null) return new List<SymbolLocation>();
+            string ext = Path.GetExtension(filePath ?? "").ToLowerInvariant();
+            return _providers.Where(p => p.CanHandle(ext)).Concat(_providers.Where(p => !p.CanHandle(ext))).Distinct();
+        }
 
-            var solution = _workspace.CurrentSolution;
-            var results = new List<SymbolLocation>();
+        public async Task<List<SymbolLocation>> FindDefinitionsAsync(string symbolName, CancellationToken ct)
+        {
+            // Race check: Fast cache first
+            var cachedMatches = ProjectMapService.Instance.FindSymbols(symbolName);
+            if (cachedMatches.Any()) return cachedMatches.ToList();
 
-            foreach (var project in solution.Projects)
+            // Chain of Responsibility: Task-based fallback
+            foreach (var provider in GetOrderedProviders(null))
             {
-                var compilation = await project.GetCompilationAsync();
-                if (compilation == null) continue;
-
-                // Find symbols with matching names
-                var symbols = compilation.GetSymbolsWithName(s => s.Equals(symbolName, StringComparison.OrdinalIgnoreCase));
-
-                foreach (var sym in symbols)
-                {
-                    foreach (var loc in sym.Locations)
-                    {
-                        if (loc.IsInSource)
-                        {
-                            var lineSpan = loc.GetLineSpan();
-                            results.Add(new SymbolLocation
-                            {
-                                Name = sym.Name,
-                                FilePath = lineSpan.Path,
-                                Line = lineSpan.StartLinePosition.Line + 1,
-                                Column = lineSpan.StartLinePosition.Character + 1,
-                                Kind = sym.Kind.ToString()
-                            });
-                        }
-                    }
-                }
+                if (ct.IsCancellationRequested) break;
+                var results = await provider.FindDefinitionsAsync(symbolName, ct);
+                if (results != null && results.Any()) return results;
             }
-
-            return results;
+            return new List<SymbolLocation>();
         }
 
         public string GetSummary()
         {
-            // We no longer need to output 150 names; Roslyn handles it on demand.
-            return "INTELLIGENCE: LSP (Roslyn) Active. The agent can pinpoint any symbol in the solution.";
+            return string.Join(" ", _providers.Select(p => p.GetSummary()));
         }
 
-        public async Task<string> GetNeighborhoodContextAsync(string filePath)
+        public async Task<string> GetNeighborhoodContextAsync(string filePath, CancellationToken ct)
         {
-            if (_workspace == null) return null;
-
-            // 🌐 MULTI-LANGUAGE SEMANTIC ENGINE
-            string ext = Path.GetExtension(filePath).ToLowerInvariant();
-            if (ext != ".cs")
+            foreach (var provider in GetOrderedProviders(filePath))
             {
-                try
-                {
-                    string content = File.ReadAllText(filePath);
-                    var sb = new System.Text.StringBuilder();
-                    sb.AppendLine($"## SEMANTIC CONTEXT: {Path.GetFileName(filePath)}");
-
-                    // Directory Awareness (First 15 files)
-                    var dir = Path.GetDirectoryName(filePath);
-                    var files = Directory.GetFiles(dir).Select(Path.GetFileName).Take(15);
-                    sb.AppendLine($"Folder [{dir}]: " + string.Join(", ", files));
-
-                    switch (ext)
-                    {
-                        case ".ts":
-                        case ".tsx":
-                        case ".js":
-                        case ".jsx":
-                            // TS/React: Exports, Interfaces, Hooks, Selectors
-                            var webMatches = System.Text.RegularExpressions.Regex.Matches(content, @"export\s+(?:class|interface|type|const|function|enum)\s+(?<name>[a-zA-Z_]\w*)");
-                            foreach (System.Text.RegularExpressions.Match m in webMatches) sb.AppendLine($" - Symbol: {m.Groups["name"].Value}");
-                            if (content.Contains("useEffect") || content.Contains("useState")) sb.AppendLine(" - Tech: React (Functional/Hooks)");
-                            if (content.Contains("@Component")) sb.AppendLine(" - Tech: Angular/NestJS Decorator Found");
-                            break;
-
-                        case ".py":
-                            // Python: Classes, Functions, Imports
-                            var pyMatches = System.Text.RegularExpressions.Regex.Matches(content, @"(?:class|def)\s+(?<name>[a-zA-Z_]\w*)");
-                            foreach (System.Text.RegularExpressions.Match m in pyMatches) sb.AppendLine($" - Python Symbol: {m.Groups["name"].Value}");
-                            if (content.Contains("import ")) sb.AppendLine(" - Note: Contains external imports");
-                            break;
-
-                        case ".go":
-                            // Go: Package, Func, Type, Struct
-                            var goPackage = System.Text.RegularExpressions.Regex.Match(content, @"package\s+(?<name>\w+)");
-                            if (goPackage.Success) sb.AppendLine($" - Go Package: {goPackage.Groups["name"].Value}");
-                            var goMatches = System.Text.RegularExpressions.Regex.Matches(content, @"type\s+(?<name>\w+)\s+(?:struct|interface)");
-                            foreach (System.Text.RegularExpressions.Match m in goMatches) sb.AppendLine($" - Go Type: {m.Groups["name"].Value}");
-                            break;
-
-                        case ".vue":
-                        case ".svelte":
-                            sb.AppendLine($" - Tech: Single File Component ({ext})");
-                            if (content.Contains("<script")) sb.AppendLine(" - Contains Logic Block");
-                            if (content.Contains("<template")) sb.AppendLine(" - Contains View Block");
-                            break;
-
-                        case ".json":
-                            if (filePath.EndsWith("package.json")) sb.AppendLine(" - Type: Node.js Manifest (Check for scripts/dependencies)");
-                            else if (filePath.EndsWith("tsconfig.json")) sb.AppendLine(" - Type: TypeScript Config");
-                            break;
-                    }
-
-                    return sb.ToString();
-                }
-                catch { return null; }
+                if (ct.IsCancellationRequested) break;
+                string context = await provider.GetNeighborhoodContextAsync(filePath, ct);
+                if (!string.IsNullOrEmpty(context)) return context;
             }
-
-            // 🚀 C# SEMANTIC NEIGHBORHOOD (Roslyn)
-            var solution = _workspace.CurrentSolution;
-            var document = solution.GetDocumentIdsWithFilePath(filePath).Select(solution.GetDocument).FirstOrDefault();
-            
-            if (document == null) return null;
-
-            var semanticModel = await document.GetSemanticModelAsync();
-            var root = await document.GetSyntaxRootAsync();
-            
-            var csSb = new System.Text.StringBuilder();
-            csSb.AppendLine($"## SEMANTIC NEIGHBORHOOD: {Path.GetFileName(filePath)}");
-
-            var classes = root.DescendantNodes().OfType<Microsoft.CodeAnalysis.CSharp.Syntax.ClassDeclarationSyntax>();
-            foreach (var cls in classes)
-            {
-                if (semanticModel.GetDeclaredSymbol(cls) is INamedTypeSymbol sym)
-                {
-                    csSb.AppendLine($" - Class: {sym.Name}");
-                    if (sym.Interfaces.Length > 0)
-                        csSb.AppendLine($"   Implements: {string.Join(", ", sym.Interfaces.Select(i => i.Name))}");
-                }
-            }
-
-            return csSb.ToString();
+            return null;
         }
-    }
 
-    public class SymbolLocation
-    {
-        public string Name { get; set; }
-        public string FilePath { get; set; }
-        public int Line { get; set; }
-        public int Column { get; set; }
-        public string Kind { get; set; }
+        public async Task<string> GetDiagnosticsAsync(CancellationToken ct)
+        {
+            var sb = new System.Text.StringBuilder();
+            foreach (var p in _providers)
+            {
+                if (ct.IsCancellationRequested) break;
+                string diag = await p.GetDiagnosticsAsync(ct);
+                if (!string.IsNullOrEmpty(diag)) sb.Append(diag);
+            }
+            string result = sb.ToString().Trim();
+            return string.IsNullOrEmpty(result) ? null : result;
+        }
+
+        public async Task<string> RenameSymbolAsync(string filePath, int line, int column, string newName, CancellationToken ct)
+        {
+            // 🛡️ CIRCUIT BREAKER: Tiered Execution
+            using (var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(ct))
+            {
+                timeoutSource.CancelAfter(4000); // 4s timeout
+                
+                foreach (var provider in GetOrderedProviders(filePath))
+                {
+                    try
+                    {
+                        string result = await provider.RenameSymbolAsync(filePath, line, column, newName, timeoutSource.Token);
+                        if (!string.IsNullOrEmpty(result) && !result.StartsWith("Error")) return result;
+                    }
+                    catch (OperationCanceledException) { break; }
+                    catch { continue; }
+                }
+            }
+            return "Error: Refactoring failed across all semantic tiers. Please fall back to 'replace_text'.";
+        }
     }
 }

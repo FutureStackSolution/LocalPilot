@@ -420,38 +420,58 @@ namespace LocalPilot.Chat
 
                 if (request.Name == "read_file")
                 {
-                    displayName = "Explored 1 file";
+                    displayName = "Reading file";
                     object val = null;
                     request.Arguments?.TryGetValue("path", out val);
-                    detail = "File: " + System.IO.Path.GetFileName(val?.ToString() ?? "unknown");
+                    detail = System.IO.Path.GetFileName(val?.ToString() ?? "unknown");
                 }
                 else if (request.Name == "grep_search")
                 {
-                    displayName = "Searched codebase";
-                    object val = null;
-                    request.Arguments?.TryGetValue("pattern", out val);
-                    detail = "Search: " + val?.ToString();
+                    displayName = "Searching codebase";
+                    detail = null; 
                 }
                 else if (request.Name == "list_directory")
                 {
-                    displayName = "Exploring project structure";
-                    object val = null;
-                    request.Arguments?.TryGetValue("path", out val);
-                    detail = "Directory: " + val?.ToString();
+                    displayName = "Exploring directory";
+                    detail = null;
                 }
-                else if (request.Name == "write_file" || request.Name == "replace_text" || request.Name == "rename_symbol")
+                else if (request.Name == "write_file" || request.Name == "replace_text" || request.Name == "write_to_file" || request.Name == "replace_file_content")
                 {
-                    displayName = "Edited 1 file";
+                    displayName = "Updating code";
                     object val = null;
-                    request.Arguments?.TryGetValue("path", out val);
-                    detail = "File: " + System.IO.Path.GetFileName(val?.ToString() ?? "unknown");
+                    if (request.Arguments?.TryGetValue("TargetFile", out val) != true)
+                        request.Arguments?.TryGetValue("path", out val);
+
+                    detail = System.IO.Path.GetFileName(val?.ToString() ?? "unknown");
                 }
                 else if (request.Name == "run_terminal")
                 {
-                    displayName = "Executed command";
+                    displayName = "Running command";
+                    detail = null;
+                }
+                else if (request.Name == "delete_file")
+                {
+                    displayName = "Deleting file";
                     object val = null;
-                    request.Arguments?.TryGetValue("command", out val);
-                    detail = "Command: " + val?.ToString();
+                    request.Arguments?.TryGetValue("path", out val);
+                    detail = System.IO.Path.GetFileName(val?.ToString() ?? "unknown");
+                }
+                else if (request.Name == "rename_symbol")
+                {
+                    displayName = "Refactoring symbol";
+                    object val = null;
+                    request.Arguments?.TryGetValue("new_name", out val);
+                    detail = val?.ToString();
+                }
+                else if (request.Name == "list_errors")
+                {
+                    displayName = "Checking for errors";
+                    detail = null;
+                }
+                else if (request.Name == "run_tests")
+                {
+                    displayName = "Running tests";
+                    detail = null;
                 }
 
                 // Reset chunk tracking to force a NEW narrative block for any text following this action

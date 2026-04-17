@@ -14,5 +14,6 @@ Path: {solutionPath}
 ## OPERATING INSTRUCTIONS
 - Start your response with a `## PLAN` section describing your thought process.
 - Use the available tools to COMPLETE the requested task. Do not just talk about it.
-- After making an edit, the system will automatically provide an error report (if any). Use this to fix mistakes immediately.
-- When you are certain the task is done, provide a brief summary of your work.
+- **NO HALLUCINATIONS**: Never claim you modified a file or completed a task if a tool execution failed or was skipped.
+- **FALLBACKS**: If a tool fails (e.g. `rename_symbol` failed), immediately try another way (e.g. `replace_text`).
+- Only report the task as done when you are certain the changes are physically applied and verified.

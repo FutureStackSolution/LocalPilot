@@ -4,7 +4,10 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using Microsoft.VisualStudio.Text;
+using LocalPilot.Models;
 
 namespace LocalPilot.Services
 {
@@ -14,14 +17,48 @@ namespace LocalPilot.Services
     /// </summary>
     public class ProjectMapService
     {
+        private static readonly ProjectMapService _instance = new ProjectMapService();
+        public static ProjectMapService Instance => _instance;
+
+        public ProjectMapService()
+        {
+            // 🚀 SENIOR ARCHITECT PATTERN: Hook into IDE events for Incremental Updates
+            _ = Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.RunAsync(async () => {
+                await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                Community.VisualStudio.Toolkit.VS.Events.DocumentEvents.Saved += OnDocumentSaved;
+            });
+        }
+
+        private void OnDocumentSaved(string filePath)
+        {
+            // Trigger background re-indexing of the saved file
+            _ = Task.Run(async () => {
+                try {
+                    if (!AllowedExtensions.Contains(Path.GetExtension(filePath).ToLowerInvariant())) return;
+                    string content = File.ReadAllText(filePath);
+                    
+                    // Clear old entries for this file before re-indexing
+                    lock (_symbolIndex)
+                    {
+                        foreach (var key in _symbolIndex.Keys.ToList())
+                        {
+                            _symbolIndex[key].RemoveAll(l => l.FilePath == filePath);
+                        }
+                    }
+                    IndexSymbols(filePath, content);
+                    LocalPilotLogger.Log($"[SymbolIndex] Incrementally updated: {Path.GetFileName(filePath)}");
+                } catch { /* Silent fail for background indexing */ }
+            });
+        }
         private static readonly string[] ExcludedDirs = {
             "bin", "obj", ".git", ".vs", "node_modules", "packages", "vendor", "dist", "build", "testresults", "artifacts"
         };
 
         private static readonly string[] AllowedExtensions = {
-            ".cs", ".js", ".ts", ".py", ".md", ".txt", ".json", ".xml", ".html", ".css", ".csproj", ".sln", ".slnx", ".cshtml", ".vbhtml", ".sh", ".ps1"
+            ".cs", ".js", ".ts", ".tsx", ".py", ".go", ".rs", ".cpp", ".h", ".hpp", ".swift", ".java", ".md", ".txt", ".json", ".xml", ".html", ".css", ".csproj", ".sln", ".slnx", ".cshtml", ".vbhtml", ".sh", ".ps1", ".yml", ".yaml"
         };
 
+        private Dictionary<string, List<SymbolLocation>> _symbolIndex = new Dictionary<string, List<SymbolLocation>>(StringComparer.OrdinalIgnoreCase);
         private string _cachedMap = null;
         private string _lastRoot = null;
         private readonly SemaphoreSlim _lock = new SemaphoreSlim(1, 1);
@@ -107,7 +144,7 @@ namespace LocalPilot.Services
                 // 2. Persist to disk for smarter loading next session
                 await SaveToDiskAsync(rootPath);
                 
-                LocalPilotLogger.Log($"[ProjectMap] Snapshot complete ({_cachedMap.Length} bytes).");
+                LocalPilotLogger.Log($"[ProjectMap] Snapshot complete ({_cachedMap.Length} bytes). Processed {files.Count} files.");
                 return _cachedMap;
             }
             finally
@@ -166,22 +203,45 @@ namespace LocalPilot.Services
             return false;
         }
 
+        public async Task<string> GetLiveContentAsync(string filePath)
+        {
+            try
+            {
+                await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                var doc = await Community.VisualStudio.Toolkit.VS.Documents.GetDocumentViewAsync(filePath);
+                if (doc?.TextBuffer != null)
+                {
+                    return doc.TextBuffer.CurrentSnapshot.GetText();
+                }
+            }
+            catch { /* Fallback to disk */ }
+
+            return await Task.Run(() => File.ReadAllText(filePath));
+        }
+
+        public async Task<Stream> GetLiveStreamAsync(string filePath)
+        {
+            // 🛡️ MEMORY CEILING FIX: Convert live content to stream
+            string content = await GetLiveContentAsync(filePath);
+            return new MemoryStream(Encoding.UTF8.GetBytes(content));
+        }
+
         private async Task<string> ReadFilePrefixAsync(string filePath, int bytesToRead)
         {
             try
             {
                 if (IsBinaryFile(filePath)) return "[Binary/Excluded]";
 
-                using (var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, true))
-                using (var reader = new StreamReader(stream))
-                {
-                    char[] buffer = new char[bytesToRead];
-                    int read = await reader.ReadAsync(buffer, 0, bytesToRead);
-                    var text = new string(buffer, 0, read);
-                    
-                    if (read == bytesToRead) return text + "... [Truncated]";
-                    return text;
-                }
+                // 🚀 SENIOR ARCHITECT FIX: Prioritize Live Buffer over Disk
+                string content = await GetLiveContentAsync(filePath);
+                
+                string text = content.Length > bytesToRead ? content.Substring(0, bytesToRead) : content;
+                
+                // 🚀 POPULATE FAST INDEX
+                IndexSymbols(filePath, text);
+
+                if (content.Length > bytesToRead) return text + "... [Truncated]";
+                return text;
             }
             catch { return "[Access Denied]"; }
         }
@@ -202,6 +262,64 @@ namespace LocalPilot.Services
             }
             catch { }
             return false;
+        }
+
+        public IReadOnlyList<SymbolLocation> FindSymbols(string name)
+        {
+            if (_symbolIndex.TryGetValue(name, out var list)) return list;
+            return new List<SymbolLocation>();
+        }
+
+        private void IndexSymbols(string filePath, string content)
+        {
+            string ext = Path.GetExtension(filePath).ToLowerInvariant();
+            if (ext != ".cs" && ext != ".js" && ext != ".ts" && ext != ".py") return;
+
+            // 🚀 Lightning Fast Regex Indexer
+            // Targets: Classes, Interfaces, Methods, Functions
+            var patterns = new[] {
+                @"(?:class|interface|struct)\s+(?<name>[a-zA-Z_]\w*)", // Type declarations
+                @"(?:public|private|internal|protected|static|async|virtual)?\s+(?:(?<type>[a-zA-Z_][\w\<\>\[\]]*)\s+)?(?<name>[a-zA-Z_]\w*)\s*\((?<args>[^\)]*)\)\s*\{" // Method-like
+            };
+
+            foreach (var pattern in patterns)
+            {
+                var matches = Regex.Matches(content, pattern);
+                foreach (Match m in matches)
+                {
+                    var name = m.Groups["name"].Value;
+                    if (string.IsNullOrEmpty(name) || name == "if" || name == "foreach" || name == "while" || name == "switch") continue;
+
+                    var loc = new SymbolLocation
+                    {
+                        Name = name,
+                        FilePath = filePath,
+                        Line = GetLineNumber(content, m.Index),
+                        Column = 1,
+                        Kind = m.Value.Contains("class") ? "Class" : "Method"
+                    };
+
+                    lock (_symbolIndex)
+                    {
+                        if (!_symbolIndex.ContainsKey(name)) _symbolIndex[name] = new List<SymbolLocation>();
+                        // Prevent duplicates
+                        if (!_symbolIndex[name].Any(l => l.FilePath == filePath && l.Line == loc.Line))
+                        {
+                            _symbolIndex[name].Add(loc);
+                        }
+                    }
+                }
+            }
+        }
+
+        private int GetLineNumber(string content, int index)
+        {
+            int line = 1;
+            for (int i = 0; i < index && i < content.Length; i++)
+            {
+                if (content[i] == '\n') line++;
+            }
+            return line;
         }
 
         private string GetRelativePath(string rootPath, string fullPath)

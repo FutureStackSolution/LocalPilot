@@ -82,10 +82,10 @@ namespace LocalPilot.Services
             _toolRegistry.WorkspaceRoot = solutionPath;
 
             // 🚀 UNIFIED CONTEXT PIPELINE: Proactively gather implicit context (Errors, Git, Symbols)
-            string implicitContext = await GetUnifiedContextAsync(solutionPath);
-            if (!string.IsNullOrEmpty(implicitContext))
+            string unifiedContext = await GetUnifiedContextAsync(solutionPath, ct);
+            if (!string.IsNullOrEmpty(unifiedContext))
             {
-                messages.Add(new ChatMessage { Role = "system", Content = implicitContext });
+                messages.Add(new ChatMessage { Role = "system", Content = unifiedContext });
             }
 
             // ═══════════════════════════════════════════════════════════════════
@@ -185,7 +185,7 @@ namespace LocalPilot.Services
 
             foreach (var name in PascalNames)
             {
-                var locs = await SymbolIndexService.Instance.FindDefinitionsAsync(name);
+                var locs = await SymbolIndexService.Instance.FindDefinitionsAsync(name, ct);
                 if (locs != null && locs.Any())
                 {
                     var loc = locs.First();
@@ -215,7 +215,7 @@ namespace LocalPilot.Services
                 if (activeDoc?.FilePath != null)
                 {
                     // 🚀 AUTO-RAG: Inject semantic neighborhood awareness
-                    string neighborhood = await SymbolIndexService.Instance.GetNeighborhoodContextAsync(activeDoc.FilePath);
+                    string neighborhood = await SymbolIndexService.Instance.GetNeighborhoodContextAsync(activeDoc.FilePath, ct);
                     if (!string.IsNullOrEmpty(neighborhood))
                     {
                         messages.Add(new ChatMessage { Role = "system", Content = neighborhood });
@@ -274,11 +274,12 @@ namespace LocalPilot.Services
                 }
 
                 var responseText = responseBuilder.ToString();
+                var cleanText = StripToolCalls(responseText);
 
                 // Show completed message text (if any)
-                if (!string.IsNullOrWhiteSpace(responseText))
+                if (!string.IsNullOrWhiteSpace(cleanText))
                 {
-                    OnMessageCompleted?.Invoke(responseText);
+                    OnMessageCompleted?.Invoke(cleanText);
                 }
 
                 // Add assistant response to history
@@ -298,6 +299,8 @@ namespace LocalPilot.Services
                 // 3. Process tool calls (if any)
                 if (toolCallsThisTurn.Any())
                 {
+                    bool stepHasMeaningfulResult = false;
+                    
                     // Filter out unknown tools
                     var validToolCalls = toolCallsThisTurn
                         .Where(tc => _toolRegistry.HasTool(tc.Name))
@@ -401,19 +404,52 @@ namespace LocalPilot.Services
                             });
                         }
 
-                        // 🚀 AUTO-VERIFICATION: If we edited code, immediately check for errors
-                        if (isWrite && !result.IsError)
+                        // 🛡️ ERROR FEEDBACK: Ensure model doesn't hallucinate success
+                        if (result.IsError)
                         {
-                            var diagResult = await GetVisibleDiagnosticsAsync();
-                            string verificationMsg = !string.IsNullOrEmpty(diagResult)
-                                ? $"[AUTO-VERIFY] Code changes detected new or existing errors:\n{diagResult}\n\nPlease fix these errors before proceeding."
-                                : "[AUTO-VERIFY] No compilation errors detected in the Error List.";
-                            
                             lock (messages)
                             {
-                                messages.Add(new ChatMessage { Role = "system", Content = verificationMsg });
+                                messages.Add(new ChatMessage 
+                                { 
+                                    Role = "system", 
+                                    Content = $"CRITICAL: Tool '{toolCall.Name}' failed. You MUST NOT claim success. " +
+                                              "You must acknowledge this failure in your next Plan and try an alternative approach (e.g., if rename failed, use replace_text)." 
+                                });
                             }
                         }
+                        else 
+                        {
+                            if (result.Output != "No matches found." && !result.Output.Contains("not found"))
+                            {
+                                stepHasMeaningfulResult = true;
+                            }
+
+                            // 🚀 AUTO-VERIFICATION: If we edited code, immediately check for errors
+                            if (isWrite)
+                            {
+                                var diagResult = await GetVisibleDiagnosticsAsync(ct);
+                                string verificationMsg = !string.IsNullOrEmpty(diagResult)
+                                    ? $"[AUTO-VERIFY] Code changes detected new or existing errors:\n{diagResult}\n\nPlease fix these errors before proceeding."
+                                    : "[AUTO-VERIFY] No compilation errors detected in the Error List.";
+                                
+                                lock (messages)
+                                {
+                                    messages.Add(new ChatMessage { Role = "system", Content = verificationMsg });
+                                }
+                            }
+                        }
+                    }
+
+                    if (!stepHasMeaningfulResult && !ct.IsCancellationRequested)
+                    {
+                        LocalPilotLogger.Log($"[Agent] Loop protection: Turn {step} produced no meaningful actions or results. Nudging model...");
+                        messages.Add(new ChatMessage 
+                        { 
+                            Role = "system", 
+                            Content = "Your last turn did not perform any successful file edits or find relevant information. " +
+                                      "If you were trying to rename or edit, verify the file path and line numbers. " +
+                                      "DO NOT repeat the same failed tool call. If 'rename_symbol' failed, use 'replace_text' instead." 
+                        });
                     }
                 }
                 else
@@ -450,6 +486,25 @@ namespace LocalPilot.Services
         /// Robust regex-based parser to catch tool calls embedded in markdown code blocks.
         /// Primarily used as a fallback for models that struggle with native tool-calling APIs.
         /// </summary>
+        /// <summary>
+        /// Removes JSON tool call blocks from the text to keep the UI clean 
+        /// and avoid showing technical details to the user.
+        /// </summary>
+        private string StripToolCalls(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return text;
+
+            // 1. Remove markdown-wrapped JSON tool calls (most common)
+            var mdPattern = @"(?s)```(?:json)?\s*\{.*?""name""\s*:\s*""[^""]+"".*?""arguments"".*?\}\s*```";
+            var cleaned = System.Text.RegularExpressions.Regex.Replace(text, mdPattern, string.Empty);
+            
+            // 2. Remove raw JSON tool calls (fallback)
+            var rawPattern = @"(?s)\{\s*""name""\s*:\s*""[^""]+""\s*,\s*""arguments"".*?\}";
+            cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, rawPattern, string.Empty);
+            
+            return cleaned.Trim();
+        }
+
         private List<ToolCallRequest> ParseJsonToolCalls(string text)
         {
             var results = new List<ToolCallRequest>();
@@ -534,12 +589,12 @@ namespace LocalPilot.Services
 
         // ── IMPLICIT CONTEXT PIPELINE ──────────────────────────────────────────
 
-        private async Task<string> GetUnifiedContextAsync(string solutionPath)
+        private async Task<string> GetUnifiedContextAsync(string solutionPath, CancellationToken ct)
         {
             var sb = new System.Text.StringBuilder();
 
             // 1. Diagnostics (Errors/Warnings)
-            string diags = await GetVisibleDiagnosticsAsync();
+            string diags = await GetVisibleDiagnosticsAsync(ct);
             if (!string.IsNullOrEmpty(diags))
             {
                 sb.AppendLine("## ACTIVE DIAGNOSTICS (ERROR LIST)");
@@ -559,31 +614,12 @@ namespace LocalPilot.Services
             return sb.ToString();
         }
 
-        private async Task<string> GetVisibleDiagnosticsAsync()
+        private async Task<string> GetVisibleDiagnosticsAsync(CancellationToken ct)
         {
             try
             {
-                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                var dte = Microsoft.VisualStudio.Shell.Package.GetGlobalService(typeof(global::EnvDTE.DTE)) as global::EnvDTE80.DTE2;
-                if (dte == null) return null;
-
-                var items = dte.ToolWindows.ErrorList.ErrorItems;
-                if (items.Count == 0) return null;
-
-                var sb = new System.Text.StringBuilder();
-                int count = 0;
-                for (int i = 1; i <= items.Count; i++)
-                {
-                    var item = items.Item(i);
-                    // Only show Errors (not warnings/info) to save tokens (1 = vsBuildErrorLevelHigh)
-                    if ((int)item.ErrorLevel == 1)
-                    {
-                        sb.AppendLine($"[ERROR] {item.Description} (at {Path.GetFileName(item.FileName)}:{item.Line})");
-                        count++;
-                        if (count >= 10) break; 
-                    }
-                }
-                return sb.ToString();
+                // Delegates to the appropriate provider (Roslyn vs Polyglot) via dispatcher
+                return await SymbolIndexService.Instance.GetDiagnosticsAsync(ct);
             }
             catch { return null; }
         }

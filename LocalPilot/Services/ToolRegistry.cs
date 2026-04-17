@@ -511,6 +511,10 @@ namespace LocalPilot.Services
                     File.WriteAllText(path, newContent);
                 }
 
+                // 🛡️ WORKSPACE SYNC: Ensure Roslyn sees this non-native edit
+                var roslyn = SymbolIndexService.Instance.GetRoslynProvider();
+                if (roslyn != null) await roslyn.SynchronizeDocumentAsync(path);
+
                 return new ToolResponse { Output = $"Successfully updated {path}." };
             }
             catch (Exception ex) { return new ToolResponse { IsError = true, Output = ex.Message }; }
@@ -529,21 +533,8 @@ namespace LocalPilot.Services
         {
             try
             {
-                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                var dte = Microsoft.VisualStudio.Shell.Package.GetGlobalService(typeof(global::EnvDTE.DTE)) as global::EnvDTE80.DTE2;
-                if (dte == null) return new ToolResponse { IsError = true, Output = "DTE2 not available." };
-
-                var sb = new System.Text.StringBuilder();
-                var errorList = dte.ToolWindows.ErrorList;
-                var items = errorList.ErrorItems;
-
-                for (int i = 1; i <= items.Count; i++)
-                {
-                    var item = items.Item(i);
-                    sb.AppendLine($"[{item.ErrorLevel}] {item.Description} (File: {item.FileName}, Line: {item.Line})");
-                }
-
-                return new ToolResponse { Output = items.Count > 0 ? sb.ToString() : "No errors or warnings found." };
+                var output = await SymbolIndexService.Instance.GetDiagnosticsAsync(ct);
+                return new ToolResponse { Output = output ?? "No errors found." };
             }
             catch (Exception ex) { return new ToolResponse { IsError = true, Output = ex.Message }; }
         }
@@ -618,40 +609,16 @@ namespace LocalPilot.Services
 
             try
             {
-                // 1. Open file and set focus
-                var docView = await VS.Documents.OpenAsync(path);
-                if (docView?.TextView == null) return new ToolResponse { IsError = true, Output = $"Could not open file: {path}" };
-
-                // 2. Map line/column to SnapshotPoint (VS uses 0-indexed for snapshots, 1-indexed for some UI)
-                // SymbolIndexService results are 1-indexed, so we subtract 1.
-                var snapshot = docView.TextBuffer.CurrentSnapshot;
-                int targetLine = Math.Max(0, line - 1);
-                if (targetLine >= snapshot.LineCount) return new ToolResponse { IsError = true, Output = $"Line {line} is out of range." };
-
-                var snapshotLine = snapshot.GetLineFromLineNumber(targetLine);
-                int targetCol = Math.Max(0, col - 1);
-                int targetPos = snapshotLine.Start + Math.Min(targetCol, snapshotLine.Length);
+                // 🚀 NATIVE LSP REFACTORING (Roslyn)
+                // This replaces the unreliable DTE UI-based rename with project-wide semantic renaming.
+                var result = await SymbolIndexService.Instance.RenameSymbolAsync(path, line, col, newName, ct);
                 
-                var point = new Microsoft.VisualStudio.Text.SnapshotPoint(snapshot, targetPos);
-
-                // 3. Move cursor to the symbol
-                docView.TextView.Caret.MoveTo(point);
-                docView.TextView.Selection.Select(new Microsoft.VisualStudio.Text.SnapshotSpan(point, 0), false);
-                
-                // 4. Force focus to the editor to ensure command routes correctly
-                (docView.TextView as System.Windows.FrameworkElement)?.Focus();
-
-                // 5. Invoke native rename
-                var dte = Microsoft.VisualStudio.Shell.Package.GetGlobalService(typeof(global::EnvDTE.DTE)) as global::EnvDTE80.DTE2;
-                if (dte != null)
+                if (result.StartsWith("Error") || result.Contains("failed"))
                 {
-                    // Re-enable focus check
-                    await Task.Delay(100); // Small nudge for VS to settle focus
-                    dte.ExecuteCommand("Refactor.Rename", newName);
-                    return new ToolResponse { Output = $"Rename symbolic command '{newName}' invoked at {path}:{line}:{col}." };
+                    return new ToolResponse { IsError = true, Output = result };
                 }
-
-                return new ToolResponse { IsError = true, Output = "DTE not available." };
+                
+                return new ToolResponse { Output = result };
             }
             catch (Exception ex) { return new ToolResponse { IsError = true, Output = $"Rename failed: {ex.Message}" }; }
         }

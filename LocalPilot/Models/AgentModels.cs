@@ -61,4 +61,15 @@ namespace LocalPilot.Models
         public string Preamble { get; set; }   // e.g. "Sure, let's go through the steps."
         public List<string> Steps { get; set; } = new List<string>();
     }
+    /// <summary>
+    /// Represents a found symbol location.
+    /// </summary>
+    public class SymbolLocation
+    {
+        public string Name { get; set; }
+        public string FilePath { get; set; }
+        public int Line { get; set; }
+        public int Column { get; set; }
+        public string Kind { get; set; }
+    }
 }
