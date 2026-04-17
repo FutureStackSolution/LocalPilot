@@ -22,7 +22,7 @@
     <GeneratePkgDefFile>true</GeneratePkgDefFile>
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
     <GenerateBindingRedirectsOutputType>true</GenerateBindingRedirectsOutputType>
-    <NoWarn>$(NoWarn);MSB3277;CVSTBLD001</NoWarn>
+    <NoWarn>$(NoWarn);MSB3277</NoWarn>
     <UseCodebase>true</UseCodebase>
     <IncludeAssemblyInVSIXContainer>true</IncludeAssemblyInVSIXContainer>
     <IncludeDebugSymbolsInVSIXContainer>false</IncludeDebugSymbolsInVSIXContainer>
@@ -132,6 +132,14 @@
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
+  <!-- 🛡️ ATTENTION: System Exclusion for Absolute Autonomy -->
+  <ItemGroup>
+    <None Remove=".localpilot\**" />
+    <Compile Remove=".localpilot\**" />
+    <EmbeddedResource Remove=".localpilot\**" />
+    <Content Remove=".localpilot\**" />
+  </ItemGroup>
+  <!-- ────────────────────────────────────────────────── -->
   <!-- ── Framework References ──────────────────────────────────────────────── -->
   <ItemGroup>
     <Reference Include="System" />

@@ -617,6 +617,10 @@ namespace LocalPilot.Services
 
             try
             {
+                // 🚀 SEMANTIC WARM-UP: Ensure the file is 'known' to the VS workspace cache before refactoring
+                await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                await Community.VisualStudio.Toolkit.VS.Documents.OpenAsync(path);
+
                 // 🚀 NATIVE LSP REFACTORING (Roslyn)
                 // This replaces the unreliable DTE UI-based rename with project-wide semantic renaming.
                 var result = await SymbolIndexService.Instance.RenameSymbolAsync(path, line, col, newName, ct);

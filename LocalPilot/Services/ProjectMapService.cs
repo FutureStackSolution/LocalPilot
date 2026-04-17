@@ -55,7 +55,7 @@ namespace LocalPilot.Services
         };
 
         private static readonly string[] AllowedExtensions = {
-            ".cs", ".js", ".ts", ".tsx", ".py", ".go", ".rs", ".cpp", ".h", ".hpp", ".swift", ".java", ".md", ".txt", ".json", ".xml", ".html", ".css", ".csproj", ".sln", ".slnx", ".cshtml", ".vbhtml", ".sh", ".ps1", ".yml", ".yaml"
+            ".cs", ".js", ".ts", ".tsx", ".jsx", ".vue", ".svelte", ".py", ".go", ".rs", ".cpp", ".h", ".hpp", ".swift", ".java", ".md", ".txt", ".json", ".xml", ".html", ".css", ".csproj", ".sln", ".slnx", ".cshtml", ".vbhtml", ".sh", ".ps1", ".yml", ".yaml"
         };
 
         private Dictionary<string, List<SymbolLocation>> _symbolIndex = new Dictionary<string, List<SymbolLocation>>(StringComparer.OrdinalIgnoreCase);
@@ -268,13 +268,17 @@ namespace LocalPilot.Services
         private void IndexSymbols(string filePath, string content)
         {
             string ext = Path.GetExtension(filePath).ToLowerInvariant();
-            if (ext != ".cs" && ext != ".js" && ext != ".ts" && ext != ".py") return;
+            var supported = new HashSet<string> { ".cs", ".js", ".ts", ".tsx", ".jsx", ".vue", ".svelte", ".py", ".go" };
+            if (!supported.Contains(ext)) return;
 
-            // 🚀 Lightning Fast Regex Indexer
-            // Targets: Classes, Interfaces, Methods, Functions
+            // 🚀 Lightning Fast Polyglot Indexer
+            // Targets: Classes, Interfaces, Methods, Functions, Components (inc. Angular)
             var patterns = new[] {
-                @"(?:class|interface|struct)\s+(?<name>[a-zA-Z_]\w*)", // Type declarations
-                @"(?:public|private|internal|protected|static|async|virtual)?\s+(?:(?<type>[a-zA-Z_][\w\<\>\[\]]*)\s+)?(?<name>[a-zA-Z_]\w*)\s*\((?<args>[^\)]*)\)\s*\{" // Method-like
+                @"(?:class|interface|struct|type|trait)\s+(?<name>[a-zA-Z_]\w*)", // Type declarations
+                @"@(?:Component|Injectable|Directive|NgModule|Pipe)\s*\(\s*\{", // Angular Decorators
+                @"(?:func|def|function)\s+(?<name>[a-zA-Z_]\w*)\s*\(", // Keyword functions
+                @"(?:export\s+)?(?:const|let|var)\s+(?<name>[a-zA-Z_]\w*)\s*[:=]\s*(?:\(.*\))\s*=>", // Arrow Functions / Components
+                @"(?:public|private|internal|protected|static|async|virtual)?\s+(?:(?<type>[a-zA-Z_][\w\<\>\[\]]*)\s+)?(?<name>[a-zA-Z_]\w*)\s*\((?<args>[^\)]*)\)\s*\{" // C-style Methods
             };
 
             foreach (var pattern in patterns)
