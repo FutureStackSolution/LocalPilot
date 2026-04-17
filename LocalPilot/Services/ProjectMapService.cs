@@ -36,7 +36,8 @@ namespace LocalPilot.Services
                 try {
                     if (!AllowedExtensions.Contains(Path.GetExtension(filePath).ToLowerInvariant())) return;
                     string content = File.ReadAllText(filePath);
-                    
+                    if (content.Length < 10) return; // 🚀 OPTIMIZATION: Skip trivial/empty files
+
                     // Clear old entries for this file before re-indexing
                     lock (_symbolIndex)
                     {
@@ -55,7 +56,7 @@ namespace LocalPilot.Services
         };
 
         private static readonly string[] AllowedExtensions = {
-            ".cs", ".js", ".ts", ".tsx", ".jsx", ".vue", ".svelte", ".py", ".go", ".rs", ".cpp", ".h", ".hpp", ".swift", ".java", ".md", ".txt", ".json", ".xml", ".html", ".css", ".csproj", ".sln", ".slnx", ".cshtml", ".vbhtml", ".sh", ".ps1", ".yml", ".yaml"
+            ".cs", ".js", ".ts", ".tsx", ".jsx", ".vue", ".svelte", ".py", ".go", ".rs", ".cpp", ".h", ".hpp", ".swift", ".java", ".kt", ".dart", ".rb", ".php", ".sh", ".ps1", ".sql", ".yml", ".yaml", ".json", ".xml", ".md", ".txt", ".tf", ".dockerfile", ".csproj", ".sln", ".slnx"
         };
 
         private Dictionary<string, List<SymbolLocation>> _symbolIndex = new Dictionary<string, List<SymbolLocation>>(StringComparer.OrdinalIgnoreCase);
@@ -122,7 +123,22 @@ namespace LocalPilot.Services
                 {
                     if (res.Path == null) continue;
                     
-                    string block = $"\nFILE: {res.Path}\n{res.Content}\n---";
+                    // Get symbol summary for this file
+                    string symbolSummary = "";
+                    lock (_symbolIndex)
+                    {
+                        var symbolsInFile = _symbolIndex.Values.SelectMany(v => v)
+                            .Where(l => l.FilePath.EndsWith(res.Path))
+                            .OrderBy(l => l.Line)
+                            .Select(l => $"{l.Name}@{l.Line}");
+                        
+                        if (symbolsInFile.Any())
+                        {
+                            symbolSummary = $" (Symbols: {string.Join(", ", symbolsInFile)})";
+                        }
+                    }
+
+                    string block = $"\nFILE: {res.Path}{symbolSummary}\n{res.Content}\n---";
                     byte[] b = Encoding.UTF8.GetBytes(block);
                     
                     if (currentBytes + b.Length > maxTotalBytes)

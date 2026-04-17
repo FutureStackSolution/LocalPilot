@@ -186,6 +186,18 @@ namespace LocalPilot.Services
                 var semanticModel = await document.GetSemanticModelAsync(ct).ConfigureAwait(false);
                 var symbol = semanticModel.GetDeclaredSymbol(node, ct) ?? semanticModel.GetSymbolInfo(node, ct).Symbol;
 
+                // 🚀 FUZZY FALLBACK: If the model provided a wrong line number, try to find the symbol by name in this file
+                if (symbol == null)
+                {
+                    var root = await document.GetSyntaxRootAsync(ct);
+                    // Search for the symbol name (we'd need the name, but usually we can infer it or try the token text)
+                    var possibleNode = root.DescendantNodes().FirstOrDefault(n => n.GetText().ToString().Trim() == token.Text);
+                    if (possibleNode != null)
+                    {
+                         symbol = semanticModel.GetDeclaredSymbol(possibleNode, ct) ?? semanticModel.GetSymbolInfo(possibleNode, ct).Symbol;
+                    }
+                }
+
                 if (symbol == null)
                 {
                     bool isStillLoading = solution.Projects.Any(p => !p.Documents.Any());

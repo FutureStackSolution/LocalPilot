@@ -251,6 +251,10 @@ namespace LocalPilot.Services
                 var responseBuilder = new System.Text.StringBuilder();
                 var toolCallsThisTurn = new List<ToolCallRequest>();
 
+                // 🚀 STREAM INTERCEPTOR: Buffer and suppress tool-text leaking to UI
+                var tokenBuffer = new System.Text.StringBuilder();
+                bool isBuffering = false;
+
                 string contextModel = LocalPilot.Settings.LocalPilotSettings.Instance.ChatModel;
                 var options = ApplyPerformancePresets(LocalPilot.Settings.LocalPilotSettings.Instance.Mode);
 
@@ -259,8 +263,24 @@ namespace LocalPilot.Services
                 {
                     if (result.IsTextToken)
                     {
-                        responseBuilder.Append(result.TextToken);
-                        OnMessageFragment?.Invoke(result.TextToken);
+                        string token = result.TextToken;
+                        responseBuilder.Append(token);
+                        tokenBuffer.Append(token);
+
+                        // If we see a code block starting, we stop streaming to UI until we know what it is
+                        if (tokenBuffer.ToString().Contains("```"))
+                        {
+                            isBuffering = true;
+                        }
+
+                        // 🚫 BLACK-BOX ENFORCEMENT: Never stream raw text from the AI's 'Thinking' to the user UI.
+                        // We only keep it for context, but we don't show the 'Teacher/Step' chatter.
+                        
+                        if (tokenBuffer.ToString().TrimEnd().EndsWith("```") && tokenBuffer.Length > 5)
+                        {
+                            tokenBuffer.Clear();
+                            isBuffering = false;
+                        }
                     }
                     else if (result.IsToolCall)
                     {
@@ -426,6 +446,11 @@ namespace LocalPilot.Services
                             });
                         }
 
+                        if (!result.IsError)
+                        {
+                            OnMessageFragment?.Invoke($"✅ Successfully executed: **{toolCall.Name}**\n");
+                        }
+
                         // 🛡️ ERROR FEEDBACK: Ensure model doesn't hallucinate success
                         if (result.IsError)
                         {
@@ -516,16 +541,18 @@ namespace LocalPilot.Services
         {
             if (string.IsNullOrEmpty(text)) return text;
 
-            // 1. Remove markdown-wrapped JSON tool calls (most common)
-            var mdPattern = @"(?s)```(?:json)?\s*\{.*?""name""\s*:\s*""[^""]+"".*?""arguments"".*?\}\s*```";
+            // 🚀 ABOSLUTE SILENCE ENGINE: More aggressive regex to catch all JSON variations
+            // 1. Remove markdown-wrapped JSON tool calls (including partials)
+            var mdPattern = @"(?s)```(?:json)?\s*\{.*?\}.*?```";
             var cleaned = System.Text.RegularExpressions.Regex.Replace(text, mdPattern, string.Empty);
             
-            // 2. Remove raw JSON tool calls (fallback)
-            var rawPattern = @"(?s)\{\s*""name""\s*:\s*""[^""]+""\s*,\s*""arguments"".*?\}";
+            // 2. Remove raw JSON objects that look like tool calls (name/arguments/path)
+            var rawPattern = @"(?s)\{\s*""(?:name|arguments|path|pattern)""\s*:\s*.*?\}.*?\}?";
             cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, rawPattern, string.Empty);
             
-            // 3. Remove thinking process if still present in raw text
+            // 3. Remove thinking process / thought tags
             cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, @"(?s)<thought>.*?</thought>", string.Empty);
+            cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, @"(?s)## PLAN\s*.*?(?=\n\n|\n#|$)", string.Empty);
 
             return cleaned.Trim();
         }
@@ -680,15 +707,13 @@ namespace LocalPilot.Services
         {
             try
             {
-                if (!File.Exists(originalPath)) return;
-
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                
                 string tempDir = Path.Combine(Path.GetTempPath(), "LocalPilot_Previews");
                 if (!Directory.Exists(tempDir)) Directory.CreateDirectory(tempDir);
                 
                 string tempPath = Path.Combine(tempDir, "Preview_" + Path.GetFileName(originalPath));
                 File.WriteAllText(tempPath, newContent);
-                
-                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                 
                 // Use native DTE command to ensure compatibility across VS versions
                 var dte = Microsoft.VisualStudio.Shell.Package.GetGlobalService(typeof(global::EnvDTE.DTE)) as global::EnvDTE80.DTE2;
