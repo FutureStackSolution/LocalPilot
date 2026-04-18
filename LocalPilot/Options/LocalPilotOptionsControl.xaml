@@ -358,8 +358,7 @@
                         <!-- Interface Preferences -->
                         <TextBlock Text="🎨  Interface" Style="{DynamicResource LpSectionHeader}"/>
                         <CheckBox x:Name="ChkStatusBar" Content="Show LocalPilot status in the status bar" Style="{DynamicResource LpCheckStyle}"/>
-                        <CheckBox x:Name="ChkEnableLogging" Content="Enable Diagnostic Logging" Style="{DynamicResource LpCheckStyle}"/>
-                        <Button x:Name="BtnOpenLog" Content="📂  Open Log File" Style="{DynamicResource LpSecondaryBtn}" HorizontalAlignment="Left" Click="BtnOpenLog_Click" Margin="0,2,0,10" Visibility="{Binding IsChecked, ElementName=ChkEnableLogging, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>

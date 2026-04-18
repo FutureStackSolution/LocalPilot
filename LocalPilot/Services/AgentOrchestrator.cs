@@ -1,14 +1,13 @@
+using Community.VisualStudio.Toolkit;
+using LocalPilot.Models;
+using Microsoft.VisualStudio.Shell;
+using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using LocalPilot.Models;
-using Microsoft.VisualStudio.Shell;
-using Community.VisualStudio.Toolkit;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
 
 namespace LocalPilot.Services
 {
@@ -372,8 +371,12 @@ namespace LocalPilot.Services
                     {
                         if (ct.IsCancellationRequested) break;
 
-                        // 🛡️ USER CHECKPOINT: For risky actions, wait for permission
-                        bool isRisky = toolCall.Name == "write_to_file" || toolCall.Name == "replace_file_content" || toolCall.Name == "delete_file";
+                        // 🛡️ USER CHECKPOINT: For mutating actions, wait for permission
+                        bool isRisky = toolCall.Name == "write_file" || 
+                                       toolCall.Name == "replace_text" || 
+                                       toolCall.Name == "delete_file" || 
+                                       toolCall.Name == "rename_symbol" || 
+                                       toolCall.Name == "run_terminal";
                         if (isRisky && RequestPermissionAsync != null)
                         {
                             OnStatusUpdate?.Invoke(AgentStatus.ActionPending, $"Waiting for permission to {toolCall.Name}...");

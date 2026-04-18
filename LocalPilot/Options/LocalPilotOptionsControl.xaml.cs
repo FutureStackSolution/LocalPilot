@@ -83,7 +83,7 @@ namespace LocalPilot.Options
             ChkFix.IsChecked          = s.EnableFix;
             ChkUnitTest.IsChecked     = s.EnableUnitTest;
             ChkStatusBar.IsChecked    = s.ShowStatusBar;
-            ChkEnableLogging.IsChecked = s.EnableLogging;
+
             ChkEnableProjectMap.IsChecked = s.EnableProjectMap;
 
             TxtChatHistory.Text       = s.ChatHistoryMaxItems.ToString();
@@ -134,7 +134,7 @@ namespace LocalPilot.Options
             s.EnableFix              = ChkFix.IsChecked            == true;
             s.EnableUnitTest         = ChkUnitTest.IsChecked       == true;
             s.ShowStatusBar          = ChkStatusBar.IsChecked      == true;
-            s.EnableLogging          = ChkEnableLogging.IsChecked == true;
+
 
             s.CompletionModel = (CmbCompletionModel.SelectedItem as ComboBoxItem)?.Content?.ToString()
                                 ?? CmbCompletionModel.Text;
@@ -252,25 +252,7 @@ namespace LocalPilot.Options
             SaveToast.Opacity    = 0;
         }
 
-        private void BtnOpenLog_Click(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                string path = LocalPilotLogger.GetLogPath();
-                if (System.IO.File.Exists(path))
-                {
-                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true });
-                }
-                else
-                {
-                    MessageBox.Show("No log file found yet. Try performing an action with logging enabled first.", "LocalPilot", MessageBoxButton.OK, MessageBoxImage.Information);
-                }
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Could not open log: {ex.Message}", "LocalPilot", MessageBoxButton.OK, MessageBoxImage.Error);
-            }
-        }
+
 
         private void BtnOpenPrompts_Click(object sender, RoutedEventArgs e)
         {

@@ -16,9 +16,9 @@ namespace LocalPilot
     /// </summary>
     [PackageRegistration(UseManagedResourcesOnly = true, AllowsBackgroundLoading = true)]
     [Guid(PackageGuidString)]
-    [Microsoft.VisualStudio.Shell.ProvideMenuResource("Menus.ctmenu", 1)]
+    [ProvideMenuResource("Menus.ctmenu", 1)]
     [ProvideToolWindow(typeof(LocalPilotChatWindow),
-        Style       = Microsoft.VisualStudio.Shell.VsDockStyle.Tabbed,
+        Style = Microsoft.VisualStudio.Shell.VsDockStyle.Tabbed,
         Window      = Microsoft.VisualStudio.Shell.Interop.ToolWindowGuids80.SolutionExplorer,
         Orientation = Microsoft.VisualStudio.Shell.ToolWindowOrientation.Right)]
 

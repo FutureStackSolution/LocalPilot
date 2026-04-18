@@ -1,13 +1,10 @@
-using System;
+using LocalPilot.Models;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
-using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.VisualStudio.Text;
-using LocalPilot.Models;
 
 namespace LocalPilot.Services
 {

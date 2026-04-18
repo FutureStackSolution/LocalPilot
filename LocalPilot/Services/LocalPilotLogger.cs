@@ -1,10 +1,10 @@
-using System;
-using System.IO;
+using LocalPilot.Settings;
 using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Shell.Interop;
 using Microsoft.VisualStudio.Threading;
+using System;
+using System.IO;
 using System.Threading.Tasks;
-using LocalPilot.Settings;
 
 namespace LocalPilot.Services
 {

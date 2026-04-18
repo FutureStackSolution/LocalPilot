@@ -1,5 +1,5 @@
 # INSTRUCTION
-Write comprehensive unit tests using xUnit for the following code.
+Write comprehensive unit tests for the following code.
 Ensure tests stay consistent with existing project patterns [source: filename].
 
 # CODE BLOCK

@@ -19,7 +19,7 @@
         <SolidColorBrush x:Key="LpAccentBrush"        Color="Transparent"/>
         <SolidColorBrush x:Key="LpAccentHoverBrush"   Color="Transparent"/>
         <SolidColorBrush x:Key="LpUserBubbleBgBrush"  Color="Transparent"/>
-        <SolidColorBrush x:Key="LpConsoleBgBrush"     Color="Transparent"/>
+
         <SolidColorBrush x:Key="LpCodeKwBrush"        Color="Transparent"/>
         <SolidColorBrush x:Key="LpCodeCommentBrush"   Color="Transparent"/>
         <SolidColorBrush x:Key="LpCodeStringBrush"    Color="Transparent"/>
@@ -87,9 +87,13 @@
                         <Border x:Name="Bd"
                                 Background="Transparent"
                                 CornerRadius="4">
-                            <ContentPresenter x:Name="Cp" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="2">
+                            <ContentPresenter x:Name="Cp" 
+                                              HorizontalAlignment="Center" 
+                                              VerticalAlignment="Center" 
+                                              Margin="2"
+                                              RenderTransformOrigin="0.5,0.5">
                                 <ContentPresenter.RenderTransform>
-                                    <ScaleTransform x:Name="IconScale" ScaleX="1" ScaleY="1" CenterX="12" CenterY="12"/>
+                                    <ScaleTransform x:Name="IconScale" ScaleX="1" ScaleY="1"/>
                                 </ContentPresenter.RenderTransform>
                             </ContentPresenter>
                         </Border>
@@ -118,7 +122,7 @@
                                 <Setter TargetName="Bd" Property="Opacity" Value="0.7"/>
                                 <Setter TargetName="Cp" Property="RenderTransform">
                                     <Setter.Value>
-                                        <ScaleTransform ScaleX="0.95" ScaleY="0.95" CenterX="14" CenterY="14"/>
+                                        <ScaleTransform ScaleX="0.95" ScaleY="0.95"/>
                                     </Setter.Value>
                                 </Setter>
                             </Trigger>
@@ -506,13 +510,7 @@
 
                 <!-- Right: icon buttons -->
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Button x:Name="BtnToggleConsole"
-                            Style="{StaticResource IconButtonStyle}"
-                            ToolTip="Toggle Diagnostic Console"
-                            Click="BtnToggleConsole_Click">
-                        <TextBlock Text="&#xE756;" FontFamily="Segoe MDL2 Assets" FontSize="12"
-                                   Foreground="{DynamicResource LpMutedFgBrush}"/>
-                    </Button>
+
                     <Button x:Name="BtnClear"
                             Style="{StaticResource IconButtonStyle}"
                             ToolTip="Clear conversation"
@@ -531,19 +529,27 @@
                       Background="Transparent">
             <StackPanel Margin="0,6,0,6">
 
-                <!-- Welcome prompt — Copilot style: subtle, centred, muted -->
-                <TextBlock Text="What's on your mind?"
-                           FontSize="12"
-                           Foreground="{DynamicResource LpMutedFgBrush}"
-                           Margin="24,12,24,8"
-                           Opacity="0.85"
-                           TextWrapping="Wrap"/>
-                <TextBlock Text="Tip: use slash actions like /explain, /fix, /review, or /test."
-                           FontSize="10"
-                           Foreground="{DynamicResource LpMutedFgBrush}"
-                           Margin="24,0,24,10"
-                           Opacity="0.8"
-                           TextWrapping="Wrap"/>
+                <StackPanel x:Name="WelcomePanel">
+                    <!-- Welcome prompt — Copilot style: subtle, centred, muted -->
+                    <TextBlock Text="What's on your mind?"
+                               FontSize="12"
+                               Foreground="{DynamicResource LpMutedFgBrush}"
+                               Margin="24,12,24,8"
+                               Opacity="0.85"
+                               TextWrapping="Wrap"/>
+                    <TextBlock Text="Tip: use slash actions like /explain, /fix, /review, or /test."
+                               FontSize="10"
+                               Foreground="{DynamicResource LpMutedFgBrush}"
+                               Margin="24,0,24,10"
+                               Opacity="0.8"
+                               TextWrapping="Wrap"/>
+
+                     <!-- 🏷️ Quick Engagement Chips -->
+                    <WrapPanel Margin="24,0,24,12">
+                        <Button x:Name="BtnRate" Content="⭐ Rate LocalPilot" Style="{StaticResource LpChipStyle}" Click="BtnRate_Click" ToolTip="Support us on the VS Marketplace!" Margin="0,0,8,0"/>
+                        <Button x:Name="BtnFeedback" Content="💬 Feedback" Style="{StaticResource LpChipStyle}" Click="BtnFeedback_Click" ToolTip="Report an issue or suggest a feature"/>
+                    </WrapPanel>
+                </StackPanel>
 
 
                 <!-- All messages rendered here -->
@@ -553,40 +559,7 @@
 
         <!-- ═══════════════════════  DIAGNOSTIC CONSOLE  ═══════════════════════ -->
         <!-- Collapsible terminal-like log view -->
-        <Grid Grid.Row="1" VerticalAlignment="Bottom" MaxHeight="250">
-            <Border x:Name="DiagnosticConsole"
-                    Visibility="Collapsed"
-                    Background="{DynamicResource LpMenuBgBrush}"
-                    BorderBrush="{DynamicResource LpMenuBorderBrush}"
-                    BorderThickness="0,1,0,0">
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="*"/>
-                    </Grid.RowDefinitions>
 
-                    <!-- Console Header -->
-                    <Border Grid.Row="0" Padding="8,4" Background="{DynamicResource LpWindowBgBrush}">
-                        <DockPanel>
-                            <TextBlock Text="DIAGNOSTIC CONSOLE" FontSize="9" FontWeight="Bold" 
-                                       Foreground="{DynamicResource LpMutedFgBrush}" VerticalAlignment="Center"/>
-                            <Button x:Name="BtnCloseConsole" DockPanel.Dock="Right" 
-                                    Style="{StaticResource IconButtonStyle}" 
-                                    Width="16" Height="16" Click="BtnCloseConsole_Click">
-                                <TextBlock Text="&#xE711;" FontFamily="Segoe MDL2 Assets" FontSize="8"/>
-                            </Button>
-                        </DockPanel>
-                    </Border>
-
-                    <!-- Console Feed -->
-                    <ScrollViewer Grid.Row="1" x:Name="ConsoleScroll" Padding="8" Background="{DynamicResource LpConsoleBgBrush}">
-                        <StackPanel x:Name="ConsoleContainer">
-                            <!-- Log entries will be added here -->
-                        </StackPanel>
-                    </ScrollViewer>
-                </Grid>
-            </Border>
-        </Grid>
 
         <!-- ═══════════════════════  FOOTER (GHOST HUD)  ═══════════════════════ -->
         <Grid Grid.Row="2">

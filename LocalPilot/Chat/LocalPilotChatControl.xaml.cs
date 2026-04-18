@@ -91,8 +91,7 @@ namespace LocalPilot.Chat
             _agentOrchestrator.OnTurnModificationsPending += OnAgentModificationsPending;
             _agentOrchestrator.RequestPermissionAsync = HandlePermissionRequestAsync;
 
-            // Wire up Global Logging
-            LocalPilotLogger.OnLog += OnGlobalLog;
+
 
             UpdateBrushes();
             
@@ -103,60 +102,29 @@ namespace LocalPilot.Chat
             Unloaded += OnUnloaded;
         }
 
-        private void OnGlobalLog(string message, LogCategory category)
+
+
+
+
+
+
+        private void BtnRate_Click(object sender, RoutedEventArgs e)
         {
-            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+            try
             {
-                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                AppendLogToConsole(message, category);
-            });
-        }
-
-        private void AppendLogToConsole(string message, LogCategory category)
-        {
-            if (ConsoleContainer == null) return;
-
-            var entry = new TextBlock
-            {
-                Text = $"[{DateTime.Now:HH:mm:ss}] [{category.ToString().ToUpper()}] {message}",
-                FontSize = 10,
-                FontFamily = new FontFamily("Consolas"),
-                TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(0, 0, 0, 2)
-            };
-
-            // Terminal coloring
-            entry.Foreground = category switch
-            {
-                LogCategory.Error => new SolidColorBrush(Color.FromRgb(0xFF, 0x45, 0x00)), // Orangered
-                LogCategory.Agent => new SolidColorBrush(Color.FromRgb(0x4E, 0xC9, 0xB0)), // Teal
-                LogCategory.Ollama => new SolidColorBrush(Color.FromRgb(0xCE, 0x91, 0x78)), // Peach
-                LogCategory.Context => new SolidColorBrush(Color.FromRgb(0x56, 0x9C, 0xD6)), // Blue
-                _ => Brushes.Gray
-            };
-
-            ConsoleContainer.Children.Add(entry);
-
-            // Cap entries for performance
-            if (ConsoleContainer.Children.Count > 100) ConsoleContainer.Children.RemoveAt(0);
-            
-            ConsoleScroll.ScrollToEnd();
-            
-            // Auto-show console on error if logging is enabled
-            if (category == LogCategory.Error && LocalPilotSettings.Instance.EnableLogging)
-            {
-                DiagnosticConsole.Visibility = Visibility.Visible;
+                // Placeholder URL for the Marketplace
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("https://marketplace.visualstudio.com/items?itemName=FutureStack.LocalPilot") { UseShellExecute = true });
             }
+            catch { }
         }
 
-        private void BtnToggleConsole_Click(object sender, RoutedEventArgs e)
+        private void BtnFeedback_Click(object sender, RoutedEventArgs e)
         {
-            DiagnosticConsole.Visibility = DiagnosticConsole.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
-        }
-
-        private void BtnCloseConsole_Click(object sender, RoutedEventArgs e)
-        {
-            DiagnosticConsole.Visibility = Visibility.Collapsed;
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("https://github.com/FutureStackSolution/LocalPilot/issues") { UseShellExecute = true });
+            }
+            catch { }
         }
 
         private void OnLoaded(object sender, RoutedEventArgs e)
@@ -268,7 +236,7 @@ namespace LocalPilot.Chat
                 this.Resources["LpHoverFgBrush"]   = toolWindowFg;
                 this.Resources["LpUserBubbleBgBrush"] = new SolidColorBrush(userBubbleColor);
                 this.Resources["LpSuccessBrush"]    = new SolidColorBrush(Color.FromRgb(0x4E, 0xC9, 0xB0)); // VS Tealer/Green
-                this.Resources["LpConsoleBgBrush"] = new SolidColorBrush(AdjustColor(baseBgColor, isDark ? -12 : -6));
+
 
                 UpdateSyntaxBrushes();
                 ChatScroll.Background = (Brush)this.Resources["LpWindowBgBrush"];
@@ -402,6 +370,13 @@ namespace LocalPilot.Chat
         private async Task RunAgentTaskAsync(string task)
         {
             await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+
+            // 👻 Hide welcome clutter from the timeline once the user takes action
+            if (WelcomePanel.Visibility == Visibility.Visible)
+            {
+                WelcomePanel.Visibility = Visibility.Collapsed;
+            }
+
             TxtInput.Clear();
             AppendUserBubble(task);
             
@@ -1497,9 +1472,11 @@ namespace LocalPilot.Chat
                     
                     var copyBtn = new Button { 
                         Style = (Style)this.FindResource("IconButtonStyle"), 
+                        Width = double.NaN,
+                        Height = double.NaN,
                         ToolTip = "Copy code to clipboard",
                         VerticalAlignment = VerticalAlignment.Center,
-                        Padding = new Thickness(6, 2, 6, 2)
+                        Padding = new Thickness(8, 4, 8, 4)
                     };
                     DockPanel.SetDock(copyBtn, Dock.Right);
                     var copyStack = new StackPanel { Orientation = Orientation.Horizontal };
@@ -1522,9 +1499,11 @@ namespace LocalPilot.Chat
                     {
                         var diffBtn = new Button { 
                             Style = (Style)this.FindResource("IconButtonStyle"), 
+                            Width = double.NaN,
+                            Height = double.NaN,
                             ToolTip = "Preview changes in Side-by-Side Diff",
                             VerticalAlignment = VerticalAlignment.Center,
-                            Padding = new Thickness(6, 2, 6, 2),
+                            Padding = new Thickness(8, 4, 8, 4),
                             Margin = new Thickness(0, 0, 8, 0)
                         };
                         DockPanel.SetDock(diffBtn, Dock.Right);

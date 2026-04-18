@@ -63,7 +63,7 @@ namespace LocalPilot.Chat.ViewModels
             btnAcceptAll.Margin = new Thickness(0, 0, 8, 0);
             btnAcceptAll.Click += (s, e) =>
             {
-                Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+                _ = Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
                 {
                     if (writeFileAsync != null)
                     {
@@ -127,7 +127,7 @@ namespace LocalPilot.Chat.ViewModels
                 var btnDiff = CreateGhostButton(null, "\uE8A1", resources["LpMutedFgBrush"] as Brush);
                 btnDiff.Click += (s, e) =>
                 {
-                    Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+                    _ = Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
                     {
                         if (showDiffAsync != null) await showDiffAsync(kvp.Key, kvp.Value);
                     });
@@ -136,7 +136,7 @@ namespace LocalPilot.Chat.ViewModels
                 var btnAccept = CreateGhostButton(null, "\uE73E", resources["LpAccentBrush"] as Brush);
                 btnAccept.Click += (s, e) =>
                 {
-                    Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+                    _ = Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
                     {
                         if (writeFileAsync != null) await writeFileAsync(kvp.Key, kvp.Value);
                         await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();

@@ -1,11 +1,8 @@
-using Community.VisualStudio.Toolkit;
-using LocalPilot.Chat;
-using LocalPilot.Settings;
 using LocalPilot.Services;
+using LocalPilot.Settings;
 using Microsoft.VisualStudio.Shell;
 using System;
 using System.ComponentModel.Design;
-using System.Linq;
 using System.Threading.Tasks;
 
 namespace LocalPilot.Commands
