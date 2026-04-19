@@ -396,6 +396,7 @@ namespace LocalPilot.Chat
         private async Task RunAgentTaskAsync(string task)
         {
             await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+            ReviewPanel.Visibility = Visibility.Collapsed;
 
             if (WelcomePanel.Visibility == Visibility.Visible)
                 WelcomePanel.Visibility = Visibility.Collapsed;
@@ -535,16 +536,140 @@ namespace LocalPilot.Chat
             });
         }
 
-        private void OnAgentModificationsPending(Dictionary<string, string> stagedChanges)
+        private Dictionary<string, (string original, string improved)> _lastStagedChanges;
+
+        private void OnAgentModificationsPending(Dictionary<string, (string original, string improved)> stagedChanges)
         {
-            if (stagedChanges == null) return;
+            if (stagedChanges == null || stagedChanges.Count == 0) return;
+            _lastStagedChanges = stagedChanges;
+
             _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
             {
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                AppendAIBubble("Task completed.");
+                
+                var items = new List<object>();
+                foreach (var kvp in stagedChanges)
+                {
+                    string path = kvp.Key;
+                    string original = kvp.Value.original ?? "";
+                    string improved = kvp.Value.improved ?? "";
+
+                    int added = 0;
+                    int removed = 0;
+
+                    // Simple line-based diff for the badge
+                    try {
+                        var oldLines = original.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
+                        var newLines = improved.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
+                        
+                        // Rough heuristic: if one is longer, we count it as additions. 
+                        // For a better UI, we'd need a real diffing engine, but this matches the 'plus/minus' look simply.
+                        if (newLines.Length > oldLines.Length) added = newLines.Length - oldLines.Length;
+                        else if (oldLines.Length > newLines.Length) removed = oldLines.Length - newLines.Length;
+                        
+                        // Ensure we always show at least +1 or -1 if the content changed at all
+                        if (added == 0 && removed == 0 && original != improved) added = 1; 
+                    } catch {}
+
+                    items.Add(new { 
+                        FullPath = path, 
+                        DisplayPath = System.IO.Path.GetFileName(path),
+                        AddedCount = $"+{added}",
+                        RemovedCount = $"-{removed}"
+                    });
+                }
+
+                ItemsReviewFiles.ItemsSource = items;
+                TxtReviewSummary.Text = $"{stagedChanges.Count} {(stagedChanges.Count == 1 ? "File" : "Files")} With Changes";
+                ReviewPanel.Visibility = Visibility.Visible;
                 ChatScroll.ScrollToEnd();
             });
         }
+
+        private void BtnAcceptAll_Click(object sender, RoutedEventArgs e)
+        {
+            ReviewPanel.Visibility = Visibility.Collapsed;
+            _lastStagedChanges = null;
+            AppendAIBubble("Changes accepted.");
+        }
+
+        private void BtnRejectAll_Click(object sender, RoutedEventArgs e)
+        {
+            if (_lastStagedChanges == null) return;
+            ReviewPanel.Visibility = Visibility.Collapsed;
+
+            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+            {
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                foreach (var kvp in _lastStagedChanges)
+                {
+                    try
+                    {
+                        string path = kvp.Key;
+                        string original = kvp.Value.original;
+                        if (string.IsNullOrEmpty(original)) continue;
+
+                        // Revert by writing original content back
+                        var docView = await VS.Documents.GetDocumentViewAsync(path);
+                        if (docView?.TextBuffer != null)
+                        {
+                            using (var edit = docView.TextBuffer.CreateEdit())
+                            {
+                                edit.Replace(0, docView.TextBuffer.CurrentSnapshot.Length, original);
+                                edit.Apply();
+                            }
+                        }
+                        else
+                        {
+                            System.IO.File.WriteAllText(path, original);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        LocalPilotLogger.LogError($"[Review] Failed to revert {kvp.Key}", ex);
+                    }
+                }
+
+                _lastStagedChanges = null;
+                AppendAIBubble("Changes reverted.");
+            });
+        }
+
+
+        private void BtnReview_Click(object sender, RoutedEventArgs e)
+        {
+            var btn = sender as Button;
+            var path = btn?.Tag?.ToString();
+            if (string.IsNullOrEmpty(path)) return;
+
+            if (_lastStagedChanges != null && _lastStagedChanges.TryGetValue(path, out var contents))
+            {
+                _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+                {
+                    try
+                    {
+                        // 1. Create a temp file for the 'Original' content
+                        string tempDir = Path.Combine(Path.GetTempPath(), "LocalPilotDiff");
+                        if (!Directory.Exists(tempDir)) Directory.CreateDirectory(tempDir);
+
+                        string fileName = Path.GetFileName(path);
+                        string originalPath = Path.Combine(tempDir, "Original_" + fileName);
+                        File.WriteAllText(originalPath, contents.original ?? "");
+
+                        // 2. Open Diff view: Original (Temp) vs Current (Disk/Buffer)
+                        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                        await VS.Documents.OpenDiffViewAsync(originalPath, path, "Original vs Improved");
+                    }
+                    catch (Exception ex)
+                    {
+                        LocalPilotLogger.LogError($"[Review] Failed to open diff for {path}", ex);
+                        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                        AppendAIBubble($"Error: Could not open diff for {Path.GetFileName(path)}.");
+                    }
+                });
+            }
+        }
+
 
         private void OnAgentMessageCompleted(string fullMessage)
         {

@@ -35,11 +35,11 @@ namespace LocalPilot.Services
         public event Action<ToolCallRequest, ToolResponse> OnToolCallCompleted;
         public event Action<string> OnMessageFragment;
         public event Action<string> OnMessageCompleted;
-        public event Action<Dictionary<string, string>> OnTurnModificationsPending;
+        public event Action<Dictionary<string, (string original, string improved)>> OnTurnModificationsPending;
         
         public Func<ToolCallRequest, Task<bool>> RequestPermissionAsync;
 
-        private Dictionary<string, string> _stagedChanges = new Dictionary<string, string>();
+        private Dictionary<string, (string original, string improved)> _stagedChanges = new Dictionary<string, (string original, string improved)>();
 
         public AgentOrchestrator(OllamaService ollama, ToolRegistry toolRegistry, ProjectContextService projectContext, ProjectMapService projectMap)
         {
@@ -409,7 +409,15 @@ namespace LocalPilot.Services
                                 
                                 try {
                                     if (File.Exists(absPath)) currentContent = File.ReadAllText(absPath);
-                                    // Apply replacement to show the FULL FILE in the Diff preview
+                                    
+                                    // Capture original for the WHOLE TURN (first touch)
+                                    lock (_stagedChanges) {
+                                        if (!_stagedChanges.ContainsKey(target)) {
+                                            _stagedChanges[target] = (currentContent, "");
+                                        }
+                                    }
+
+                                    // Apply replacement to show the FULL FILE
                                     if (!string.IsNullOrEmpty(currentContent) && !string.IsNullOrEmpty(oldText))
                                         code = currentContent.Replace(oldText, rawCode ?? "");
                                     else
@@ -424,7 +432,17 @@ namespace LocalPilot.Services
                             // 🚀 STAGING: Track changes for UI review or post-process validation
                             if (!string.IsNullOrEmpty(target) && !string.IsNullOrEmpty(code))
                             {
-                                lock (_stagedChanges) _stagedChanges[target] = code;
+                                lock (_stagedChanges) {
+                                    var existing = _stagedChanges.ContainsKey(target) ? _stagedChanges[target].original : "";
+                                    if (string.IsNullOrEmpty(existing)) {
+                                        // If we didn't capture original yet (e.g. write_file vs replace_text)
+                                        try {
+                                             string absPath = _toolRegistry.ResolvePath(target);
+                                             if (File.Exists(absPath)) existing = File.ReadAllText(absPath);
+                                        } catch {}
+                                    }
+                                    _stagedChanges[target] = (existing, code);
+                                }
                             }
                         }
 
@@ -454,7 +472,7 @@ namespace LocalPilot.Services
                         LocalPilotLogger.Log($"[Agent] Tool '{toolCall.Name}' executed in {sw.ElapsedMilliseconds}ms. Success: {!result.IsError}");
 
                         string output = result.Output ?? string.Empty;
-                        if (output.Length > 8000) output = output.Substring(0, 8000) + "... [Truncated]";
+                        if (output.Length > 2000) output = output.Substring(0, 2000) + "... [Truncated]";
                         
                         lock (messages)
                         {
@@ -480,8 +498,7 @@ namespace LocalPilot.Services
                                 messages.Add(new ChatMessage 
                                 { 
                                     Role = "system", 
-                                    Content = $"CRITICAL: Tool '{toolCall.Name}' failed. You MUST NOT claim success. " +
-                                              "You must acknowledge this failure in your next Plan and try an alternative approach (e.g., if rename failed, use replace_text)." 
+                                    Content = $"ERROR: Tool '{toolCall.Name}' failed. Acknowledge and try an alternative approach." 
                                 });
                             }
                         }
@@ -500,8 +517,8 @@ namespace LocalPilot.Services
                                 bool hasErrors = !string.IsNullOrEmpty(diagResult);
                                 
                                 string verificationMsg = hasErrors
-                                    ? $"[SENTINEL] CRITICAL: Code changes introduced or detected errors:\n{diagResult}\n\nYou MUST FIX these errors (Self-Heal) or REVERT the change before proceeding. Do not ask for permission to fix your own introduced errors."
-                                    : "[SENTINEL] Verification Successful: No compilation errors detected.";
+                                    ? $"[SENTINEL] Build errors detected:\n{diagResult}\n\nFix or revert now."
+                                    : "[SENTINEL] Verified: No compilation errors.";
                                 
                                 lock (messages)
                                 {
@@ -522,13 +539,11 @@ namespace LocalPilot.Services
 
                     if (!stepHasMeaningfulResult && !ct.IsCancellationRequested)
                     {
-                        LocalPilotLogger.Log($"[Agent] Loop protection: Turn {step} produced no meaningful actions or results. Nudging model...");
+                        LocalPilotLogger.Log($"[Agent] Loop protection: Turn {step} idle. Nudging...");
                         messages.Add(new ChatMessage 
                         { 
                             Role = "system", 
-                            Content = "Your last turn did not perform any successful file edits or find relevant information. " +
-                                      "If you were trying to rename or edit, verify the file path and line numbers. " +
-                                      "DO NOT repeat the same failed tool call. If 'rename_symbol' failed, use 'replace_text' instead." 
+                            Content = "Turn idle. If 'rename_symbol' failed, try 'replace_text' after reading the file."
                         });
                     }
                 }
@@ -543,7 +558,7 @@ namespace LocalPilot.Services
             // Signal completion with pending file modifications for UI Review
             if (_stagedChanges.Count > 0)
             {
-                OnTurnModificationsPending?.Invoke(new Dictionary<string, string>(_stagedChanges));
+                OnTurnModificationsPending?.Invoke(new Dictionary<string, (string original, string improved)>(_stagedChanges));
             }
 
             if (!isDone && !ct.IsCancellationRequested && step >= maxSteps)
@@ -682,10 +697,10 @@ namespace LocalPilot.Services
 
                 case LocalPilot.Settings.PerformanceMode.Standard:
                 default:
-                    options.Temperature = 0.2;
-                    options.NumPredict = 4096;
+                    options.Temperature = 0.1;
+                    options.NumPredict = 2048;
                     options.RepeatPenalty = 1.15;
-                    options.TopP = 0.8;
+                    options.TopP = 0.7;
                     break;
             }
 
@@ -703,7 +718,7 @@ namespace LocalPilot.Services
                  await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                  var dte = Microsoft.VisualStudio.Shell.Package.GetGlobalService(typeof(global::EnvDTE.DTE)) as global::EnvDTE80.DTE2;
                  if (dte != null) {
-                     sb.AppendLine("## ENVIRONMENT SENTINEL");
+                     sb.AppendLine("## ENV");
                      sb.AppendLine($"- IDE: Visual Studio {dte.Version} ({dte.Edition})");
                      var activeProject = await Community.VisualStudio.Toolkit.VS.Solutions.GetActiveProjectAsync();
                      if (activeProject != null) {
@@ -719,7 +734,7 @@ namespace LocalPilot.Services
                 await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                 var activeDoc = await Community.VisualStudio.Toolkit.VS.Documents.GetActiveDocumentViewAsync();
                 if (activeDoc != null) {
-                    sb.AppendLine("## RECENT TEMPORAL CONTEXT (ACTIVE TAB)");
+                    sb.AppendLine("## ACTIVE TAB");
                     sb.AppendLine($"- {Path.GetFileName(activeDoc.FilePath)} ({activeDoc.FilePath})");
                     sb.AppendLine();
                 }
