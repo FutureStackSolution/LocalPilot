@@ -96,7 +96,6 @@
     <Compile Include="Chat\ViewModels\AgentTurnCoordinator.cs" />
     <Compile Include="Chat\ViewModels\AgentTurnLayoutBuilder.cs" />
     <Compile Include="Chat\ViewModels\AgentUiRenderer.cs" />
-    <Compile Include="Chat\ViewModels\StagingPanelBuilder.cs" />
     <Compile Include="Chat\ViewModels\ChatSessionViewModel.cs" />
     <!-- Commands -->
     <Compile Include="Commands\LocalPilotCommands.cs" />

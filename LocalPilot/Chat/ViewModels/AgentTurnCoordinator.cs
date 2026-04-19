@@ -10,10 +10,16 @@ namespace LocalPilot.Chat.ViewModels
     {
         public AgentStatusViewState BuildStatusState(string modelName, AgentStatus status, string detail)
         {
+            string statusString = status.ToString();
+            if (status == AgentStatus.Idle) statusString = "Cancelled";
+            else if (status == AgentStatus.Thinking) statusString = "Thinking";
+            else if (status == AgentStatus.Executing) statusString = "Executing";
+            else if (status == AgentStatus.Completed) statusString = "Completed";
+
             return new AgentStatusViewState
             {
                 Status = status,
-                HeaderText = $"LocalPilot ({modelName}) - {status}",
+                HeaderText = $"LocalPilot ({modelName}) - {statusString}",
                 DetailText = detail ?? string.Empty,
                 IsTerminal = status == AgentStatus.Completed || status == AgentStatus.Failed || status == AgentStatus.Idle,
                 IsCompletion = status == AgentStatus.Completed,

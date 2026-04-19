@@ -41,7 +41,6 @@ namespace LocalPilot.Chat
         private readonly AgentTurnCoordinator _agentTurnCoordinator;
         private readonly AgentUiRenderer _agentUiRenderer;
         private readonly AgentTurnLayoutBuilder _agentTurnLayoutBuilder;
-        private readonly StagingPanelBuilder _stagingPanelBuilder;
         
         // 🚀 NON-BLOCKING QUEUE: Support for "Type-Ahead" messages
         private readonly Queue<string> _requestQueue = new Queue<string>();
@@ -76,7 +75,6 @@ namespace LocalPilot.Chat
             _agentTurnCoordinator = new AgentTurnCoordinator();
             _agentUiRenderer = new AgentUiRenderer();
             _agentTurnLayoutBuilder = new AgentTurnLayoutBuilder();
-            _stagingPanelBuilder = new StagingPanelBuilder();
             DataContext = _sessionViewModel;
             _ollama = new OllamaService(LocalPilotSettings.Instance.OllamaBaseUrl);
             
@@ -203,24 +201,16 @@ namespace LocalPilot.Chat
 
                 this.Resources["LpWindowBgBrush"] = new SolidColorBrush(baseBgColor);
                 this.Resources["LpWindowFgBrush"] = toolWindowFg;
-                this.Resources["LpMenuBgBrush"] = new SolidColorBrush(menuBgColor);
-                this.Resources["LpMenuBorderBrush"] = borderBrush;
+                this.Resources["LpMenuBgBrush"] = (Brush)Application.Current.FindResource(VsBrushes.ToolWindowBackgroundKey);
+                this.Resources["LpMenuBorderBrush"] = (Brush)Application.Current.FindResource(VsBrushes.ToolWindowBorderKey);
                 this.Resources["LpMutedFgBrush"] = grayText;
-                
-                // 💎 Adaptive Ghost Engine Tokens
-                if (isDark)
-                {
-                    this.Resources["LpGlassBgBrush"] = new SolidColorBrush(Color.FromArgb(0x18, 0xFF, 0xFF, 0xFF)); // Subtle White Glass
-                    this.Resources["LpGlassBorderBrush"] = new SolidColorBrush(Color.FromArgb(0x25, 0xFF, 0xFF, 0xFF));
-                    ((System.Windows.Media.Effects.DropShadowEffect)this.Resources["LpGhostShadow"]).Opacity = 0.5;
-                }
-                else
-                {
-                    this.Resources["LpGlassBgBrush"] = new SolidColorBrush(Color.FromArgb(0x0F, 0x00, 0x00, 0x00)); // Slightly darker Glass
-                    this.Resources["LpGlassBorderBrush"] = new SolidColorBrush(Color.FromArgb(0x20, 0x00, 0x00, 0x00));
-                    this.Resources["LpMutedFgBrush"] = new SolidColorBrush(Color.FromRgb(0x40, 0x40, 0x40)); // Force Dark Gray for readability
-                    ((System.Windows.Media.Effects.DropShadowEffect)this.Resources["LpGhostShadow"]).Opacity = 0.15;
-                }
+                if (!isDark)
+                    this.Resources["LpMutedFgBrush"] = new SolidColorBrush(Color.FromRgb(0x40, 0x40, 0x40));
+
+                // Solid surfaces only (no alpha) — avoids layered transparency bugs in VS-hosted WPF
+                this.Resources["LpCodeHeaderBgBrush"] = new SolidColorBrush(AdjustColor(menuBgColor, isDark ? -10 : 10));
+                this.Resources["LpCodeContentBgBrush"] = new SolidColorBrush(AdjustColor(baseBgColor, isDark ? -4 : 4));
+                this.Resources["LpBannerBgBrush"] = new SolidColorBrush(AdjustColor(menuBgColor, isDark ? -6 : 6));
 
                 // 🎨 Accent & Highlight area - Aggressive Discovery with Vibrance Guard
                 var accentBrush = Application.Current.FindResource(VsBrushes.HighlightKey) as Brush
@@ -237,7 +227,10 @@ namespace LocalPilot.Chat
                 }
 
                 this.Resources["LpAccentBrush"]    = accentBrush;
-                this.Resources["LpAccentHoverBrush"] = new SolidColorBrush(Color.FromArgb(180, accentColor.R, accentColor.G, accentColor.B));
+                // Solid hover tint (VsBrushes does not expose stable command-bar hover keys across SDK versions).
+                this.Resources["LpAccentHoverBrush"] = new SolidColorBrush(AdjustColor(accentColor, isDark ? 28 : -28));
+
+                this.Resources["LpSelectionBrush"] = this.TryFindResource(VsBrushes.HighlightKey) as Brush ?? accentBrush;
                 
                 // 🛡️ TRULY THEME-AWARE CONTRAST ENGINE
                 // Ensures icons and keywords are ALWAYS visible by calculating contrast against the target background.
@@ -256,14 +249,7 @@ namespace LocalPilot.Chat
                 this.Resources["LpKeywordFgBrush"] = isBgLight ? new SolidColorBrush(Color.FromRgb(0x00, 0x4B, 0x8F)) : new SolidColorBrush(Color.FromRgb(0x4F, 0xAA, 0xFF));
                 this.Resources["LpStopBrush"]       = new SolidColorBrush(Color.FromRgb(0xC4, 0x2B, 0x1C)); // Action Red
 
-                // 💎 Ghost Shadow: Adaptive to theme
-                if (this.Resources["LpGhostShadow"] is System.Windows.Media.Effects.DropShadowEffect ghostShadow)
-                {
-                    ghostShadow.Color = isBgLight ? accentColor : Colors.Black;
-                    ghostShadow.Opacity = isBgLight ? 0.15 : 0.5;
-                }
-
-                this.Resources["LpHoverBgBrush"]   = isBgLight ? new SolidColorBrush(Color.FromArgb(0x20, 0, 0, 0)) : new SolidColorBrush(Color.FromArgb(0x40, 255, 255, 255));
+                this.Resources["LpHoverBgBrush"] = new SolidColorBrush(AdjustColor(menuBgColor, isBgLight ? -14 : 14));
                 this.Resources["LpUserBubbleBgBrush"] = new SolidColorBrush(userBubbleColor);
                 this.Resources["LpSuccessBrush"]    = new SolidColorBrush(Color.FromRgb(0x4E, 0xC9, 0xB0));
 
@@ -549,68 +535,15 @@ namespace LocalPilot.Chat
             });
         }
 
-        private void OnAgentModificationsPending(Dictionary<string, string> changes)
+        private void OnAgentModificationsPending(Dictionary<string, string> stagedChanges)
         {
+            if (stagedChanges == null) return;
             _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
             {
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                
-                var panel = BuildStagingPanel(changes);
-                if (_agentTurnContainer != null)
-                {
-                    _agentTurnContainer.Children.Add(panel);
-                }
-                else
-                {
-                    MessagesContainer.Children.Add(panel);
-                }
+                AppendAIBubble("Task completed.");
                 ChatScroll.ScrollToEnd();
             });
-        }
-
-        private FrameworkElement BuildStagingPanel(Dictionary<string, string> changes)
-        {
-            return _stagingPanelBuilder.Build(
-                changes,
-                this.Resources,
-                WriteFileAsync,
-                ShowDiffAsync,
-                message => AppendAIBubble(message));
-        }
-
-        private async Task WriteFileAsync(string path, string content)
-        {
-            try
-            {
-                await Task.Run(() => System.IO.File.WriteAllText(path, content));
-                LocalPilotLogger.Log($"[UI] File written: {path}");
-            }
-            catch (Exception ex)
-            {
-                LocalPilotLogger.LogError($"[UI] Failed to write file: {path}", ex);
-            }
-        }
-
-        private async Task ShowDiffAsync(string path, string newContent)
-        {
-            try
-            {
-                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                
-                // Create temp file for comparison
-                string tempDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "LocalPilotDiff");
-                if (!System.IO.Directory.Exists(tempDir)) System.IO.Directory.CreateDirectory(tempDir);
-                
-                string tempFile = System.IO.Path.Combine(tempDir, "proposed_" + System.IO.Path.GetFileName(path));
-                System.IO.File.WriteAllText(tempFile, newContent);
-
-                var dte = await VS.GetRequiredServiceAsync<global::EnvDTE.DTE, global::EnvDTE.DTE>();
-                dte.ExecuteCommand("Tools.DiffFiles", $"\"{path}\" \"{tempFile}\"");
-            }
-            catch (Exception ex)
-            {
-               LocalPilotLogger.LogError("[UI] Diff failed", ex);
-            }
         }
 
         private void OnAgentMessageCompleted(string fullMessage)
@@ -653,8 +586,7 @@ namespace LocalPilot.Chat
 
         private FrameworkElement BuildThoughtCard(string thought)
         {
-            // 👻 Ghost UI: Modern, panel-less look with subtle accent grounding
-            var root = new StackPanel { Margin = new Thickness(0, 4, 0, 10), Opacity = 0.9 };
+            var root = new StackPanel { Margin = new Thickness(0, 4, 0, 10) };
 
             var header = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 6) };
             header.Children.Add(new TextBlock
@@ -677,7 +609,6 @@ namespace LocalPilot.Chat
             root.Children.Add(header);
 
             var rtb = CreateRichTextBox();
-            rtb.Opacity = 0.75;
             rtb.FontSize = 12;
             rtb.FontStyle = FontStyles.Italic;
             
@@ -897,14 +828,13 @@ namespace LocalPilot.Chat
             
             var bubble = new Border
             {
-                Background      = (Brush)this.Resources["LpGlassBgBrush"],
-                BorderBrush     = (Brush)this.Resources["LpGlassBorderBrush"],
+                Background      = (Brush)this.Resources["LpUserBubbleBgBrush"],
+                BorderBrush     = (Brush)this.Resources["LpMenuBorderBrush"],
                 BorderThickness = new Thickness(1),
                 CornerRadius    = new CornerRadius(14, 14, 2, 14),
                 Padding         = new Thickness(14, 10, 14, 10),
                 Margin          = new Thickness(60, 0, 8, 0),
                 HorizontalAlignment = HorizontalAlignment.Right,
-                Effect          = (System.Windows.Media.Effects.Effect)this.Resources["LpGhostShadow"]
             };
 
             var body = new TextBlock
@@ -914,7 +844,6 @@ namespace LocalPilot.Chat
                 Foreground      = (Brush)this.Resources["LpWindowFgBrush"],
                 FontSize        = 12.5,
                 FontFamily      = UIFont,
-                Opacity         = 0.95
             };
 
             bubble.Child = body;
@@ -948,7 +877,6 @@ namespace LocalPilot.Chat
                 Height = 12,
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(0, 0, 8, 0),
-                Opacity = 0.8
             };
             labelRow.Children.Add(logo);
 
@@ -959,7 +887,6 @@ namespace LocalPilot.Chat
                 FontWeight        = FontWeights.SemiBold,
                 Foreground        = (Brush)this.Resources["LpMutedFgBrush"],
                 VerticalAlignment = VerticalAlignment.Center,
-                Opacity           = 0.9
             };
             labelRow.Children.Add(nameLabel);
 
@@ -972,7 +899,6 @@ namespace LocalPilot.Chat
                     FontStyle         = FontStyles.Italic,
                     Foreground        = (Brush)this.Resources["LpMutedFgBrush"],
                     VerticalAlignment = VerticalAlignment.Center,
-                    Opacity           = 0.6
                 };
                 labelRow.Children.Add(statusLabel);
                 statusLabelRef = statusLabel;
@@ -1048,6 +974,8 @@ namespace LocalPilot.Chat
 
         private RichTextBox CreateRichTextBox()
         {
+            var accent = (Brush)this.Resources["LpAccentBrush"];
+            var selection = (Brush)this.Resources["LpSelectionBrush"];
             var rtb = new RichTextBox
             {
                 Background   = Brushes.Transparent,
@@ -1060,7 +988,11 @@ namespace LocalPilot.Chat
                 Padding      = new Thickness(0),
                 VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-                ContextMenu  = BuildRichTextBoxContextMenu()
+                ContextMenu  = BuildRichTextBoxContextMenu(),
+                SelectionBrush = selection,
+                SelectionOpacity = 1,
+                CaretBrush = accent,
+                FocusVisualStyle = null
             };
             return rtb;
         }
@@ -1235,7 +1167,7 @@ namespace LocalPilot.Chat
             {
                 var indicator = new Border
                 {
-                    Background = new SolidColorBrush(Color.FromArgb(0x10, 0x00, 0x00, 0x00)),
+                    Background = (Brush)this.Resources["LpBannerBgBrush"],
                     BorderBrush = accentBrush,
                     BorderThickness = new Thickness(2, 0, 0, 0),
                     Padding = new Thickness(12, 8, 12, 8),
@@ -1321,8 +1253,8 @@ namespace LocalPilot.Chat
 
                     var headerBar = new Border
                     {
-                        Background = new SolidColorBrush(Color.FromArgb(0x1A, 0x80, 0x80, 0x80)),
-                        BorderBrush = new SolidColorBrush(Color.FromArgb(0x20, 0x80, 0x80, 0x80)),
+                        Background = (Brush)this.Resources["LpCodeHeaderBgBrush"],
+                        BorderBrush = (Brush)this.Resources["LpMenuBorderBrush"],
                         BorderThickness = new Thickness(1, 1, 1, 0),
                         CornerRadius = new CornerRadius(6, 6, 0, 0),
                         Padding = new Thickness(12, 4, 8, 4)
@@ -1396,8 +1328,8 @@ namespace LocalPilot.Chat
 
                     var contentBorder = new Border
                     {
-                        Background = new SolidColorBrush(Color.FromArgb(0x0A, 0x00, 0x00, 0x00)),
-                        BorderBrush = new SolidColorBrush(Color.FromArgb(0x20, 0x80, 0x80, 0x80)),
+                        Background = (Brush)this.Resources["LpCodeContentBgBrush"],
+                        BorderBrush = (Brush)this.Resources["LpMenuBorderBrush"],
                         BorderThickness = new Thickness(1),
                         CornerRadius = new CornerRadius(0, 0, 6, 6),
                         Padding = new Thickness(12)
@@ -1516,13 +1448,8 @@ namespace LocalPilot.Chat
                 if (isCode || shouldHighlightTechnical)
                 {
                     run.FontFamily = ConsoleFont;
-                    
-                    // 🛡️ ACCENT VIBRANCE: Use the technical keyword brush which is guaranteed to be visible
                     run.Foreground = (Brush)this.Resources["LpKeywordFgBrush"];
-                    
-                    // Add a subtle background to make it look like a chip/inline code
-                    run.Background = (Brush)this.Resources["LpHoverBgBrush"];
-                    
+                    // Avoid Run.Background here — it composited as opaque black blobs in the VS-hosted viewer.
                     if (shouldHighlightTechnical)
                     {
                         run.FontWeight = FontWeights.SemiBold;
@@ -1637,10 +1564,8 @@ namespace LocalPilot.Chat
 
         private void SetStreaming(bool streaming, string modelName = null)
         {
-            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+            void Apply()
             {
-                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                
                 _isStreaming = streaming;
                 string model = modelName ?? LocalPilotSettings.Instance.ChatModel;
                 var streamingState = _agentTurnCoordinator.BuildStreamingState(streaming, model);
@@ -1648,44 +1573,45 @@ namespace LocalPilot.Chat
                 _sessionViewModel.IsStreaming = streamingState.IsStreaming;
                 _sessionViewModel.IsInputEnabled = streamingState.IsInputEnabled;
                 _sessionViewModel.InputOpacity = streamingState.InputOpacity;
-                
+
+                BtnSend.Visibility = Visibility.Visible;
+
                 if (streaming)
                 {
                     AgentStatusBar.Visibility = streamingState.ShowStatusBar ? Visibility.Visible : Visibility.Collapsed;
                     _sessionViewModel.AgentTurn.StatusText = streamingState.StatusText;
                     _sessionViewModel.AgentTurn.DetailText = streamingState.DetailText;
-                    
-                    // ⏹️ Stop Action
-                    BtnSendIcon.Data = Geometry.Parse("M6,6h12v12H6z"); 
-                    BtnSendIcon.Fill = Brushes.White;
-                    BtnSend.Background = (Brush)this.Resources["LpStopBrush"];
+
+                    BtnSendIcon.Data = Geometry.Parse("M6,6h12v12H6z");
+                    BtnSendIcon.Fill = (Brush)this.Resources["LpStopBrush"];
                     BtnSend.ToolTip = "Stop (Esc)";
-                    
-                    // Force the button to turn red even if triggers are being stubborn
-                    BtnSend.Background = (Brush)this.Resources["LpStopBrush"];
+                    BtnSend.Background = (Brush)this.Resources["LpMenuBgBrush"];
                     BtnSend.BorderBrush = (Brush)this.Resources["LpStopBrush"];
+                    BtnSend.BorderThickness = new Thickness(1.0);
                 }
                 else
                 {
                     AgentStatusBar.Visibility = Visibility.Collapsed;
-                    
-                    // 🚀 Send Action (Arrow as requested)
+
                     BtnSendIcon.Data = Geometry.Parse("M12,4L10.59,5.41L16.17,11H4V13H16.17L10.59,18.59L12,20L20,12L12,4Z");
                     BtnSendIcon.Fill = (Brush)this.Resources["LpSendIconBrush"];
-                    BtnSend.Background = (Brush)this.Resources["LpAccentBrush"];
                     BtnSend.ToolTip = "Send (Enter)";
-                    
-                    // Reset to standard accent
                     BtnSend.ClearValue(Button.BackgroundProperty);
                     BtnSend.ClearValue(Button.BorderBrushProperty);
+                    BtnSend.ClearValue(Button.BorderThicknessProperty);
                 }
-                
-                // Lock all interaction during streaming to prevent action queuing
-                BtnSend.IsEnabled           = true; 
-                BtnClear.IsEnabled          = !streaming;
-                BtnQuickActions.IsEnabled    = !streaming;
+
+                BtnSend.IsEnabled = true;
+                BtnClear.IsEnabled = !streaming;
+                BtnQuickActions.IsEnabled = !streaming;
 
                 if (!streaming) TxtInput.Focus();
+            }
+
+            ThreadHelper.JoinableTaskFactory.Run(async () =>
+            {
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                Apply();
             });
         }
 
@@ -1860,7 +1786,7 @@ namespace LocalPilot.Chat
 
             string targetFile = GetSafeArg("TargetFile") ?? GetSafeArg("path") ?? "workspace";
             string actionDescription = $"{toolCall.Name} on {targetFile}";
-            TxtConfirmDetail.Text = $"Agent is requesting permission to perform a potentially destructive action:\n\n{actionDescription}\n\nDo you want to allow this?";
+            TxtConfirmDetail.Text = $"Agent is requesting permission to perform a action:\n\n{actionDescription}\n\nDo you want to allow this?";
             
             ConfirmationPanel.Visibility = Visibility.Visible;
             ChatScroll.ScrollToEnd();

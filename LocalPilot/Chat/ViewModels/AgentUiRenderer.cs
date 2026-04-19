@@ -94,7 +94,7 @@ namespace LocalPilot.Chat.ViewModels
 
             sp.Children.Add(new TextBlock
             {
-                Text = statusState.IsCancelled ? "\uE711" : (statusState.IsFailure ? "\uE10A" : "\uE73E"), // Cancel (X), Error (Warning), or Success (Tick)
+                Text = statusState.IsCancelled ? "\uE106" : (statusState.IsFailure ? "\uE10A" : "\uE73E"), // Cancel (Circle-Slash), Error (Warning), or Success (Tick)
                 FontFamily = new FontFamily("Segoe MDL2 Assets"),
                 FontSize = 14,
                 Margin = new Thickness(0, 0, 10, 0),
@@ -103,10 +103,10 @@ namespace LocalPilot.Chat.ViewModels
                     ? resources["LpMutedFgBrush"] as Brush 
                     : (statusState.IsFailure ? resources["LpStopBrush"] as Brush : resources["LpAntigravityBlue"] as Brush)
             });
-
+ 
             sp.Children.Add(new TextBlock
             {
-                Text = statusState.IsCancelled ? "Task cancelled by user." : (statusState.IsFailure ? "Task stopped due to an error." : "Task completed."),
+                Text = statusState.IsCancelled ? "Task cancelled." : (statusState.IsFailure ? "Task stopped due to an error." : "Task completed."),
                 FontWeight = FontWeights.SemiBold,
                 FontSize = 12,
                 Foreground = resources["LpWindowFgBrush"] as Brush,
@@ -164,12 +164,8 @@ namespace LocalPilot.Chat.ViewModels
 
             node.Child = row;
             
-            // 🚀 SMOOTH ENTRANCE: Professional fade-in (No AutoReverse to avoid pale state)
-            var entrance = new DoubleAnimation(0.2, 1.0, new Duration(TimeSpan.FromSeconds(0.5))) 
-            { 
-                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } 
-            };
-            node.BeginAnimation(UIElement.OpacityProperty, entrance);
+            // 🚀 Professional Entrance: (Slide only, no transparency to avoid rendering issues)
+            node.Opacity = 1.0;
             
             var slide = new DoubleAnimation(8, 0, new Duration(TimeSpan.FromSeconds(0.4)))
             {

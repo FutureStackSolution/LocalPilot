@@ -421,11 +421,10 @@ namespace LocalPilot.Services
                                 code = rawCode;
                             }
                             
-                            // 🚀 DIFF PREVIEW: Show native VS comparison before writing
+                            // 🚀 STAGING: Track changes for UI review or post-process validation
                             if (!string.IsNullOrEmpty(target) && !string.IsNullOrEmpty(code))
                             {
                                 lock (_stagedChanges) _stagedChanges[target] = code;
-                                _ = ShowDiffAsync(_toolRegistry.ResolvePath(target), code);
                             }
                         }
 
@@ -784,27 +783,6 @@ namespace LocalPilot.Services
             return null;
         }
 
-        private async Task ShowDiffAsync(string originalPath, string newContent)
-        {
-            try
-            {
-                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                
-                string tempDir = Path.Combine(Path.GetTempPath(), "LocalPilot_Previews");
-                if (!Directory.Exists(tempDir)) Directory.CreateDirectory(tempDir);
-                
-                string tempPath = Path.Combine(tempDir, "Preview_" + Path.GetFileName(originalPath));
-                File.WriteAllText(tempPath, newContent);
-                
-                // Use native DTE command to ensure compatibility across VS versions
-                var dte = Microsoft.VisualStudio.Shell.Package.GetGlobalService(typeof(global::EnvDTE.DTE)) as global::EnvDTE80.DTE2;
-                if (dte != null)
-                {
-                    // Tools.DiffFiles "file1" "file2"
-                    dte.ExecuteCommand("Tools.DiffFiles", $"\"{originalPath}\" \"{tempPath}\"");
-                }
-            }
-            catch { }
-        }
+
     }
 }

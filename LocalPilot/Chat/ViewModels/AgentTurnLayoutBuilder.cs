@@ -58,7 +58,7 @@ namespace LocalPilot.Chat.ViewModels
                 FontSize = 9.5,
                 FontWeight = FontWeights.SemiBold,
                 Margin = new Thickness(0, 16, 0, 8),
-                Opacity = 0.6,
+                Opacity = 1.0,
                 Foreground = resources?["LpMutedFgBrush"] as System.Windows.Media.Brush,
                 HorizontalAlignment = HorizontalAlignment.Left
             };
