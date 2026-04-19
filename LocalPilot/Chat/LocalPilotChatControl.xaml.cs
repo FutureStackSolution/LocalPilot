@@ -475,11 +475,9 @@ namespace LocalPilot.Chat
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                 var display = _agentUiRenderer.GetToolCallDisplayInfo(request);
 
-                // Reset chunk tracking to force a NEW narrative block for any text following this action
-                _currentChunkSb.Clear();
-                _currentNarrativeContainer = null;
-                _lastRenderedMarkdown = "";
-                _lastActiveBlockElement = null;
+                // 🚀 UI OPTIMIZATION: We no longer reset narrative blocks during tool calls.
+                // This prevents duplication when the turn completes and ensures text remains
+                // in a single consistent flow.
 
                 // Append the activity row to the DEDICATED activity container
                 AddWorkRow(display.Label, display.Icon, display.Detail);
@@ -693,11 +691,21 @@ namespace LocalPilot.Chat
                 }
                 else
                 {
-                    // If no current narrative block, create one to ensure we don't clear the whole turn
-                    var narrative = AppendNarrativeBlock();
-                    if (narrative != null)
+                    // If no current narrative block, try to use the default one for the turn
+                    if (_agentTurnContainer != null)
                     {
-                        RenderFullMarkdown(narrative, fullMessage);
+                        // The primary narrative container is the last StackPanel in the turn layout
+                        var narrative = _agentTurnContainer.Children.OfType<StackPanel>().LastOrDefault();
+                        if (narrative != null)
+                        {
+                            RenderFullMarkdown(narrative, fullMessage);
+                        }
+                        else
+                        {
+                            // Fallback: Create a new one if turn is empty
+                            var newNarrative = AppendNarrativeBlock();
+                            if (newNarrative != null) RenderFullMarkdown(newNarrative, fullMessage);
+                        }
                     }
                 }
                 
