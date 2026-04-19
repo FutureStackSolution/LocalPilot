@@ -648,17 +648,9 @@ namespace LocalPilot.Chat
                 {
                     try
                     {
-                        // 1. Create a temp file for the 'Original' content
-                        string tempDir = Path.Combine(Path.GetTempPath(), "LocalPilotDiff");
-                        if (!Directory.Exists(tempDir)) Directory.CreateDirectory(tempDir);
-
-                        string fileName = Path.GetFileName(path);
-                        string originalPath = Path.Combine(tempDir, "Original_" + fileName);
-                        File.WriteAllText(originalPath, contents.original ?? "");
-
-                        // 2. Open Diff view: Original (Temp) vs Current (Disk/Buffer)
-                        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                        await VS.Documents.OpenDiffViewAsync(originalPath, path, "Original vs Improved");
+                        // 2. Open Diff view using the internal helper (which handles temp files)
+                        string currentContent = File.Exists(path) ? File.ReadAllText(path) : "";
+                        await OpenDiffViewAsync(contents.original ?? "", currentContent);
                     }
                     catch (Exception ex)
                     {

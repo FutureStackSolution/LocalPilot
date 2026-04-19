@@ -770,12 +770,12 @@
                                                         <Setter Property="Template">
                                                             <Setter.Value>
                                                                 <ControlTemplate TargetType="Button">
-                                                                    <Border Background="{TemplateBinding Background}" TargetName="border">
+                                                                    <Border Background="{TemplateBinding Background}" x:Name="border">
                                                                         <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                                                                     </Border>
                                                                     <ControlTemplate.Triggers>
                                                                         <Trigger Property="IsMouseOver" Value="True">
-                                                                            <Setter Property="Background" Value="#20FFFFFF"/>
+                                                                            <Setter Property="Background" Value="#20FFFFFF" TargetName="border"/>
                                                                         </Trigger>
                                                                     </ControlTemplate.Triggers>
                                                                 </ControlTemplate>
