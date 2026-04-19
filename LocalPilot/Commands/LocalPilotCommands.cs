@@ -1,5 +1,6 @@
 using LocalPilot.Services;
 using LocalPilot.Settings;
+using LocalPilot.Options;
 using Microsoft.VisualStudio.Shell;
 using System;
 using System.ComponentModel.Design;

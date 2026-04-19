@@ -8,13 +8,7 @@
                   Language="en-US"
                   Publisher="FutureStackSolution" />
         <DisplayName>LocalPilot — AI Coding Assistant (Ollama)</DisplayName>
-        <Description xml:space="preserve">
-            A GitHub Copilot-style AI coding assistant for Visual Studio that runs 100% locally
-            using Ollama. Features inline ghost-text completions, AI Chat panel, code explanation,
-            refactoring, documentation generation, code review, fix suggestions, and unit test
-            generation — all powered by your locally running Ollama models with no data leaving
-            your machine.
-        </Description>
+        <Description>A GitHub Copilot-style AI coding assistant for Visual Studio that runs 100% locally using Ollama. Features inline ghost-text completions, AI Chat panel, code explanation, refactoring, documentation generation, code review, fix suggestions, and unit test generation — all powered by your locally running Ollama models with no data leaving your machine.</Description>
         <MoreInfo>https://github.com/FutureStackSolution/LocalPilot</MoreInfo>
         <GettingStartedGuide>https://github.com/FutureStackSolution/LocalPilot</GettingStartedGuide>
         <Icon>Assets\Logo_Concept_Minimalist.png</Icon>
