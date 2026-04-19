@@ -56,6 +56,7 @@ namespace LocalPilot.Chat
         private StringBuilder _currentChunkSb = new StringBuilder(); // 🚀 Text since last activity
         private StackPanel _currentNarrativeContainer = null;
         private StackPanel _currentActivityContainer;
+        private ScrollViewer _currentActivityScroller;
         private FrameworkElement _currentNarrativeLabel;
         private FrameworkElement _currentActivityLabel;
 
@@ -413,6 +414,8 @@ namespace LocalPilot.Chat
                 AppendUserBubble(task);
             }
 
+            // 🚀 STATE RESET: Ensure no stale modifications from previous turns leak into this one
+            _lastStagedChanges = null;
             SetStreaming(true);
             StartNewAgentTurn();
 
@@ -456,6 +459,7 @@ namespace LocalPilot.Chat
             _agentTurnContainer = layout.TurnContainer;
             _agentCurrentContainer = layout.CurrentContainer;
             _currentActivityContainer = layout.ActivityContainer;
+            _currentActivityScroller = layout.ActivityScroller;
             _currentNarrativeContainer = layout.NarrativeContainer;
             _currentNarrativeLabel = layout.NarrativeLabel;
             _currentActivityLabel = layout.ActivityLabel;
@@ -490,10 +494,18 @@ namespace LocalPilot.Chat
             var node = _agentUiRenderer.CreateWorkRow(label, icon, detail, this.Resources, iconBrush);
             _currentActivityContainer.Children.Add(node);
 
-            // Show ACTIVITY header when the first row is added
-            if (_currentActivityLabel != null && _currentActivityLabel.Visibility != Visibility.Visible)
+            // Update ACTIVITY label visibility and counter
+            if (_currentActivityLabel is TextBlock tb)
             {
-                _currentActivityLabel.Visibility = Visibility.Visible;
+                int count = _currentActivityContainer.Children.Count;
+                tb.Text = $"ACTIVITY ({count})";
+                if (tb.Visibility != Visibility.Visible) tb.Visibility = Visibility.Visible;
+            }
+
+            if (_currentActivityScroller != null)
+            {
+                if (_currentActivityScroller.Visibility != Visibility.Visible) _currentActivityScroller.Visibility = Visibility.Visible;
+                _currentActivityScroller.ScrollToEnd();
             }
         }
 
@@ -764,6 +776,7 @@ namespace LocalPilot.Chat
                     {
                         var container = _agentTurnContainer;
                         _agentCurrentContainer = null;
+                        _lastStagedChanges = null; // 🛡️ Prevent stale changes from appearing in UI
 
                         if (container != null)
                         {

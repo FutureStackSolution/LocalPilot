@@ -90,12 +90,8 @@ namespace LocalPilot.Commands
         private void OpenOptions(object sender, EventArgs e)
         {
             ThreadHelper.ThrowIfNotOnUIThread();
-            _ = _package.JoinableTaskFactory.RunAsync(async () =>
-            {
-                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                var dte = await _package.GetServiceAsync(typeof(EnvDTE.DTE)) as EnvDTE.DTE;
-                dte?.ExecuteCommand("Tools.Options", "LocalPilot.General");
-            });
+            // 🚀 Directly navigate to the LocalPilot Options page
+            _package.ShowOptionPage(typeof(LocalPilotOptionsPage));
         }
 
         private Task OpenChatWithCommandCapabilityAsync(int commandId)

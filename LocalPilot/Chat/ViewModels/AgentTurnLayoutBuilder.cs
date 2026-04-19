@@ -23,8 +23,20 @@ namespace LocalPilot.Chat.ViewModels
             activityLabel.Visibility = Visibility.Collapsed; // 👻 Hidden until activity starts
             turnContainer.Children.Add(activityLabel);
             
-            var activityContainer = new StackPanel { Margin = new Thickness(0, 4, 0, 10) };
-            turnContainer.Children.Add(activityContainer);
+            var activityContainer = new StackPanel();
+            var activityScroller = new ScrollViewer 
+            { 
+                Content = activityContainer, 
+                MaxHeight = 220, 
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                Margin = new Thickness(0, 0, 0, 10),
+                Background = System.Windows.Media.Brushes.Transparent,
+                BorderThickness = new Thickness(0),
+                Visibility = Visibility.Collapsed
+            };
+            
+            turnContainer.Children.Add(activityScroller);
 
             var narrativeLabel = CreateSectionLabel("RESPONSE", resources);
             narrativeLabel.Visibility = Visibility.Collapsed; // 👻 Hidden until content arrives
@@ -38,6 +50,7 @@ namespace LocalPilot.Chat.ViewModels
                 TurnContainer = turnContainer,
                 CurrentContainer = currentContainer,
                 ActivityContainer = activityContainer,
+                ActivityScroller = activityScroller,
                 ActivityLabel = activityLabel,
                 NarrativeContainer = narrativeContainer,
                 NarrativeLabel = narrativeLabel
@@ -70,6 +83,7 @@ namespace LocalPilot.Chat.ViewModels
         public StackPanel TurnContainer { get; set; }
         public StackPanel CurrentContainer { get; set; }
         public StackPanel ActivityContainer { get; set; }
+        public ScrollViewer ActivityScroller { get; set; }
         public FrameworkElement ActivityLabel { get; set; }
         public StackPanel NarrativeContainer { get; set; }
         public FrameworkElement NarrativeLabel { get; set; }
