@@ -703,22 +703,22 @@ namespace LocalPilot.Chat
 
         private FrameworkElement BuildThoughtCard(string thought)
         {
-            var root = new StackPanel { Margin = new Thickness(0, 4, 0, 10) };
+            var root = new StackPanel { Margin = new Thickness(0, 2, 0, 8) };
 
-            var header = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 6) };
+            var header = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 4), Opacity = 0.6 };
             header.Children.Add(new TextBlock
             {
                 Text = "\uE9CE", // Brain/Intelligence icon
                 FontFamily = new FontFamily("Segoe MDL2 Assets"),
-                FontSize = 10,
+                FontSize = 9,
                 Foreground = (Brush)this.Resources["LpAccentBrush"],
-                Margin = new Thickness(0, 0, 8, 0),
+                Margin = new Thickness(0, 0, 6, 0),
                 VerticalAlignment = VerticalAlignment.Center
             });
             header.Children.Add(new TextBlock
             {
-                Text = "REASONING",
-                FontSize = 9,
+                Text = "THINKING",
+                FontSize = 8,
                 FontWeight = FontWeights.Bold,
                 Foreground = (Brush)this.Resources["LpMutedFgBrush"],
                 VerticalAlignment = VerticalAlignment.Center
@@ -726,18 +726,18 @@ namespace LocalPilot.Chat
             root.Children.Add(header);
 
             var rtb = CreateRichTextBox();
-            rtb.FontSize = 12;
-            rtb.FontStyle = FontStyles.Italic;
+            rtb.FontSize = 11;
+            rtb.Foreground = (Brush)this.Resources["LpMutedFgBrush"];
             
             // Use existing markdown logic for the thought content
             RenderMarkdown(rtb, thought.Trim());
             
             var border = new Border
             {
-                BorderBrush = (Brush)this.Resources["LpAccentBrush"],
-                BorderThickness = new Thickness(1.5, 0, 0, 0),
-                Padding = new Thickness(14, 0, 0, 0),
-                Margin = new Thickness(4, 2, 0, 4),
+                BorderBrush = (Brush)this.Resources["LpMenuBorderBrush"],
+                BorderThickness = new Thickness(2, 0, 0, 0),
+                Padding = new Thickness(10, 0, 0, 0),
+                Margin = new Thickness(4, 0, 0, 2),
                 Child = rtb
             };
             
@@ -767,7 +767,7 @@ namespace LocalPilot.Chat
 
                         if (container != null)
                         {
-                            var badge = _agentUiRenderer.CreateTerminalBadge(statusState, this.Resources);
+                            var badge = _agentUiRenderer.CreateTerminalBadge(statusState, this.Resources, out _);
                             container.Children.Add(badge);
                         }
                         else
@@ -788,14 +788,24 @@ namespace LocalPilot.Chat
                 else
                 {
                     // 🏁 Task Completed Successfully - Clean exit
-                    if (_currentActivityContainer != null)
+                    if (_agentTurnContainer != null)
                     {
-                         AddWorkRow("Task Completed", "\uE73E", null, (Brush)this.Resources["LpSuccessBrush"]);
-                    }
-                    else
-                    {
-                         // No specific work row added, but model should have given a final summary narrative.
-                         // We avoid adding a generic bubble here to prevent duplication of intent.
+                        var badge = _agentUiRenderer.CreateTerminalBadge(statusState, this.Resources, out var acceptBtn);
+                        
+                        // Only show the Accept button if we have pending changes.
+                        if (acceptBtn != null)
+                        {
+                            if (_lastStagedChanges == null || _lastStagedChanges.Count == 0)
+                            {
+                                acceptBtn.Visibility = Visibility.Collapsed;
+                            }
+                            else
+                            {
+                                acceptBtn.Click += (s, ev) => BtnAcceptAll_Click(s, ev);
+                            }
+                        }
+
+                        _agentTurnContainer.Children.Add(badge);
                     }
                     
                     _agentCurrentContainer = null;
@@ -1216,6 +1226,24 @@ namespace LocalPilot.Chat
             bool inCode = md.LastIndexOf("```") > md.LastIndexOf("```", Math.Max(0, md.LastIndexOf("```") - 1)) && !md.EndsWith("```");
             bool inThought = md.LastIndexOf("<thought") > md.LastIndexOf("</thought>");
 
+            // 🛡️ STREAMING SUPPRESSION: If we are inside what looks like a tool call, stop incremental rendering
+            // so technical JSON doesn't flicker in the narrative area.
+            if (inCode)
+            {
+                int codeStart = md.LastIndexOf("```");
+                string codePrefix = md.Substring(codeStart);
+                if (codePrefix.Contains("json") || codePrefix.Contains("{"))
+                {
+                    // Heuristic: check if this block starts like a tool call
+                    string blockSoFar = codePrefix.Substring(Math.Min(codePrefix.Length, 3)).Trim();
+                    if (blockSoFar.StartsWith("{") || blockSoFar.StartsWith("json"))
+                    {
+                         _lastRenderedMarkdown = md; // Mark as 'handled' to prevent fallback render
+                         return;
+                    }
+                }
+            }
+
             string currentType = inCode ? "code" : (inThought ? "thought" : "text");
 
             if (currentType != _activeBlockType || container.Children.Count == 0)
@@ -1359,10 +1387,11 @@ namespace LocalPilot.Chat
                     }
                     cleanCode = cleanCode.Trim();
                     
-                    // 🛡️ EMPTY BLOCK SUPPRESSION:
-                    // If the code block is empty (e.g., the model has only output ``` so far),
-                    // don't render the header and grid yet to avoid "Empty Code" flicker.
+                    // 🛡️ EMPTY OR TOOL CALL SUPPRESSION:
+                    // If the code block is empty or contains a JSON tool call,
+                    // we don't render it in the narrative bubble (it's handled by activity rows).
                     if (string.IsNullOrWhiteSpace(cleanCode)) continue;
+                    if (lang == "JSON" && cleanCode.Trim().StartsWith("{") && cleanCode.Contains("\"name\"")) continue;
 
                     var codeGrid = new Grid { Margin = new Thickness(0, 2, 0, 6) };
                     codeGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });

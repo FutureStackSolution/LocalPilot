@@ -293,11 +293,9 @@ namespace LocalPilot.Services
                 var responseText = responseBuilder.ToString();
                 var cleanText = StripToolCalls(responseText);
 
-                // Show completed message text (if any)
-                if (!string.IsNullOrWhiteSpace(cleanText))
-                {
-                    OnMessageCompleted?.Invoke(cleanText);
-                }
+                // 🚀 UI CLEANUP: Always invoke message completion to ensure the 'rendered' 
+                // version (which has tool calls stripped) overwrites the 'streaming' noise.
+                OnMessageCompleted?.Invoke(cleanText);
 
                 // Add assistant response to history
                 messages.Add(new ChatMessage { Role = "assistant", Content = responseText });
@@ -485,9 +483,7 @@ namespace LocalPilot.Services
 
                         if (!result.IsError)
                         {
-                            string displayName = toolCall.Name.Replace("_", " ");
-                            displayName = System.Globalization.CultureInfo.CurrentCulture.TextInfo.ToTitleCase(displayName);
-                            OnMessageFragment?.Invoke($"✅ Successfully executed: **`{displayName}`**\n");
+                            // Status is already visually tracked via badges; no need for text chatter.
                         }
 
                         // 🛡️ ERROR FEEDBACK: Ensure model doesn't hallucinate success
@@ -590,12 +586,17 @@ namespace LocalPilot.Services
             if (string.IsNullOrEmpty(text)) return text;
 
             // 🚀 PRECISION SILENCE ENGINE
-            // 1. Remove markdown-wrapped tool calls (must contain "name" and "arguments")
-            var mdPattern = @"(?s)```(?:json)?\s*\{\s*""name""\s*:.*?\}[\s]*```";
+            // Improved logic: Identify markdown blocks that contain a tool "name" and strip them entirely.
+            // This is safer than trying to match balanced braces which is hard in regex.
+            
+            // 1. Remove markdown-wrapped tool calls (look for blocks containing "name" and "arguments")
+            var mdPattern = @"(?s)```(?:json)?\s*\{.*?""name""\s*:.*?\}.*?```";
             var cleaned = System.Text.RegularExpressions.Regex.Replace(text, mdPattern, string.Empty);
             
-            // 2. Remove raw JSON tool call structures
-            var rawPattern = @"(?s)\{\s*""name""\s*:\s*""[^""]+""\s*,\s*""arguments""\s*:\s*\{.*?\}.*?\}";
+            // 2. Remove raw JSON tool call structures (if not fenced)
+            // Pattern looks for { "name": ... "arguments": ... } and stops at a reasonable end or newline
+            var rawPattern = @"(?s)\{\s*""name""\s*:\s*""[^""]+""\s*,\s*""arguments""\s*:\s*\{.*?\}\s*\}";
+            // We use a cautious approach for raw JSON to avoid over-stripping actual code samples if they're not tool calls.
             cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, rawPattern, string.Empty);
             
             // 3. Remove thinking process / thought tags if they are empty or short (noise reduction)

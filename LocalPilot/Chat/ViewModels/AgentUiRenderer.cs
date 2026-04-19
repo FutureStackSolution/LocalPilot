@@ -77,8 +77,9 @@ namespace LocalPilot.Chat.ViewModels
             return info;
         }
 
-        public Border CreateTerminalBadge(AgentStatusViewState statusState, ResourceDictionary resources)
+        public Border CreateTerminalBadge(AgentStatusViewState statusState, ResourceDictionary resources, out Button acceptButton)
         {
+            acceptButton = null;
             var badge = new Border
             {
                 Background = resources["LpMenuBgBrush"] as Brush,
@@ -101,7 +102,7 @@ namespace LocalPilot.Chat.ViewModels
                 VerticalAlignment = VerticalAlignment.Center,
                 Foreground = statusState.IsCancelled 
                     ? resources["LpMutedFgBrush"] as Brush 
-                    : (statusState.IsFailure ? resources["LpStopBrush"] as Brush : resources["LpAntigravityBlue"] as Brush)
+                    : (statusState.IsFailure ? resources["LpStopBrush"] as Brush : resources["LpSuccessBrush"] as Brush ?? resources["LpAntigravityBlue"] as Brush)
             });
  
             sp.Children.Add(new TextBlock
@@ -112,6 +113,20 @@ namespace LocalPilot.Chat.ViewModels
                 Foreground = resources["LpWindowFgBrush"] as Brush,
                 VerticalAlignment = VerticalAlignment.Center
             });
+
+            if (statusState.IsCompletion)
+            {
+                acceptButton = new Button
+                {
+                    Content = "Accept All",
+                    Style = resources["LpPrimaryActionButtonStyle"] as Style,
+                    Margin = new Thickness(16, -4, -4, -4), // Nested alignment
+                    Padding = new Thickness(10, 4, 10, 4),
+                    FontSize = 10,
+                    Height = 24
+                };
+                sp.Children.Add(acceptButton);
+            }
 
             badge.Child = sp;
             return badge;
