@@ -27,42 +27,51 @@ namespace LocalPilot.Chat.ViewModels
             if (request.Name == "read_file")
             {
                 info.Label = "Reading file";
+                info.Icon = "\uE8A5"; // Document
                 info.Detail = FileNameFromArg(request.Arguments, "path");
             }
             else if (request.Name == "grep_search")
             {
                 info.Label = "Searching codebase";
+                info.Icon = "\uE721"; // Search
             }
             else if (request.Name == "list_directory")
             {
                 info.Label = "Exploring directory";
+                info.Icon = "\uE8B7"; // Folder
             }
             else if (request.Name == "write_file" || request.Name == "replace_text" || request.Name == "write_to_file" || request.Name == "replace_file_content")
             {
                 info.Label = "Updating code";
+                info.Icon = "\uE74E"; // Save
                 info.Detail = FileNameFromArg(request.Arguments, "TargetFile") ?? FileNameFromArg(request.Arguments, "path");
             }
             else if (request.Name == "run_terminal")
             {
                 info.Label = "Running command";
+                info.Icon = "\uE756"; // Terminal
             }
             else if (request.Name == "delete_file")
             {
                 info.Label = "Deleting file";
+                info.Icon = "\uE74D"; // Delete
                 info.Detail = FileNameFromArg(request.Arguments, "path");
             }
             else if (request.Name == "rename_symbol")
             {
                 info.Label = "Refactoring symbol";
+                info.Icon = "\uE8AC"; // Rename
                 info.Detail = StringArg(request.Arguments, "new_name");
             }
             else if (request.Name == "list_errors")
             {
                 info.Label = "Checking for errors";
+                info.Icon = "\uE117"; // Warning
             }
             else if (request.Name == "run_tests")
             {
                 info.Label = "Running tests";
+                info.Icon = "\uE9DB"; // Beaker/Lab
             }
 
             return info;
@@ -76,26 +85,28 @@ namespace LocalPilot.Chat.ViewModels
                 BorderBrush = resources["LpMenuBorderBrush"] as Brush,
                 BorderThickness = new Thickness(1),
                 CornerRadius = new CornerRadius(6),
-                Padding = new Thickness(10, 7, 10, 7),
+                Padding = new Thickness(12, 8, 12, 8),
                 Margin = new Thickness(0, 8, 0, 4),
                 HorizontalAlignment = HorizontalAlignment.Left
             };
 
             var sp = new StackPanel { Orientation = Orientation.Horizontal };
+
             sp.Children.Add(new TextBlock
             {
-                Text = statusState.IsCancelled ? "\uE71A" : "\uE7BA",
+                Text = statusState.IsCancelled ? "\uE711" : (statusState.IsFailure ? "\uE10A" : "\uE73E"), // Cancel (X), Error (Warning), or Success (Tick)
                 FontFamily = new FontFamily("Segoe MDL2 Assets"),
-                FontSize = 12,
-                Margin = new Thickness(0, 0, 8, 0),
+                FontSize = 14,
+                Margin = new Thickness(0, 0, 10, 0),
                 VerticalAlignment = VerticalAlignment.Center,
-                Foreground = statusState.IsCancelled
-                    ? resources["LpMutedFgBrush"] as Brush
-                    : resources["LpAccentBrush"] as Brush
+                Foreground = statusState.IsCancelled 
+                    ? resources["LpMutedFgBrush"] as Brush 
+                    : (statusState.IsFailure ? resources["LpStopBrush"] as Brush : resources["LpAntigravityBlue"] as Brush)
             });
+
             sp.Children.Add(new TextBlock
             {
-                Text = statusState.IsCancelled ? "Task cancelled by user." : "Task stopped due to an error.",
+                Text = statusState.IsCancelled ? "Task cancelled by user." : (statusState.IsFailure ? "Task stopped due to an error." : "Task completed."),
                 FontWeight = FontWeights.SemiBold,
                 FontSize = 12,
                 Foreground = resources["LpWindowFgBrush"] as Brush,
@@ -106,7 +117,7 @@ namespace LocalPilot.Chat.ViewModels
             return badge;
         }
 
-        public Border CreateWorkRow(string label, string icon, string detail, ResourceDictionary resources)
+        public Border CreateWorkRow(string label, string icon, string detail, ResourceDictionary resources, Brush iconBrush = null)
         {
             var node = new Border { Style = resources["ActionNodeStyle"] as Style };
 
@@ -119,10 +130,11 @@ namespace LocalPilot.Chat.ViewModels
             {
                 Text = icon,
                 Style = resources["ActionNodeIconStyle"] as Style,
-                Foreground = resources["LpAccentBrush"] as Brush
+                Foreground = iconBrush ?? resources["LpAccentBrush"] as Brush
             };
-            if (iconBlock.FontFamily.Source != "Segoe MDL2 Assets")
-                iconBlock.FontFamily = new FontFamily("Segoe MDL2 Assets");
+            
+            // Force MDL2 assets for binary icons
+            iconBlock.FontFamily = new FontFamily("Segoe MDL2 Assets");
 
             Grid.SetColumn(iconBlock, 0);
             row.Children.Add(iconBlock);
@@ -130,7 +142,8 @@ namespace LocalPilot.Chat.ViewModels
             var labelBlock = new TextBlock
             {
                 Text = label,
-                Style = resources["ActionNodeHeaderStyle"] as Style
+                Style = resources["ActionNodeHeaderStyle"] as Style,
+                FontSize = 12 // Match TerminalBadge size for consistency
             };
             Grid.SetColumn(labelBlock, 1);
             row.Children.Add(labelBlock);
@@ -150,9 +163,21 @@ namespace LocalPilot.Chat.ViewModels
             }
 
             node.Child = row;
+            
+            // 🚀 SMOOTH ENTRANCE: Professional fade-in (No AutoReverse to avoid pale state)
+            var entrance = new DoubleAnimation(0.2, 1.0, new Duration(TimeSpan.FromSeconds(0.5))) 
+            { 
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } 
+            };
+            node.BeginAnimation(UIElement.OpacityProperty, entrance);
+            
+            var slide = new DoubleAnimation(8, 0, new Duration(TimeSpan.FromSeconds(0.4)))
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+            };
+            node.RenderTransform = new TranslateTransform();
+            node.RenderTransform.BeginAnimation(TranslateTransform.YProperty, slide);
 
-            var glow = new DoubleAnimation(0.4, 1.0, new Duration(TimeSpan.FromSeconds(0.3))) { AutoReverse = true };
-            node.BeginAnimation(UIElement.OpacityProperty, glow);
             return node;
         }
 

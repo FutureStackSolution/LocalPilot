@@ -52,8 +52,15 @@ namespace LocalPilot.Completion
             // Dismiss existing ghost text on any edit
             _ghostAdornment?.HideGhost();
 
-            // Debounce the request
-            var delay = LocalPilotSettings.Instance.CompletionDelayMs;
+            // 🚀 AUTONOMOUS DEBOUNCE: Derived from Intelligence Mode
+            var mode = LocalPilotSettings.Instance.Mode;
+            var delay = mode switch
+            {
+                PerformanceMode.Fast => 300,
+                PerformanceMode.HighAccuracy => 1000,
+                _ => 600
+            };
+
             lock (_lock)
             {
                 _debounceTimer?.Dispose();
@@ -85,9 +92,9 @@ namespace LocalPilot.Completion
                 var snapshot = _view.TextBuffer.CurrentSnapshot;
                 var caretPos = _view.Caret.Position.BufferPosition.Position;
                 
-                // Respect context lines before/after from settings
-                var beforeLines = LocalPilotSettings.Instance.ContextLinesBefore;
-                var afterLines = LocalPilotSettings.Instance.ContextLinesAfter;
+                // 🚀 AUTONOMOUS CONTEXT: Using 'Golden Ratio' for optimized FIM completion
+                const int beforeLines = 64;
+                const int afterLines = 16;
 
                 int startPos = Math.Max(0, caretPos);
                 int linesFound = 0;
@@ -114,10 +121,18 @@ namespace LocalPilot.Completion
                 var completionText = await Task.Run(async () =>
                 {
                     var prompt = _promptBuilder.Build(fileExt, prefix, suffix, filePath);
+                    var mode = LocalPilotSettings.Instance.Mode;
+                    var maxTokens = mode switch
+                    {
+                        PerformanceMode.Fast => 128,
+                        PerformanceMode.HighAccuracy => 512,
+                        _ => 256
+                    };
+
                     var opts = new OllamaOptions
                     {
-                        Temperature = LocalPilotSettings.Instance.Temperature,
-                        NumPredict = LocalPilotSettings.Instance.MaxCompletionTokens,
+                        Temperature = mode == PerformanceMode.Fast ? 0.4 : (mode == PerformanceMode.HighAccuracy ? 0.1 : 0.2),
+                        NumPredict = maxTokens,
                         Stop = new System.Collections.Generic.List<string> { "\n\n\n", "</MID>" }
                     };
 

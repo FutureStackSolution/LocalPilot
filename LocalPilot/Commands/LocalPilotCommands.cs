@@ -24,7 +24,6 @@ namespace LocalPilot.Commands
         public const int CmdIdFixCode         = 0x0105;
         public const int CmdIdGenerateTest    = 0x0106;
         public const int CmdIdOpenOptions     = 0x0107;
-        public const int CmdIdInlineChat      = 0x0108;
 
         private readonly AsyncPackage _package;
 
@@ -51,7 +50,6 @@ namespace LocalPilot.Commands
             Register(cmdService, CmdIdReviewCode,   instance.ReviewCode,   () => LocalPilotSettings.Instance.EnableReview);
             Register(cmdService, CmdIdFixCode,      instance.FixCode,      () => LocalPilotSettings.Instance.EnableFix);
             Register(cmdService, CmdIdGenerateTest, instance.GenerateTest, () => LocalPilotSettings.Instance.EnableUnitTest);
-            Register(cmdService, CmdIdInlineChat,   instance.OpenInlineChat);
         }
 
         private static void Register(IMenuCommandService svc, int id, EventHandler handler, Func<bool> isVisible = null)
@@ -88,12 +86,6 @@ namespace LocalPilot.Commands
         private void ReviewCode(object sender, EventArgs e) => _ = OpenChatWithCommandCapabilityAsync(CmdIdReviewCode);
         private void FixCode(object sender, EventArgs e) => _ = OpenChatWithCommandCapabilityAsync(CmdIdFixCode);
         private void GenerateTest(object sender, EventArgs e) => _ = OpenChatWithCommandCapabilityAsync(CmdIdGenerateTest);
-
-        private void OpenInlineChat(object sender, EventArgs e)
-        {
-            ThreadHelper.ThrowIfNotOnUIThread();
-            _ = InlineChatOverlayManager.Instance.ShowAsync();
-        }
 
         private void OpenOptions(object sender, EventArgs e)
         {

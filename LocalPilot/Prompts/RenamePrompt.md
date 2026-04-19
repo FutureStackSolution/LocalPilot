@@ -1,8 +1,13 @@
-# INSTRUCTION
-Perform a project-wide semantic rename of the specified symbol.
-1. Use `rename_symbol` to update the definition and all references atomically.
-2. If `rename_symbol` fails, analyze the failure and perform a manual refactor across relevant files using `grep_search` and `replace_file_content`.
-3. Ensure the new name follows the project's naming conventions and maintains semantic clarity.
+<task_type>semantic_rename</task_type>
 
-# TARGET
+<instruction>
+Perform a project-wide semantic rename of the specified symbol.
+1. NATIVE TOOLS: Always prioritize `rename_symbol` to update the definition and all references atomically.
+2. VERIFICATION: After renaming, check for "missing member" errors using `list_errors`.
+3. FALLBACK: If `rename_symbol` fails, use `grep_search` and `replace_text` to manually update references, ensuring exact matches.
+Maintain the project's indentation and file formatting exactly.
+</instruction>
+
+<rename_target>
 {codeBlock}
+</rename_target>

@@ -91,7 +91,7 @@ namespace LocalPilot.Services
             // NATIVE TOOL DEFINITIONS
             // ═══════════════════════════════════════════════════════════════════
             var toolDefinitions = _toolRegistry.GetOllamaToolDefinitions();
-            LocalPilotLogger.Log($"[Agent] Registered {toolDefinitions.Count} native tools for Ollama");
+            LocalPilotLogger.Log($"[Agent] Registered {toolDefinitions.Count} native tools for Ollama", LogCategory.Agent);
 
             // 🚀 SECTION-HEADER FORMAT: Structured system prompt loaded from template
             var systemPrompt = PromptLoader.GetPrompt("SystemPrompt", new Dictionary<string, string> 
@@ -107,11 +107,23 @@ namespace LocalPilot.Services
 
             messages.Insert(0, new ChatMessage { Role = "system", Content = systemPrompt });
 
+            // 🚀 PERSISTENT RULES: Inject project-specific instructions from LOCALPILOT.md (like CLAUDE.md)
+            try
+            {
+                string rulesPath = Path.Combine(solutionPath, "LOCALPILOT.md");
+                if (File.Exists(rulesPath))
+                {
+                    string localRules = File.ReadAllText(rulesPath);
+                    messages.Add(new ChatMessage { Role = "system", Content = $"## PROJECT-SPECIFIC RULES\n{localRules}" });
+                }
+            }
+            catch { }
+
             if (LocalPilot.Settings.LocalPilotSettings.Instance.EnableProjectMap)
             {
                 OnStatusUpdate?.Invoke(AgentStatus.Thinking, "Analyzing project structure...");
                 string projectMapContent = await _projectMap.GenerateProjectMapAsync(solutionPath, 
-                    maxTotalBytes: LocalPilot.Settings.LocalPilotSettings.Instance.MaxMapSizeKB * 1024);
+                    maxTotalBytes: 2048 * 1024); // 2MB Limit
                 
                 if (!string.IsNullOrEmpty(projectMapContent))
                 {
@@ -158,7 +170,7 @@ namespace LocalPilot.Services
                 else if (cmd == "/map")      
                 {
                     OnStatusUpdate?.Invoke(AgentStatus.Thinking, "Updating Project Map...");
-                    await _projectMap.GenerateProjectMapAsync(solutionPath, maxTotalBytes: settings.MaxMapSizeKB * 1024);
+                    await _projectMap.GenerateProjectMapAsync(solutionPath, maxTotalBytes: 2048 * 1024);
                     processedTask = "Please provide an executive summary of the project structure based on the updated map.";
                 }
             }
@@ -252,11 +264,9 @@ namespace LocalPilot.Services
                 var toolCallsThisTurn = new List<ToolCallRequest>();
 
                 // 🚀 STREAM INTERCEPTOR: Buffer and suppress tool-text leaking to UI
-                var tokenBuffer = new System.Text.StringBuilder();
-                bool isBuffering = false;
-
                 string contextModel = LocalPilot.Settings.LocalPilotSettings.Instance.ChatModel;
-                var options = ApplyPerformancePresets(LocalPilot.Settings.LocalPilotSettings.Instance.Mode);
+                var options = ApplyPerformancePresets(LocalPilot.Settings.LocalPilotSettings.Instance.Mode, messages);
+                LocalPilotLogger.Log($"[Agent] Turn {step}: Running model {contextModel} with context={options.NumCtx}", LogCategory.Agent);
 
                 // Stream with native tool calling
                 await foreach (var result in _ollama.StreamChatWithToolsAsync(contextModel, messages, toolDefinitions, options, ct))
@@ -265,25 +275,9 @@ namespace LocalPilot.Services
                     {
                         string token = result.TextToken;
                         responseBuilder.Append(token);
-                        tokenBuffer.Append(token);
 
                         // 🚀 NARRATIVE STREAMING: Pass tokens to UI for a 'live' feel.
-                        if (!isBuffering)
-                        {
-                            OnMessageFragment?.Invoke(token);
-                        }
-
-                        // Code block detection for adaptive buffering
-                        if (!isBuffering && tokenBuffer.ToString().Contains("```"))
-                        {
-                            isBuffering = true;
-                        }
-
-                        if (isBuffering && tokenBuffer.ToString().TrimEnd().EndsWith("```") && tokenBuffer.Length > 5)
-                        {
-                            tokenBuffer.Clear();
-                            isBuffering = false;
-                        }
+                        OnMessageFragment?.Invoke(token);
                     }
                     else if (result.IsToolCall)
                     {
@@ -391,22 +385,41 @@ namespace LocalPilot.Services
                         OnToolCallPending?.Invoke(toolCall);
                         
                         // Track changes for staging
-                        bool isWrite = toolCall.Name == "write_to_file" || toolCall.Name == "replace_file_content";
+                        bool isWrite = toolCall.Name == "write_file" || 
+                                       toolCall.Name == "replace_text" || 
+                                       toolCall.Name == "write_to_file" || 
+                                       toolCall.Name == "replace_file_content";
                         string target = null;
                         string code = null;
 
                         if (isWrite)
                         {
-                            target = toolCall.Arguments?.ContainsKey("TargetFile") == true
-                                ? toolCall.Arguments["TargetFile"]?.ToString()
-                                : toolCall.Arguments?.ContainsKey("path") == true
-                                    ? toolCall.Arguments["path"]?.ToString()
-                                    : null;
-                            code = toolCall.Arguments?.ContainsKey("CodeContent") == true
-                                ? toolCall.Arguments["CodeContent"]?.ToString()
-                                : toolCall.Arguments?.ContainsKey("content") == true
-                                    ? toolCall.Arguments["content"]?.ToString()
-                                    : null;
+                            target = GetSafeToolArg(toolCall, "path") ?? GetSafeToolArg(toolCall, "TargetFile");
+                            
+                            string rawCode = GetSafeToolArg(toolCall, "content") ?? 
+                                             GetSafeToolArg(toolCall, "new_text") ?? 
+                                             GetSafeToolArg(toolCall, "CodeContent");
+
+                            // 🚀 INTELLIGENT STAGING: For replacements, calculate the FULL NEW CONTENT for the diff
+                            if (toolCall.Name == "replace_text")
+                            {
+                                string oldText = GetSafeToolArg(toolCall, "old_text");
+                                string absPath = _toolRegistry.ResolvePath(target);
+                                string currentContent = "";
+                                
+                                try {
+                                    if (File.Exists(absPath)) currentContent = File.ReadAllText(absPath);
+                                    // Apply replacement to show the FULL FILE in the Diff preview
+                                    if (!string.IsNullOrEmpty(currentContent) && !string.IsNullOrEmpty(oldText))
+                                        code = currentContent.Replace(oldText, rawCode ?? "");
+                                    else
+                                        code = rawCode;
+                                } catch { code = rawCode; }
+                            }
+                            else
+                            {
+                                code = rawCode;
+                            }
                             
                             // 🚀 DIFF PREVIEW: Show native VS comparison before writing
                             if (!string.IsNullOrEmpty(target) && !string.IsNullOrEmpty(code))
@@ -417,7 +430,7 @@ namespace LocalPilot.Services
                         }
 
                         // 🚀 DYNAMIC STATUS UPDATES: Let the user know exactly what the engine is doing
-                        string status = $"Executing {toolCall.Name}...";
+                        string status = $"Executing {toolCall.Name.Replace("_", " ")}...";
                         if (toolCall.Name == "rename_symbol") status = "Analyzing symbol with Roslyn (Tier 1)...";
                         else if (toolCall.Name == "grep_search") status = "Searching project files...";
                         else if (toolCall.Name == "list_errors") status = "Checking for build errors...";
@@ -455,7 +468,9 @@ namespace LocalPilot.Services
 
                         if (!result.IsError)
                         {
-                            OnMessageFragment?.Invoke($"✅ Successfully executed: **{toolCall.Name}**\n");
+                            string displayName = toolCall.Name.Replace("_", " ");
+                            displayName = System.Globalization.CultureInfo.CurrentCulture.TextInfo.ToTitleCase(displayName);
+                            OnMessageFragment?.Invoke($"✅ Successfully executed: **`{displayName}`**\n");
                         }
 
                         // 🛡️ ERROR FEEDBACK: Ensure model doesn't hallucinate success
@@ -479,16 +494,28 @@ namespace LocalPilot.Services
                             }
 
                             // 🚀 AUTO-VERIFICATION: If we edited code, immediately check for errors
+                            // 🚀 SELF-HEAL ENGINE (Sentinel Protocol): If we edited code, immediately check for new errors
                             if (isWrite)
                             {
                                 var diagResult = await GetVisibleDiagnosticsAsync(ct);
-                                string verificationMsg = !string.IsNullOrEmpty(diagResult)
-                                    ? $"[AUTO-VERIFY] Code changes detected new or existing errors:\n{diagResult}\n\nPlease fix these errors before proceeding."
-                                    : "[AUTO-VERIFY] No compilation errors detected in the Error List.";
+                                bool hasErrors = !string.IsNullOrEmpty(diagResult);
+                                
+                                string verificationMsg = hasErrors
+                                    ? $"[SENTINEL] CRITICAL: Code changes introduced or detected errors:\n{diagResult}\n\nYou MUST FIX these errors (Self-Heal) or REVERT the change before proceeding. Do not ask for permission to fix your own introduced errors."
+                                    : "[SENTINEL] Verification Successful: No compilation errors detected.";
                                 
                                 lock (messages)
                                 {
                                     messages.Add(new ChatMessage { Role = "system", Content = verificationMsg });
+                                }
+                                
+                                if (hasErrors) 
+                                {
+                                    LocalPilotLogger.Log("[Agent] Build errors detected after write. Triggering Self-Heal protocol feedback.", LogCategory.Build, LogSeverity.Warning);
+                                }
+                                else
+                                {
+                                    LocalPilotLogger.Log("[Agent] Write verified. No build errors detected.", LogCategory.Build, LogSeverity.Info);
                                 }
                             }
                         }
@@ -548,21 +575,17 @@ namespace LocalPilot.Services
         {
             if (string.IsNullOrEmpty(text)) return text;
 
-            // 🚀 ABOSLUTE SILENCE ENGINE: More aggressive regex to catch all JSON variations
-            // 1. Remove markdown-wrapped JSON tool calls (including partials)
-            var mdPattern = @"(?s)```(?:json)?\s*\{.*?\}.*?```";
+            // 🚀 PRECISION SILENCE ENGINE
+            // 1. Remove markdown-wrapped tool calls (must contain "name" and "arguments")
+            var mdPattern = @"(?s)```(?:json)?\s*\{\s*""name""\s*:.*?\}[\s]*```";
             var cleaned = System.Text.RegularExpressions.Regex.Replace(text, mdPattern, string.Empty);
             
-            // 2. Remove raw JSON objects that look like tool calls (name/arguments/path)
-            var rawPattern = @"(?s)\{\s*""(?:name|arguments|path|pattern)""\s*:\s*.*?\}.*?\}?";
+            // 2. Remove raw JSON tool call structures
+            var rawPattern = @"(?s)\{\s*""name""\s*:\s*""[^""]+""\s*,\s*""arguments""\s*:\s*\{.*?\}.*?\}";
             cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, rawPattern, string.Empty);
             
-            // 3. Remove thinking process / thought tags ONLY if they are not meant to be shown
-            // (We preserve them now for Antigravity-style verbosity)
-            // cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, @"(?s)<thought>.*?</thought>", string.Empty);
-            
-            // 4. (v3.0) We NO LONGER strip plans, as users want to see the AI's intent.
-            // cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, @"(?s)## PLAN\s*.*?(?=\n\n|\n#|$)", string.Empty);
+            // 3. Remove thinking process / thought tags if they are empty or short (noise reduction)
+            cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, @"(?s)<thought>\s*</thought>", string.Empty);
 
             return cleaned.Trim();
         }
@@ -616,36 +639,57 @@ namespace LocalPilot.Services
             return $"{toolCall?.Name}|{argsJson}";
         }
 
-        private OllamaOptions ApplyPerformancePresets(LocalPilot.Settings.PerformanceMode mode)
+        private string GetSafeToolArg(ToolCallRequest toolCall, string key)
+        {
+            if (toolCall?.Arguments == null) return null;
+            if (toolCall.Arguments.TryGetValue(key, out var val) && val != null) return val.ToString();
+            return null;
+        }
+
+        private OllamaOptions ApplyPerformancePresets(LocalPilot.Settings.PerformanceMode mode, List<ChatMessage> history)
         {
             var options = new OllamaOptions();
-            var settings = LocalPilot.Settings.LocalPilotSettings.Instance;
-
-            // Start with synchronized global settings
-            options.Temperature = settings.Temperature;
-            options.NumPredict = settings.MaxChatTokens;
+            
+            // 🚀 DYNAMIC CONTEXT SIZER: Automatically calculate required memory
+            long estimatedTokens = 0;
+            foreach (var msg in history) estimatedTokens += (msg.Content?.Length ?? 0) / 3; // Rough char-to-token heuristic
+            
+            // Add a 25% safety buffer for the next generation
+            long requiredCtx = (long)(estimatedTokens * 1.25);
+            
+            // Tiered minimums to avoid frequent context switching (which triggers model re-shuffling)
+            if (requiredCtx < 4096) requiredCtx = 4096;
+            else if (requiredCtx < 16384) requiredCtx = 16384;
+            else if (requiredCtx < 32768) requiredCtx = 32768;
+            
+            options.NumCtx = (int)Math.Min(requiredCtx, 128000); // 128k hard cap for local safety
+            LocalPilotLogger.Log($"[Orchestrator] Dynamic Context Allocation: {options.NumCtx} tokens (Estimated Load: {estimatedTokens})");
 
             switch (mode)
             {
                 case LocalPilot.Settings.PerformanceMode.Fast:
-                    options.NumCtx = 4096;
+                    options.Temperature = 0.5;
+                    options.NumPredict = 1024;
                     options.RepeatPenalty = 1.1;
                     options.TopP = 0.9;
                     break;
+
                 case LocalPilot.Settings.PerformanceMode.HighAccuracy:
-                    options.NumCtx = 16384; 
+                    options.Temperature = 0.0;
+                    options.NumPredict = 8192;
                     options.RepeatPenalty = 1.25;
-                    options.TopP = 0.8;
-                    options.TopK = 20;
+                    options.TopP = 0.1;
                     break;
-                case LocalPilot.Settings.PerformanceMode.Custom:
+
                 case LocalPilot.Settings.PerformanceMode.Standard:
                 default:
-                    options.NumCtx = 8192;
-                    options.RepeatPenalty = 1.1;
-                    options.TopP = 0.9;
+                    options.Temperature = 0.2;
+                    options.NumPredict = 4096;
+                    options.RepeatPenalty = 1.15;
+                    options.TopP = 0.8;
                     break;
             }
+
             return options;
         }
 
@@ -655,7 +699,34 @@ namespace LocalPilot.Services
         {
             var sb = new System.Text.StringBuilder();
 
-            // 1. Diagnostics (Errors/Warnings)
+            // 1. 🛡️ ENVIRONMENT SENTINEL: Host & Framework Details
+            try {
+                 await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                 var dte = Microsoft.VisualStudio.Shell.Package.GetGlobalService(typeof(global::EnvDTE.DTE)) as global::EnvDTE80.DTE2;
+                 if (dte != null) {
+                     sb.AppendLine("## ENVIRONMENT SENTINEL");
+                     sb.AppendLine($"- IDE: Visual Studio {dte.Version} ({dte.Edition})");
+                     var activeProject = await Community.VisualStudio.Toolkit.VS.Solutions.GetActiveProjectAsync();
+                     if (activeProject != null) {
+                         sb.AppendLine($"- Active Project: {activeProject.Name}");
+                         // Target Framework logic can be deep, but let's grab a simple property if possible
+                     }
+                     sb.AppendLine();
+                 }
+            } catch { }
+
+            // 2. 🕒 TEMPORAL CONTEXT: Recently Touched Files
+            try {
+                await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                var activeDoc = await Community.VisualStudio.Toolkit.VS.Documents.GetActiveDocumentViewAsync();
+                if (activeDoc != null) {
+                    sb.AppendLine("## RECENT TEMPORAL CONTEXT (ACTIVE TAB)");
+                    sb.AppendLine($"- {Path.GetFileName(activeDoc.FilePath)} ({activeDoc.FilePath})");
+                    sb.AppendLine();
+                }
+            } catch { }
+
+            // 3. Diagnostics (Errors/Warnings)
             string diags = await GetVisibleDiagnosticsAsync(ct);
             if (!string.IsNullOrEmpty(diags))
             {
@@ -664,7 +735,7 @@ namespace LocalPilot.Services
                 sb.AppendLine();
             }
 
-            // 2. Git State
+            // 4. Git State
             string gitState = await GetGitStateAsync(solutionPath);
             if (!string.IsNullOrEmpty(gitState))
             {

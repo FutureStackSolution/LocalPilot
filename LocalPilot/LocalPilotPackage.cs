@@ -18,9 +18,9 @@ namespace LocalPilot
     [Guid(PackageGuidString)]
     [ProvideMenuResource("Menus.ctmenu", 1)]
     [ProvideToolWindow(typeof(LocalPilotChatWindow),
-        Style = Microsoft.VisualStudio.Shell.VsDockStyle.Tabbed,
+        Style = VsDockStyle.Tabbed,
         Window      = Microsoft.VisualStudio.Shell.Interop.ToolWindowGuids80.SolutionExplorer,
-        Orientation = Microsoft.VisualStudio.Shell.ToolWindowOrientation.Right)]
+        Orientation = ToolWindowOrientation.Right)]
 
     // Options page — accessible via Tools > Options > LocalPilot
     [ProvideOptionPage(typeof(LocalPilotOptionsPage),
@@ -49,7 +49,6 @@ namespace LocalPilot
             // Register all commands
             await LocalPilotCommands.InitializeAsync(this);
             LocalPilotCommandRouter.Instance.Initialize(this);
-            InlineChatOverlayManager.Instance.Initialize(this);
 
             // Auto-Index Project Context in background (v1.3)
             _ = Task.Run(async () =>

@@ -98,13 +98,7 @@
         <CommandFlag>DynamicVisibility</CommandFlag>
       </Button>
 
-      <Button guid="guidLocalPilotCmdSet" id="cmdidInlineChat" priority="0x0005" type="Button">
-        <Parent guid="guidLocalPilotCmdSet" id="LocalPilotContextInnerGroup"/>
-        <Strings>
-          <ButtonText>Inline Chat</ButtonText>
-          <ToolTipText>Summon LocalPilot Inline (Ctrl+I)</ToolTipText>
-        </Strings>
-      </Button>
+      <!-- Inline Chat removed from context menu per user request to declutter -->
 
       <Button guid="guidLocalPilotCmdSet" id="cmdidOpenOptions" priority="0x0107" type="Button">
         <Parent guid="guidLocalPilotCmdSet" id="LocalPilotMenuGroup"/>
@@ -157,7 +151,6 @@
       <IDSymbol name="cmdidFixCode"                value="0x0105"/>
       <IDSymbol name="cmdidGenerateTest"           value="0x0106"/>
       <IDSymbol name="cmdidOpenOptions"            value="0x0107"/>
-      <IDSymbol name="cmdidInlineChat"             value="0x0108"/>
     </GuidSymbol>
 
     <GuidSymbol name="guidMenuIcons" value="{C1D2A3B4-C5D6-47E8-F9A0-B1C2D3E4F5A6}">
@@ -173,7 +166,7 @@
   <!-- Global Hotkeys for summoned AI -->
   <KeyBindings>
     <KeyBinding guid="guidLocalPilotCmdSet" id="cmdidOpenChat" editor="guidVSStd97" key1="L" mod1="Alt"/>
-    <KeyBinding guid="guidLocalPilotCmdSet" id="cmdidInlineChat" editor="guidVSStd97" key1="I" mod1="Control"/>
+    <!-- Inline Chat KeyBinding removed per user request -->
   </KeyBindings>
 
 </CommandTable>

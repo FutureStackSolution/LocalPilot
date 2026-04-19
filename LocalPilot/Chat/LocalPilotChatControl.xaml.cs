@@ -28,7 +28,6 @@ namespace LocalPilot.Chat
         private CancellationTokenSource _cts;
         private string _lastAuthoringCode = null; // Buffer for original code during Refactor/Fix
         private string _currentAction = null;     // Tracks active quick action context
-        private int _lastStreamId = 0; // Class-level ID to track active stream
         
         // Agent Mode Services
         private readonly ToolRegistry _toolRegistry;
@@ -36,7 +35,6 @@ namespace LocalPilot.Chat
         private TaskCompletionSource<bool> _permissionTcs;
         private StackPanel _agentCurrentContainer;
         private StackPanel _agentTurnContainer;
-        private StringBuilder _agentResponseSb = new StringBuilder();
         private readonly ProjectMapService _projectMap;
         private bool _isStreaming = false;
         private readonly ChatSessionViewModel _sessionViewModel;
@@ -44,6 +42,10 @@ namespace LocalPilot.Chat
         private readonly AgentUiRenderer _agentUiRenderer;
         private readonly AgentTurnLayoutBuilder _agentTurnLayoutBuilder;
         private readonly StagingPanelBuilder _stagingPanelBuilder;
+        
+        // 🚀 NON-BLOCKING QUEUE: Support for "Type-Ahead" messages
+        private readonly Queue<string> _requestQueue = new Queue<string>();
+        private bool _isProcessingQueue = false;
         
         
         // 🚀 UI Performance State
@@ -210,33 +212,60 @@ namespace LocalPilot.Chat
                 {
                     this.Resources["LpGlassBgBrush"] = new SolidColorBrush(Color.FromArgb(0x18, 0xFF, 0xFF, 0xFF)); // Subtle White Glass
                     this.Resources["LpGlassBorderBrush"] = new SolidColorBrush(Color.FromArgb(0x25, 0xFF, 0xFF, 0xFF));
-                    this.Resources["LpTimelineLineBrush"] = new SolidColorBrush(Color.FromArgb(0x33, 0xFF, 0xFF, 0xFF));
                     ((System.Windows.Media.Effects.DropShadowEffect)this.Resources["LpGhostShadow"]).Opacity = 0.5;
                 }
                 else
                 {
                     this.Resources["LpGlassBgBrush"] = new SolidColorBrush(Color.FromArgb(0x0F, 0x00, 0x00, 0x00)); // Slightly darker Glass
                     this.Resources["LpGlassBorderBrush"] = new SolidColorBrush(Color.FromArgb(0x20, 0x00, 0x00, 0x00));
-                    this.Resources["LpTimelineLineBrush"] = new SolidColorBrush(Color.FromArgb(0x30, 0x00, 0x00, 0x00));
                     this.Resources["LpMutedFgBrush"] = new SolidColorBrush(Color.FromRgb(0x40, 0x40, 0x40)); // Force Dark Gray for readability
                     ((System.Windows.Media.Effects.DropShadowEffect)this.Resources["LpGhostShadow"]).Opacity = 0.15;
                 }
 
-                // 🎨 Accent & Highlight area - Aggressive Discovery for Brand Colors (e.g. Pink, Mango)
+                // 🎨 Accent & Highlight area - Aggressive Discovery with Vibrance Guard
                 var accentBrush = Application.Current.FindResource(VsBrushes.HighlightKey) as Brush
                                   ?? Application.Current.FindResource(VsBrushes.ControlLinkTextKey) as Brush
                                   ?? new SolidColorBrush(Color.FromRgb(0x2D, 0x8C, 0xFF));
                 
-                this.Resources["LpAccentBrush"]    = accentBrush;
                 var accentColor = (accentBrush as SolidColorBrush)?.Color ?? Color.FromRgb(0x2D, 0x8C, 0xFF);
-                this.Resources["LpAccentHoverBrush"] = new SolidColorBrush(AdjustColor(accentColor, isDark ? 14 : -10));
-                this.Resources["LpStopBrush"]      = new SolidColorBrush(Color.FromRgb(0xE5, 0x14, 0x00)); 
-                this.Resources["LpHoverBgBrush"]   = Application.Current.FindResource(VsBrushes.CommandBarHoverKey) as Brush
-                                                    ?? new SolidColorBrush(AdjustColor(baseBgColor, isDark ? 16 : -16));
-                this.Resources["LpHoverFgBrush"]   = toolWindowFg;
-                this.Resources["LpUserBubbleBgBrush"] = new SolidColorBrush(userBubbleColor);
-                this.Resources["LpSuccessBrush"]    = new SolidColorBrush(Color.FromRgb(0x4E, 0xC9, 0xB0)); // VS Tealer/Green
 
+                // 🛡️ ACCENT VIBRANCE & CONTRAST GUARD
+                if (!isDark && (accentColor.R > 200 && accentColor.G > 200 && accentColor.B > 200))
+                {
+                    accentColor = Color.FromRgb(0x00, 0x5A, 0x9E); // Deep Professional Blue
+                    accentBrush = new SolidColorBrush(accentColor);
+                }
+
+                this.Resources["LpAccentBrush"]    = accentBrush;
+                this.Resources["LpAccentHoverBrush"] = new SolidColorBrush(Color.FromArgb(180, accentColor.R, accentColor.G, accentColor.B));
+                
+                // 🛡️ TRULY THEME-AWARE CONTRAST ENGINE
+                // Ensures icons and keywords are ALWAYS visible by calculating contrast against the target background.
+                bool isBgLight = (baseBgColor.R + baseBgColor.G + baseBgColor.B) / 3.0 > 128;
+                bool isAccentLight = (accentColor.R + accentColor.G + accentColor.B) / 3.0 > 180;
+                
+                // If accent brand color is too pale for light theme, darken it for primary UI elements
+                if (isBgLight && isAccentLight)
+                {
+                    accentColor = Color.FromRgb(0x00, 0x5A, 0x9E); // Corporate Blue
+                    this.Resources["LpAccentBrush"] = new SolidColorBrush(accentColor);
+                }
+
+                // Standard high-contrast brushes
+                this.Resources["LpSendIconBrush"]  = (isBgLight && isAccentLight) ? Brushes.Black : Brushes.White;
+                this.Resources["LpKeywordFgBrush"] = isBgLight ? new SolidColorBrush(Color.FromRgb(0x00, 0x4B, 0x8F)) : new SolidColorBrush(Color.FromRgb(0x4F, 0xAA, 0xFF));
+                this.Resources["LpStopBrush"]       = new SolidColorBrush(Color.FromRgb(0xC4, 0x2B, 0x1C)); // Action Red
+
+                // 💎 Ghost Shadow: Adaptive to theme
+                if (this.Resources["LpGhostShadow"] is System.Windows.Media.Effects.DropShadowEffect ghostShadow)
+                {
+                    ghostShadow.Color = isBgLight ? accentColor : Colors.Black;
+                    ghostShadow.Opacity = isBgLight ? 0.15 : 0.5;
+                }
+
+                this.Resources["LpHoverBgBrush"]   = isBgLight ? new SolidColorBrush(Color.FromArgb(0x20, 0, 0, 0)) : new SolidColorBrush(Color.FromArgb(0x40, 255, 255, 255));
+                this.Resources["LpUserBubbleBgBrush"] = new SolidColorBrush(userBubbleColor);
+                this.Resources["LpSuccessBrush"]    = new SolidColorBrush(Color.FromRgb(0x4E, 0xC9, 0xB0));
 
                 UpdateSyntaxBrushes();
                 ChatScroll.Background = (Brush)this.Resources["LpWindowBgBrush"];
@@ -319,7 +348,20 @@ namespace LocalPilot.Chat
 
         // ── Send message ──────────────────────────────────────────────────────
 
-        private void BtnSend_Click(object sender, RoutedEventArgs e) => HandleSendInput();
+        private void BtnSend_Click(object sender, RoutedEventArgs e)
+        {
+            if (_isStreaming)
+            {
+                LocalPilotLogger.Log("[Chat] Manual stop requested. Cancelling stream and clearing queue.");
+                _cts?.Cancel();
+                _requestQueue.Clear();
+                SetStreaming(false);
+            }
+            else
+            {
+                HandleSendInput();
+            }
+        }
 
         private void TxtInput_PreviewKeyDown(object sender, KeyEventArgs e)
         {
@@ -339,17 +381,20 @@ namespace LocalPilot.Chat
 
         private void HandleSendInput()
         {
-            if (_isStreaming)
-            {
-                _cts?.Cancel();
-                _isStreaming = false;
-                SetStreaming(false);
-                return;
-            }
-
             string text = TxtInput.Text.Trim();
             if (string.IsNullOrWhiteSpace(text)) return;
 
+            if (_isStreaming)
+            {
+                // 🚀 QUEUE LOGIC: Add to queue and show visual feedback
+                _requestQueue.Enqueue(text);
+                AppendUserBubble(text);
+                TxtInput.Clear();
+                LocalPilotLogger.Log($"[Chat] Message queued: {text.Substring(0, Math.Min(text.Length, 20))}...");
+                return;
+            }
+
+            TxtInput.Clear();
             _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
             {
                 await SendMessageAsync(text);
@@ -359,11 +404,6 @@ namespace LocalPilot.Chat
         private async Task SendMessageAsync(string text)
         {
             if (string.IsNullOrWhiteSpace(text)) return;
-
-            TxtInput.Clear();
-            
-            // Note: History management and context injection moved to AgentOrchestrator
-            // so that slash commands can resolve selection/files in a background-friendly way.
             await RunAgentTaskAsync(text);
         }
 
@@ -371,36 +411,58 @@ namespace LocalPilot.Chat
         {
             await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
 
-            // 👻 Hide welcome clutter from the timeline once the user takes action
             if (WelcomePanel.Visibility == Visibility.Visible)
-            {
                 WelcomePanel.Visibility = Visibility.Collapsed;
+
+            // Ensure bubble is added if it hasn't been added by queue logic already
+            // (Heuristic: check if last bubble matches this task content or just always add for simplicity?)
+            // Actually, HandleSendInput already added the bubble if queueing.
+            // But if it's the FIRST message, it hasn't been added yet.
+            
+            // For now, always append bubble in RunAgentTaskAsync unless we are processing a queue item 
+            // that was already appended.
+            if (_requestQueue.Count == 0 || !_isProcessingQueue)
+            {
+                AppendUserBubble(task);
             }
 
-            TxtInput.Clear();
-            AppendUserBubble(task);
-            
             SetStreaming(true);
-            
             StartNewAgentTurn();
 
             try
             {
-                _cts?.Cancel();
+                _cts?.Dispose();
                 _cts = new CancellationTokenSource();
                 
                 await _agentOrchestrator.RunTaskAsync(task, _cts.Token);
             }
+            catch (OperationCanceledException)
+            {
+                 LocalPilotLogger.Log("[Chat] Agent task cancelled.");
+            }
             catch (Exception ex)
             {
                 AppendAIBubble($"❌ Agent Error: {ex.Message}");
-                SetStreaming(false);
+            }
+            finally
+            {
+                // 🚀 AUTO-PROCESS QUEUE
+                if (_requestQueue.Count > 0)
+                {
+                    _isProcessingQueue = true;
+                    var nextTask = _requestQueue.Dequeue();
+                    _ = RunAgentTaskAsync(nextTask);
+                }
+                else
+                {
+                    _isProcessingQueue = false;
+                    SetStreaming(false);
+                }
             }
         }
 
         private void StartNewAgentTurn()
         {
-            _agentResponseSb.Clear();
             _currentChunkSb.Clear();
             _currentNarrativeContainer = null;
             var layout = _agentTurnLayoutBuilder.BuildTurnLayout(() => CreateAIHeader(out _), this.Resources);
@@ -433,12 +495,12 @@ namespace LocalPilot.Chat
             });
         }
 
-        private void AddWorkRow(string label, string icon, string detail = null)
+        private void AddWorkRow(string label, string icon, string detail = null, Brush iconBrush = null)
         {
             if (_agentTurnContainer == null) StartNewAgentTurn();
             if (_currentActivityContainer == null) return;
 
-            var node = _agentUiRenderer.CreateWorkRow(label, icon, detail, this.Resources);
+            var node = _agentUiRenderer.CreateWorkRow(label, icon, detail, this.Resources, iconBrush);
             _currentActivityContainer.Children.Add(node);
 
             // Show ACTIVITY header when the first row is added
@@ -463,7 +525,6 @@ namespace LocalPilot.Chat
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
 
 
-                _agentResponseSb.Append(fragment);
                 _currentChunkSb.Append(fragment);
 
                 // Show the RESPONSE header once we actually have text from the model
@@ -584,7 +645,6 @@ namespace LocalPilot.Chat
                 // Reset narrative state for potential next turn in the same task
                 _currentNarrativeContainer = null;
                 _currentChunkSb.Clear();
-                _agentResponseSb.Clear();
                 
                 ChatScroll.ScrollToEnd();
             });
@@ -654,7 +714,7 @@ namespace LocalPilot.Chat
                 {
                     if (statusState.IsCancelled || statusState.IsFailure)
                     {
-                        var container = _agentCurrentContainer;
+                        var container = _agentTurnContainer;
                         _agentCurrentContainer = null;
 
                         if (container != null)
@@ -664,9 +724,8 @@ namespace LocalPilot.Chat
                         }
                         else
                         {
-                            AppendAIBubble(statusState.IsCancelled
-                                ? "**Task cancelled by user.**"
-                                : "**Task stopped due to an error.**");
+                            // Fallback to bubble if turn container is not present
+                            AppendAIBubble(statusState.HeaderText);
                         }
 
                         await Task.Delay(400); // Brief pause for visual confirmation
@@ -683,7 +742,7 @@ namespace LocalPilot.Chat
                     // 🏁 Task Completed Successfully - Clean exit
                     if (_currentActivityContainer != null)
                     {
-                         AddWorkRow("Task Completed", "\uE73E", null);
+                         AddWorkRow("Task Completed", "\uE73E", null, (Brush)this.Resources["LpSuccessBrush"]);
                     }
                     else
                     {
@@ -823,188 +882,6 @@ namespace LocalPilot.Chat
         }
 
         // ── Streaming response ────────────────────────────────────────────────
-        private async Task StreamResponseAsync(string model, List<ChatMessage> historyContext = null)
-        {
-            // Signal cancellation to any currently running stream
-            _cts?.Cancel();
-
-            _lastStreamId++;
-            int myStreamId = _lastStreamId;
-            
-            try
-            {
-                // We do NOT dispose the old _cts here. Disposal while a token is being monitored
-                // by the JTF or a background HttpClient request can cause hard hangs/crashes in VS.
-                _cts = new CancellationTokenSource();
-                var token = _cts.Token;
-
-                if (string.IsNullOrEmpty(model))
-                    model = LocalPilotSettings.Instance.ChatModel;
-
-                // Use provided context or fall back to current history (safely copied)
-                var activeHistory = historyContext ?? new List<ChatMessage>(_history);
-                
-                _ollama.UpdateBaseUrl(LocalPilotSettings.Instance.OllamaBaseUrl);
-                
-                // Early Connectivity Check: Fast-fail if Ollama is not running (with strict timeout)
-                try
-                {
-                    using (var earlyCts = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
-                    {
-                        await Task.Yield(); // Ensure we yield once to let any pending UI tasks through
-                        bool isOllamaUp = await _ollama.IsAvailableAsync(earlyCts.Token).ConfigureAwait(false);
-                        if (!isOllamaUp)
-                        {
-                            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                            AppendAIBubble("**Connection error:** Could not reach local Ollama.\n\nCheck that Ollama is running at: " + LocalPilotSettings.Instance.OllamaBaseUrl);
-                            return;
-                        }
-                    }
-                }
-                catch { /* Silent failure: the main streaming call below will handle deeper issues */ }
-
-                await Task.Yield(); // Yield again before starting the main loop
-                string finalMd = string.Empty;
-                var sb = new StringBuilder();
-                var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-                var startTime = DateTime.Now;
-                RichTextBox localStreamingBlock = null;
-                StackPanel localContainer = null;
-                bool forceFullMarkdown = false;
-
-                try
-                {
-                    var options = new OllamaOptions
-                    {
-                        Temperature = (float)LocalPilotSettings.Instance.Temperature,
-                        NumPredict = LocalPilotSettings.Instance.MaxChatTokens
-                    };
-
-                    string modelName = LocalPilotSettings.Instance.ChatModel;
-                    SetStreaming(true, modelName);
-
-                    int tokenCount = 0;
-                    int batchSize = 12;
-                    var uiBuffer = new StringBuilder();
-
-                    // 1. PROJECT CONTEXT INTEGRATION (v1.3) - History-Aware Search
-                    // Retrieve top semantically relevant chunks based on recent conversation flow
-                    var contextHistory = activeHistory.Skip(Math.Max(0, activeHistory.Count - 3)).Select(m => m.Content);
-                    string searchQuery = string.Join(" ", contextHistory);
-                    
-                    string projectContext = await ProjectContextService.Instance.SearchContextAsync(_ollama, searchQuery, topN: 5);
-                    
-                    if (!string.IsNullOrEmpty(projectContext))
-                    {
-                        // Add as a 'Fresh Grounding' message right before the user's latest turn
-                        activeHistory.Add(new ChatMessage 
-                        { 
-                            Role = "system", 
-                            Content = projectContext 
-                        });
-                    }
-
-                    // Buffer for incoming text to avoid hammering the UI thread
-                    await foreach (var chunk in _ollama.StreamChatAsync(model, activeHistory, options, token).ConfigureAwait(false))
-                    {
-                        sb.Append(chunk);
-                        uiBuffer.Append(chunk);
-                        tokenCount++;
-
-                        if (tokenCount % batchSize == 0 || tokenCount == 1)
-                        {
-                            if (tokenCount > 500) batchSize = 24;
-                            if (tokenCount > 2000) batchSize = 48;
-
-                            var batchContent = uiBuffer.ToString();
-                            uiBuffer.Clear();
-
-                            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync(token);
-                            token.ThrowIfCancellationRequested();
-
-                            if (localContainer == null && !string.IsNullOrEmpty(batchContent))
-                            {
-                                localContainer = AppendAIBubble(string.Empty);
-                                localStreamingBlock = CreateRichTextBox();
-                                localContainer.Children.Add(localStreamingBlock);
-                            }
-
-                            if (localContainer != null)
-                            {
-                                // LIVE MARKDOWN UPDATE:
-                                // To provide a 'premium' live feel, we re-render the whole bubble intermittently.
-                                string currentMd = sb.ToString();
-
-                                // Once we detect a code block or complex markdown, we stay in 'full' mode 
-                                // to avoid disappearing controls and NullReferences.
-                                if (forceFullMarkdown || currentMd.Contains("```") || currentMd.Contains("#"))
-                                {
-                                    forceFullMarkdown = true;
-                                    RenderFullMarkdown(localContainer, currentMd);
-                                }
-                                else
-                                {
-                                    // Fast-path for simple streaming text (Header-free and Code-free)
-                                    RenderMarkdown(localStreamingBlock, currentMd);
-                                }
-                                
-                                // Robust Scroll: Ensure we reach the true bottom after layout refresh (VSTHRD010 safe)
-                                _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
-                                {
-                                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                                    ChatScroll.ScrollToEnd();
-                                });
-                            }
-                            await Task.Yield();
-                        }
-                    }
-                    finalMd = sb.ToString();
-                }
-                catch (OperationCanceledException) 
-                { 
-                    finalMd = sb.ToString(); 
-                    LocalPilotLogger.Log($"[Chat] Stream cancelled (ID: {myStreamId})");
-                }
-                catch (Exception ex)
-                {
-                    LocalPilotLogger.LogError($"[Chat] Connection error during stream (ID: {myStreamId})", ex);
-                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                    AppendAIBubble($"❌ Error: {ex.Message}");
-                }
-
-                // Phase 2: Final UI Cleanup (Outside the loop to avoid partial renders)
-                stopwatch.Stop();
-                double seconds = stopwatch.Elapsed.TotalSeconds;
-
-                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-
-                // Finalizing response status (Success or Cancel)
-                if (localContainer != null && localContainer.Tag is TextBlock statusLabel)
-                {
-                    var duration = DateTime.Now - startTime;
-                    statusLabel.Text = $"  ·  worked for {duration.TotalSeconds:F1}s";
-                    statusLabel.FontStyle = FontStyles.Normal;
-                    statusLabel.Opacity = 0.5;
-                }
-
-                if (!string.IsNullOrEmpty(finalMd) && localContainer != null)
-                {
-                    RenderFullMarkdown(localContainer, finalMd);
-                    _history.Add(new ChatMessage { Role = "assistant", Content = finalMd });
-                    TrimHistory();
-                }
-            }
-            catch (Exception ex)
-            {
-                LocalPilotLogger.LogError($"[Chat] Critical failure in StreamResponseAsync (ID: {myStreamId})", ex);
-            }
-            finally
-            {
-                // Always unlock UI if this is still the most recent requested session
-                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                if (myStreamId == _lastStreamId) SetStreaming(false);
-            }
-        }
 
         // ── UI helpers ────────────────────────────────────────────────────────
         //
@@ -1052,23 +929,6 @@ namespace LocalPilot.Chat
             row.RenderTransform.BeginAnimation(TranslateTransform.YProperty, slide);
         }
 
-        private void ApplySimpleMarkdown(TextBlock tb, string text)
-        {
-            if (string.IsNullOrEmpty(text)) return;
-            tb.Inlines.Clear();
-            var parts = System.Text.RegularExpressions.Regex.Split(text, @"(\*\*.*?\*\*)").Where(p => !string.IsNullOrEmpty(p));
-            foreach (var part in parts)
-            {
-                if (part.StartsWith("**") && part.EndsWith("**"))
-                {
-                    tb.Inlines.Add(new Bold(new Run(part.Substring(2, part.Length - 4))));
-                }
-                else
-                {
-                    tb.Inlines.Add(new Run(part));
-                }
-            }
-        }
 
         private StackPanel CreateAIHeader(out TextBlock statusLabelRef, string status = null)
         {
@@ -1619,23 +1479,54 @@ namespace LocalPilot.Chat
 
         private void RenderInlineMarkdown(Paragraph p, string text)
         {
-            // Simple Inline parsing for **Bold** and `Code`
-            var tokens = System.Text.RegularExpressions.Regex.Split(text, @"(\*\*|`)").Where(t => !string.IsNullOrEmpty(t)).ToList();
+            if (string.IsNullOrEmpty(text)) return;
+
+            // 🚀 ADVANCED INLINE ENGINE: Supports Bold, Italic, Code, and Smart-Heuristic Identifiers
+            // Pattern: Bold-Italic (***), Bold (**), Italic (*), Code (`), Technical Identifiers (PascalCase/camelCase/snake_case)
+            var pattern = @"(\*\*\*|\*\*|\*|`|\b(?:[a-zA-Z_]\w+\.[a-zA-Z_]\w+|[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]+)+|[a-z]+(?:[A-Z][a-z0-9]+)+|[a-zA-Z_]\w*_\w+)\b)";
+            var tokens = System.Text.RegularExpressions.Regex.Split(text, pattern).Where(t => !string.IsNullOrEmpty(t)).ToList();
+            
             bool isBold = false;
+            bool isItalic = false;
             bool isCode = false;
 
             foreach (var token in tokens)
             {
+                if (token == "***") { isBold = !isBold; isItalic = !isItalic; continue; }
                 if (token == "**") { isBold = !isBold; continue; }
+                if (token == "*") { isItalic = !isItalic; continue; }
                 if (token == "`") { isCode = !isCode; continue; }
 
                 var run = new Run(token);
+                bool shouldHighlightTechnical = false;
+
+                // 🧠 SMART HEURISTIC: Catch technical terms even if AI missed backticks
+                if (!isBold && !isItalic && !isCode) 
+                {
+                    // Check if token matches technical identifier pattern (excluding common words)
+                    if (System.Text.RegularExpressions.Regex.IsMatch(token, @"^([a-zA-Z_]\w+\.[a-zA-Z_]\w+|[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]+)+|[a-z]+(?:[A-Z][a-z0-9]+)+|[a-zA-Z_]\w*_\w+)$"))
+                    {
+                        shouldHighlightTechnical = true;
+                    }
+                }
+
                 if (isBold) run.FontWeight = FontWeights.Bold;
-                if (isCode)
+                if (isItalic) run.FontStyle = FontStyles.Italic;
+                
+                if (isCode || shouldHighlightTechnical)
                 {
                     run.FontFamily = ConsoleFont;
-                    run.Foreground = (Brush)this.Resources["LpAccentBrush"];
+                    
+                    // 🛡️ ACCENT VIBRANCE: Use the technical keyword brush which is guaranteed to be visible
+                    run.Foreground = (Brush)this.Resources["LpKeywordFgBrush"];
+                    
+                    // Add a subtle background to make it look like a chip/inline code
                     run.Background = (Brush)this.Resources["LpHoverBgBrush"];
+                    
+                    if (shouldHighlightTechnical)
+                    {
+                        run.FontWeight = FontWeights.SemiBold;
+                    }
                 }
                 else
                 {
@@ -1764,21 +1655,29 @@ namespace LocalPilot.Chat
                     _sessionViewModel.AgentTurn.StatusText = streamingState.StatusText;
                     _sessionViewModel.AgentTurn.DetailText = streamingState.DetailText;
                     
-                    // Change Send icon to Stop (Square)
+                    // ⏹️ Stop Action
                     BtnSendIcon.Data = Geometry.Parse("M6,6h12v12H6z"); 
                     BtnSendIcon.Fill = Brushes.White;
-                    BtnSend.ToolTip = "Stop (Esc)";
                     BtnSend.Background = (Brush)this.Resources["LpStopBrush"];
+                    BtnSend.ToolTip = "Stop (Esc)";
+                    
+                    // Force the button to turn red even if triggers are being stubborn
+                    BtnSend.Background = (Brush)this.Resources["LpStopBrush"];
+                    BtnSend.BorderBrush = (Brush)this.Resources["LpStopBrush"];
                 }
                 else
                 {
                     AgentStatusBar.Visibility = Visibility.Collapsed;
                     
-                    // Restore Send icon (Sleeker Plane)
-                    BtnSendIcon.Data = Geometry.Parse("M2,21L23,12L2,3V10L17,12L2,14V21Z");
-                    BtnSendIcon.Fill = Brushes.White;
-                    BtnSend.ToolTip = "Send (Enter)";
+                    // 🚀 Send Action (Arrow as requested)
+                    BtnSendIcon.Data = Geometry.Parse("M12,4L10.59,5.41L16.17,11H4V13H16.17L10.59,18.59L12,20L20,12L12,4Z");
+                    BtnSendIcon.Fill = (Brush)this.Resources["LpSendIconBrush"];
                     BtnSend.Background = (Brush)this.Resources["LpAccentBrush"];
+                    BtnSend.ToolTip = "Send (Enter)";
+                    
+                    // Reset to standard accent
+                    BtnSend.ClearValue(Button.BackgroundProperty);
+                    BtnSend.ClearValue(Button.BorderBrushProperty);
                 }
                 
                 // Lock all interaction during streaming to prevent action queuing
@@ -1801,10 +1700,6 @@ namespace LocalPilot.Chat
         }
 
 
-        private void BtnStop_Click(object sender, RoutedEventArgs e)
-        {
-            _cts?.Cancel();
-        }
 
         public void FireQuickAction(string action, string capturedSelection = null)
         {
@@ -1916,85 +1811,6 @@ namespace LocalPilot.Chat
                 AppendAIBubble($"❌ Failed to apply changes: {ex.Message}");
             }
         }
-        private async Task<bool> OnAgentPermissionRequestedAsync(ToolCallRequest tool)
-        {
-            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-            _permissionTcs = new TaskCompletionSource<bool>();
-
-            ConfirmationPanel.Visibility = Visibility.Visible;
-            TxtConfirmDetail.Text = BuildConfirmationMessage(tool);
-
-            // Scroll to bottom so user sees the prompt
-            ChatScroll.ScrollToEnd();
-
-            return await _permissionTcs.Task;
-        }
-
-        private string BuildConfirmationMessage(ToolCallRequest tool)
-        {
-            if (tool == null) return "The agent wants to run an action that can modify your project. Do you want to allow it?";
-
-            string GetArg(string key)
-            {
-                if (tool.Arguments == null) return null;
-                if (!tool.Arguments.TryGetValue(key, out var v) || v == null) return null;
-                return v.ToString();
-            }
-
-            string ShortPath(string path)
-            {
-                if (string.IsNullOrWhiteSpace(path)) return null;
-                try
-                {
-                    return System.IO.Path.GetFileName(path);
-                }
-                catch
-                {
-                    return path;
-                }
-            }
-
-            return tool.Name switch
-            {
-                "write_file" => BuildWriteFileMessage(GetArg("path"), GetArg("content")),
-                "replace_text" => BuildReplaceTextMessage(GetArg("path"), GetArg("old_text"), GetArg("new_text")),
-                "delete_file" => $"The agent wants to delete the file '{ShortPath(GetArg("path")) ?? "selected file"}'.\n\nThis will permanently remove it from disk. Allow this action?",
-                "run_terminal" => BuildRunCommandMessage(GetArg("command")),
-                _ => $"The agent wants permission to run '{tool.Name}'.\n\nAllow this action?"
-            };
-        }
-
-        private string BuildWriteFileMessage(string path, string content)
-        {
-            string file = string.IsNullOrWhiteSpace(path) ? "a file" : $"'{System.IO.Path.GetFileName(path)}'";
-            int length = string.IsNullOrEmpty(content) ? 0 : content.Length;
-            string sizeHint = length > 0 ? $" (~{length} characters)" : string.Empty;
-
-            return $"The agent wants to create or update {file}{sizeHint}.\n\nAllow this action?";
-        }
-
-        private string BuildReplaceTextMessage(string path, string oldText, string newText)
-        {
-            string file = string.IsNullOrWhiteSpace(path) ? "a file" : $"'{System.IO.Path.GetFileName(path)}'";
-            string oldPreview = BuildPreview(oldText);
-            string newPreview = BuildPreview(newText);
-
-            return $"The agent wants to update content in {file}.\n\nFind:\n{oldPreview}\n\nReplace with:\n{newPreview}\n\nAllow this action?";
-        }
-
-        private string BuildRunCommandMessage(string command)
-        {
-            string preview = BuildPreview(command, 120);
-            return $"The agent wants to run a terminal command in your workspace:\n{preview}\n\nThis may modify files or run scripts. Allow this action?";
-        }
-
-        private string BuildPreview(string text, int maxLen = 180)
-        {
-            if (string.IsNullOrWhiteSpace(text)) return "(empty)";
-            string normalized = text.Replace("\r\n", " ").Replace("\n", " ").Trim();
-            if (normalized.Length <= maxLen) return normalized;
-            return normalized.Substring(0, maxLen) + "...";
-        }
         private IEnumerable<DependencyObject> GetAllChildren(DependencyObject parent)
         {
             if (parent == null) yield break;
@@ -2034,8 +1850,16 @@ namespace LocalPilot.Chat
             
             await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
             
-            // Highlight the risky tool
-            string actionDescription = $"{toolCall.Name} on {toolCall.Arguments?["TargetFile"] ?? toolCall.Arguments?["path"] ?? "workspace"}";
+            // 🛡️ Safe Argument Extraction: Prevent KeyNotFoundException
+            string GetSafeArg(string key)
+            {
+                if (toolCall.Arguments == null) return null;
+                if (toolCall.Arguments.TryGetValue(key, out var val) && val != null) return val.ToString();
+                return null;
+            }
+
+            string targetFile = GetSafeArg("TargetFile") ?? GetSafeArg("path") ?? "workspace";
+            string actionDescription = $"{toolCall.Name} on {targetFile}";
             TxtConfirmDetail.Text = $"Agent is requesting permission to perform a potentially destructive action:\n\n{actionDescription}\n\nDo you want to allow this?";
             
             ConfirmationPanel.Visibility = Visibility.Visible;

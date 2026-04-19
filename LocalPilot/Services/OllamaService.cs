@@ -35,8 +35,10 @@ namespace LocalPilot.Services
             var names = new List<string>();
             try
             {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
                 var response = await _httpClient.GetAsync($"{_baseUrl}/api/tags", ct).ConfigureAwait(false);
-                LocalPilotLogger.Log($"[Ollama] Fetching models from {_baseUrl}/api/tags. Success: {response.IsSuccessStatusCode}");
+                sw.Stop();
+                LocalPilotLogger.Log($"[Ollama] Fetching models took {sw.ElapsedMilliseconds}ms. Success: {response.IsSuccessStatusCode}", LogCategory.Ollama);
                 if (!response.IsSuccessStatusCode) return names;
 
                 var json = await response.Content.ReadAsStringAsync();
@@ -231,7 +233,7 @@ namespace LocalPilot.Services
             catch (Exception ex)
             {
                 errorDetails = ex.Message;
-                LocalPilotLogger.LogError("Ollama Service Connection Error", ex);
+                LocalPilotLogger.LogError("[Ollama] Core Network Error", ex, LogCategory.Ollama);
             }
 
             if (errorDetails != null)
@@ -300,7 +302,8 @@ namespace LocalPilot.Services
 
                         if (obj["done"]?.Value<bool>() == true)
                         {
-                            LocalPilotLogger.Log($"[Ollama] Finished streaming from model: {model}");
+                            var totalDuration = obj["total_duration"]?.ToString();
+                            LocalPilotLogger.Log($"[Ollama] Finished streaming from model: {model} (Duration: {totalDuration}ns)", LogCategory.Ollama);
                             break;
                         }
                     }

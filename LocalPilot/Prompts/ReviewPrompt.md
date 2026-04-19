@@ -1,7 +1,10 @@
 # INSTRUCTION
-Perform a rigorous security and quality review of the following code.
-Identify potential bugs, performance bottlenecks, and security vulnerabilities.
-Cite relevant project files using [source: filename].
+Perform a comprehensive code review of the provided block.
+1. SECURITY: Check for vulnerabilities (e.g., injection, insecure handling).
+2. MAINTAINABILITY: Identify code smells, technical debt, or complex logic.
+3. EFFICIENCY: Suggest optimizations for O-notation complexity or resource utilization.
+Provide constructive, actionable feedback using a senior developer persona.
 
-# CODE BLOCK
+<code_to_review>
 {codeBlock}
+</code_to_review>

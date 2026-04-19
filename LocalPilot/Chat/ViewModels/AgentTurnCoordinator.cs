@@ -13,7 +13,7 @@ namespace LocalPilot.Chat.ViewModels
             return new AgentStatusViewState
             {
                 Status = status,
-                HeaderText = $"LocalPilot ({modelName}) {status}",
+                HeaderText = $"LocalPilot ({modelName}) - {status}",
                 DetailText = detail ?? string.Empty,
                 IsTerminal = status == AgentStatus.Completed || status == AgentStatus.Failed || status == AgentStatus.Idle,
                 IsCompletion = status == AgentStatus.Completed,
@@ -27,10 +27,10 @@ namespace LocalPilot.Chat.ViewModels
             return new StreamingViewState
             {
                 IsStreaming = isStreaming,
-                IsInputEnabled = !isStreaming,
-                InputOpacity = isStreaming ? 0.6 : 1.0,
+                IsInputEnabled = true,
+                InputOpacity = 1.0,
                 ShowStatusBar = isStreaming,
-                StatusText = $"LocalPilot ({modelName}) working",
+                StatusText = $"Local({modelName}) thinking",
                 DetailText = "Autonomous logic active"
             };
         }

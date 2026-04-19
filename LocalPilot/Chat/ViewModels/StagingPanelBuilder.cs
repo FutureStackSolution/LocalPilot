@@ -21,8 +21,11 @@ namespace LocalPilot.Chat.ViewModels
             Func<string, string, Task> showDiffAsync,
             Action<string> appendMessage)
         {
-            var border = new Border { Style = resources["DeltaCardStyle"] as Style };
-            var stack = new StackPanel();
+            var border = new Border { 
+                Style = resources["DeltaCardStyle"] as Style,
+                HorizontalAlignment = HorizontalAlignment.Stretch 
+            };
+            var stack = new StackPanel { HorizontalAlignment = HorizontalAlignment.Stretch };
 
             var header = new Grid { Margin = new Thickness(0, 0, 0, 16) };
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -93,14 +96,15 @@ namespace LocalPilot.Chat.ViewModels
                 var card = new Border
                 {
                     Background = resources["LpGlassBgBrush"] as Brush,
-                    CornerRadius = new CornerRadius(8),
-                    Padding = new Thickness(12, 10, 12, 10),
-                    Margin = new Thickness(0, 0, 0, 8),
+                    CornerRadius = new CornerRadius(10), // Softer corners
+                    Padding = new Thickness(16, 12, 16, 12), // More breathing room
+                    Margin = new Thickness(0, 0, 0, 10),
                     BorderBrush = resources["LpGlassBorderBrush"] as Brush,
-                    BorderThickness = new Thickness(1)
+                    BorderThickness = new Thickness(1),
+                    Opacity = 0.95 // Crisp but integrated
                 };
 
-                var row = new Grid();
+                var row = new Grid { HorizontalAlignment = HorizontalAlignment.Stretch };
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
@@ -123,7 +127,11 @@ namespace LocalPilot.Chat.ViewModels
                 Grid.SetColumn(fileInfo, 0);
                 row.Children.Add(fileInfo);
 
-                var rowActions = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+                var rowActions = new StackPanel { 
+                    Orientation = Orientation.Horizontal, 
+                    VerticalAlignment = VerticalAlignment.Center,
+                    HorizontalAlignment = HorizontalAlignment.Right 
+                };
                 var btnDiff = CreateGhostButton(null, "\uE8A1", resources["LpMutedFgBrush"] as Brush);
                 btnDiff.Click += (s, e) =>
                 {
@@ -140,8 +148,10 @@ namespace LocalPilot.Chat.ViewModels
                     {
                         if (writeFileAsync != null) await writeFileAsync(kvp.Key, kvp.Value);
                         await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                        card.Opacity = 0.4;
+                        card.Opacity = 0.3; // De-emphasize once integrated
                         card.IsEnabled = false;
+                        btnAccept.Visibility = Visibility.Collapsed;
+                        btnDiff.Visibility = Visibility.Collapsed;
                     });
                 };
 

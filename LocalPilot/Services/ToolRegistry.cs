@@ -367,7 +367,10 @@ namespace LocalPilot.Services
 
         public async Task<ToolResponse> ExecuteAsync(Dictionary<string, object> args, CancellationToken ct)
         {
-            var pattern = args["pattern"].ToString();
+            if (!args.TryGetValue("pattern", out var patternObj) || patternObj == null)
+                return new ToolResponse { IsError = true, Output = "Missing 'pattern' argument." };
+
+            var pattern = patternObj.ToString();
             var rawPath = args.ContainsKey("path") ? args["path"].ToString() : _registry.WorkspaceRoot;
             var path = _registry.ResolvePath(rawPath);
 
@@ -428,9 +431,16 @@ namespace LocalPilot.Services
 
         public async Task<ToolResponse> ExecuteAsync(Dictionary<string, object> args, CancellationToken ct)
         {
-            var path = _registry.ResolvePath(args["path"].ToString());
-            var oldText = args["old_text"].ToString();
-            var newText = args["new_text"].ToString();
+            if (!args.TryGetValue("path", out var pathObj) || pathObj == null)
+                return new ToolResponse { IsError = true, Output = "Missing 'path' argument." };
+            if (!args.TryGetValue("old_text", out var oldObj) || oldObj == null)
+                return new ToolResponse { IsError = true, Output = "Missing 'old_text' argument." };
+            if (!args.TryGetValue("new_text", out var newObj) || newObj == null)
+                return new ToolResponse { IsError = true, Output = "Missing 'new_text' argument." };
+
+            var path = _registry.ResolvePath(pathObj.ToString());
+            var oldText = oldObj.ToString();
+            var newText = newObj.ToString();
 
             try
             {
@@ -569,7 +579,7 @@ namespace LocalPilot.Services
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                 try
                 {
-                    var dte = Microsoft.VisualStudio.Shell.Package.GetGlobalService(typeof(global::EnvDTE.DTE)) as global::EnvDTE.DTE;
+                    var dte = Package.GetGlobalService(typeof(global::EnvDTE.DTE)) as global::EnvDTE.DTE;
                     if (dte?.Solution != null)
                     {
                         var item = dte.Solution.FindProjectItem(path);
@@ -610,16 +620,25 @@ namespace LocalPilot.Services
 
         public async Task<ToolResponse> ExecuteAsync(Dictionary<string, object> args, CancellationToken ct)
         {
-            var path = _registry.ResolvePath(args["path"].ToString());
-            var line = Convert.ToInt32(args["line"]);
-            var col = Convert.ToInt32(args["column"]);
-            var newName = args["new_name"].ToString();
+            if (!args.TryGetValue("path", out var pathObj) || pathObj == null)
+                return new ToolResponse { IsError = true, Output = "Missing 'path' argument." };
+            if (!args.TryGetValue("line", out var lineObj) || lineObj == null)
+                return new ToolResponse { IsError = true, Output = "Missing 'line' argument." };
+            if (!args.TryGetValue("column", out var colObj) || colObj == null)
+                return new ToolResponse { IsError = true, Output = "Missing 'column' argument." };
+            if (!args.TryGetValue("new_name", out var nameObj) || nameObj == null)
+                return new ToolResponse { IsError = true, Output = "Missing 'new_name' argument." };
+
+            var path = _registry.ResolvePath(pathObj.ToString());
+            var line = Convert.ToInt32(lineObj);
+            var col = Convert.ToInt32(colObj);
+            var newName = nameObj.ToString();
 
             try
             {
                 // 🚀 SEMANTIC WARM-UP: Ensure the file is 'known' to the VS workspace cache before refactoring
-                await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                await Community.VisualStudio.Toolkit.VS.Documents.OpenAsync(path);
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                await VS.Documents.OpenAsync(path);
 
                 // 🚀 NATIVE LSP REFACTORING (Roslyn)
                 // This replaces the unreliable DTE UI-based rename with project-wide semantic renaming.

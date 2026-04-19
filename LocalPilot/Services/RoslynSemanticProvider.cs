@@ -1,4 +1,5 @@
 using LocalPilot.Models;
+using Community.VisualStudio.Toolkit;
 using Microsoft.CodeAnalysis;
 using Microsoft.VisualStudio.ComponentModelHost;
 using Microsoft.VisualStudio.LanguageServices;
@@ -24,14 +25,14 @@ namespace LocalPilot.Services
         public RoslynSemanticProvider()
         {
             // 🛡️ SENIOR ARCHITECT PATTERN: Fire-and-forget async init via JoinableTask.
-            _initTask = Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.RunAsync(InitializeAsync);
+            _initTask = ThreadHelper.JoinableTaskFactory.RunAsync(InitializeAsync);
         }
 
         private async Task InitializeAsync()
         {
             try
             {
-                await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                await   ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                 var componentModel = (IComponentModel)Package.GetGlobalService(typeof(SComponentModel));
                 _workspace = componentModel.GetService<VisualStudioWorkspace>();
             }
@@ -101,18 +102,47 @@ namespace LocalPilot.Services
             var root = await document.GetSyntaxRootAsync(ct).ConfigureAwait(false);
             
             var csSb = new System.Text.StringBuilder();
-            csSb.AppendLine($"## SEMANTIC NEIGHBORHOOD: {Path.GetFileName(filePath)} (Roslyn)");
+            csSb.AppendLine($"## PROACTIVE SEMANTIC CONTEXT: {Path.GetFileName(filePath)}");
 
-            var classes = root.DescendantNodes().OfType<Microsoft.CodeAnalysis.CSharp.Syntax.ClassDeclarationSyntax>();
-            foreach (var cls in classes)
+            // 1. Identify all types defined in this file
+            var declaredTypes = root.DescendantNodes().OfType<Microsoft.CodeAnalysis.CSharp.Syntax.BaseTypeDeclarationSyntax>()
+                .Select(t => semanticModel.GetDeclaredSymbol(t))
+                .Where(s => s != null)
+                .Cast<INamedTypeSymbol>()
+                .ToList();
+
+            foreach (var type in declaredTypes)
             {
-                if (semanticModel.GetDeclaredSymbol(cls) is INamedTypeSymbol sym)
+                csSb.AppendLine($"### Type: {type.Name} ({type.TypeKind})");
+                if (type.BaseType != null && type.BaseType.SpecialType == SpecialType.None)
+                    csSb.AppendLine($"  Inherits: {type.BaseType.Name}");
+                
+                // 2. Identify external types referenced (Fields, Properties, Parameters)
+                var relatedTypes = type.GetMembers()
+                    .Select(m => m switch {
+                        IFieldSymbol f => f.Type,
+                        IPropertySymbol p => p.Type,
+                        IMethodSymbol meth => meth.ReturnType,
+                        _ => null
+                    })
+                    .Where(t => t != null && t.TypeKind == TypeKind.Class && SymbolEqualityComparer.Default.Equals(t.ContainingAssembly, type.ContainingAssembly))
+                    .Cast<INamedTypeSymbol>()
+                    .GroupBy(t => t.Name)
+                    .Select(g => g.First())
+                    .Take(5); // Limit to top 5 to save tokens
+
+                foreach (var rel in relatedTypes)
                 {
-                    csSb.AppendLine($" - Class: {sym.Name}");
-                    if (sym.Interfaces.Length > 0)
-                        csSb.AppendLine($"   Implements: {string.Join(", ", sym.Interfaces.Select(i => i.Name))}");
+                    csSb.AppendLine($"  - Related: {rel.Name} (found in project)");
+                    // Proactively grab signatures of the related type
+                    var publicMembers = rel.GetMembers()
+                        .Where(m => m.DeclaredAccessibility == Accessibility.Public && !m.IsImplicitlyDeclared)
+                        .Select(m => m.Name)
+                        .Take(10);
+                    csSb.AppendLine($"    API: {string.Join(", ", publicMembers)}");
                 }
             }
+
             return csSb.ToString();
         }
 
@@ -166,7 +196,7 @@ namespace LocalPilot.Services
 
             try
             {
-                await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                 compoundAction?.OpenCompoundAction("LocalPilot Refactor");
                 await Community.VisualStudio.Toolkit.VS.StatusBar.ShowMessageAsync($"LocalPilot: Refactoring '{newName}'...");
 
@@ -221,7 +251,7 @@ namespace LocalPilot.Services
                 int retries = 3;
                 while (retries > 0)
                 {
-                    await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                     if (_workspace.TryApplyChanges(newSolution))
                     {
                         success = true;
@@ -233,20 +263,20 @@ namespace LocalPilot.Services
 
                 if (success)
                 {
-                    await Community.VisualStudio.Toolkit.VS.StatusBar.ShowMessageAsync("LocalPilot: Refactoring success.");
+                    await VS.StatusBar.ShowMessageAsync("LocalPilot: Refactoring success.");
                     return $"Successfully refactored '{symbol.Name}' to '{newName}' across solution.";
                 }
                 return "Error: Workspace is currently busy. Please try again.";
             }
             catch (Exception ex)
             {
-                await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                await Community.VisualStudio.Toolkit.VS.StatusBar.ShowMessageAsync("LocalPilot: Refactoring failed.");
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                await VS.StatusBar.ShowMessageAsync("LocalPilot: Refactoring failed.");
                 return $"Refactoring failed: {ex.Message}";
             }
             finally
             {
-                await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                 compoundAction?.CloseCompoundAction();
             }
         }

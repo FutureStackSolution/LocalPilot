@@ -62,7 +62,6 @@
     <Compile Include="Services\LocalPilotLogger.cs" />
     <Compile Include="Services\ProjectContextService.cs" />
     <Compile Include="Services\AgentOrchestrator.cs" />
-    <Compile Include="Services\InlineChatOverlayManager.cs" />
     <Compile Include="Services\LocalPilotCommandRouter.cs" />
     <Compile Include="Services\ProjectMapService.cs" />
     <Compile Include="Services\ToolRegistry.cs" />
@@ -99,9 +98,6 @@
     <Compile Include="Chat\ViewModels\AgentUiRenderer.cs" />
     <Compile Include="Chat\ViewModels\StagingPanelBuilder.cs" />
     <Compile Include="Chat\ViewModels\ChatSessionViewModel.cs" />
-    <Compile Include="UI\InlineChatOverlay.xaml.cs">
-      <DependentUpon>InlineChatOverlay.xaml</DependentUpon>
-    </Compile>
     <!-- Commands -->
     <Compile Include="Commands\LocalPilotCommands.cs" />
   </ItemGroup>
@@ -112,10 +108,6 @@
       <SubType>Designer</SubType>
     </Page>
     <Page Include="Chat\LocalPilotChatControl.xaml">
-      <Generator>MSBuild:Compile</Generator>
-      <SubType>Designer</SubType>
-    </Page>
-    <Page Include="UI\InlineChatOverlay.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </Page>

@@ -180,6 +180,23 @@
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Padding"         Value="14,7"/>
             <Setter Property="Cursor"          Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="5" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Bd" Property="Background" Value="{DynamicResource LpHoverBgBrush}"/></Trigger>
+                            <Trigger Property="IsPressed" Value="True"><Setter TargetName="Bd" Property="Opacity" Value="0.7"/></Trigger>
+                            <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Bd" Property="Opacity" Value="0.5"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
 
         <Style x:Key="LpSepStyle" TargetType="Separator">
@@ -297,7 +314,7 @@
                         <!-- Connection -->
                         <TextBlock Text="🔗  Connection" Style="{DynamicResource LpSectionHeader}"/>
                         <Grid>
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="120"/></Grid.ColumnDefinitions>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="150"/></Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0" Margin="0,0,8,0">
                                 <TextBlock Text="Ollama Base URL" Style="{DynamicResource LpLabelStyle}"/>
                                 <TextBox x:Name="TxtBaseUrl" Style="{DynamicResource LpInputStyle}" ToolTip="Default: http://localhost:11434"/>
@@ -358,6 +375,8 @@
                         <!-- Interface Preferences -->
                         <TextBlock Text="🎨  Interface" Style="{DynamicResource LpSectionHeader}"/>
                         <CheckBox x:Name="ChkStatusBar" Content="Show LocalPilot status in the status bar" Style="{DynamicResource LpCheckStyle}"/>
+                        <CheckBox x:Name="ChkEnableLogging" Content="Enable diagnostic logging" Style="{DynamicResource LpCheckStyle}"/>
+                        <Button x:Name="BtnOpenLog" Content="📂  Open Log File" Style="{DynamicResource LpSecondaryBtn}" HorizontalAlignment="Left" Click="BtnOpenLog_Click" Margin="24,4,0,10" Height="28" Padding="12,2"/>
 
                     </StackPanel>
                 </ScrollViewer>
@@ -375,34 +394,12 @@
                             <ComboBoxItem Content="Fast (High speed, creative)"/>
                             <ComboBoxItem Content="Standard (Balanced)"/>
                             <ComboBoxItem Content="High Accuracy (Strict, precise)"/>
-                            <ComboBoxItem Content="Custom (Manual control)"/>
                         </ComboBox>
 
-                        <TextBlock Text="🛠️  Generation Parameters" Style="{DynamicResource LpSectionHeader}"/>
-                        <Grid Margin="0,0,0,10">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="70"/></Grid.ColumnDefinitions>
-                            <StackPanel Grid.Column="0">
-                                <TextBlock Text="Temperature (Higher = more creative/random)" Style="{DynamicResource LpLabelStyle}"/>
-                                <Slider x:Name="SldrTemp" Minimum="0" Maximum="1" TickFrequency="0.05" IsSnapToTickEnabled="True" ValueChanged="SldrTemp_ValueChanged"/></StackPanel>
-                            <TextBlock x:Name="TxtTemp" Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Center" FontWeight="SemiBold"/>
-                        </Grid>
+                        <TextBlock Text="🛠️  Autonomous Optimization" Style="{DynamicResource LpSectionHeader}"/>
+                        <TextBlock Text="LocalPilot now automatically manages context windows, temperature, and response lengths based on your selected Intelligence Mode and the specific task complexity. Manual overrides have been deprecated for maximum autonomy." 
+                                   Style="{DynamicResource LpMutedLabel}" TextWrapping="Wrap" Margin="0,0,0,20"/>
 
-                        <Grid Margin="0,0,0,10">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="70"/></Grid.ColumnDefinitions>
-                            <StackPanel Grid.Column="0">
-                                <TextBlock Text="Max Chat Tokens (Response length)" Style="{DynamicResource LpLabelStyle}"/>
-                                <Slider x:Name="SldrMaxChatTokens" Minimum="512" Maximum="16384" TickFrequency="512" IsSnapToTickEnabled="True" ValueChanged="SldrMaxChatTokens_ValueChanged"/></StackPanel>
-                            <TextBlock x:Name="TxtMaxChatTokens" Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Center" FontWeight="SemiBold"/>
-                        </Grid>
-
-                        <!-- Context and History -->
-                        <Grid Margin="0,10,0,10">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="20"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                            <StackPanel Grid.Column="0">
-                                <TextBlock Text="Context Before (lines)" Style="{DynamicResource LpLabelStyle}"/><TextBox x:Name="TxtContextBefore" Style="{DynamicResource LpInputStyle}"/></StackPanel>
-                            <StackPanel Grid.Column="2">
-                                <TextBlock Text="Context After (lines)" Style="{DynamicResource LpLabelStyle}"/><TextBox x:Name="TxtContextAfter" Style="{DynamicResource LpInputStyle}"/></StackPanel>
-                        </Grid>
 
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
                             <TextBlock Text="Max Chat History Messages: " Style="{DynamicResource LpLabelStyle}" VerticalAlignment="Center"/>
@@ -412,31 +409,8 @@
                         <!-- Project Intelligence -->
                         <TextBlock Text="📂  Project Intelligence" Style="{DynamicResource LpSectionHeader}"/>
                         <CheckBox x:Name="ChkEnableProjectMap" Content="Enable Project Map (Background indexing of headers)" Style="{DynamicResource LpCheckStyle}"/>
-                        <Grid Margin="0,5,0,10">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="70"/></Grid.ColumnDefinitions>
-                            <StackPanel Grid.Column="0">
-                                <TextBlock Text="Max Map Size (KB)" Style="{DynamicResource LpLabelStyle}"/>
-                                <Slider x:Name="SldrMaxMapSize" Minimum="100" Maximum="2000" TickFrequency="100" IsSnapToTickEnabled="True" ValueChanged="SldrMaxMapSize_ValueChanged"/></StackPanel>
-                            <TextBlock x:Name="TxtMaxMapSize" Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Center" FontWeight="SemiBold"/>
-                        </Grid>
 
-                        <!-- New completion specific advanced settings -->
-                        <Expander Header="Inline Completion Advanced" Foreground="{DynamicResource LpWindowFgBrush}" Margin="0,10,0,10">
-                            <StackPanel Margin="10,10,0,0">
-                                <Grid Margin="0,0,0,10">
-                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="70"/></Grid.ColumnDefinitions>
-                                    <StackPanel Grid.Column="0">
-                                        <TextBlock Text="Max Completion Tokens" Style="{DynamicResource LpLabelStyle}"/><Slider x:Name="SldrMaxTokens" Minimum="32" Maximum="1024" TickFrequency="32" IsSnapToTickEnabled="True" ValueChanged="SldrMaxTokens_ValueChanged"/></StackPanel>
-                                    <TextBlock x:Name="TxtMaxTokens" Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Center" FontWeight="SemiBold"/>
-                                </Grid>
-                                <Grid Margin="0,0,0,10">
-                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="70"/></Grid.ColumnDefinitions>
-                                    <StackPanel Grid.Column="0">
-                                        <TextBlock Text="Trigger Delay (ms)" Style="{DynamicResource LpLabelStyle}"/><Slider x:Name="SldrDelay" Minimum="200" Maximum="2000" TickFrequency="100" IsSnapToTickEnabled="True" ValueChanged="SldrDelay_ValueChanged"/></StackPanel>
-                                    <TextBlock x:Name="TxtDelay" Grid.Column="1" VerticalAlignment="Center" HorizontalAlignment="Center" FontWeight="SemiBold"/>
-                                </Grid>
-                            </StackPanel>
-                        </Expander>
+
 
                         <!-- Prompt Templates -->
                         <TextBlock Text="📝  Instruction Templates" Style="{DynamicResource LpSectionHeader}"/>

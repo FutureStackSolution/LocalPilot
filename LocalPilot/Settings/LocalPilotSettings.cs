@@ -10,30 +10,13 @@ namespace LocalPilot.Settings
     {
         Fast,
         Standard,
-        HighAccuracy,
-        Custom
+        HighAccuracy
     }
 
     [Serializable]
     public class LocalPilotSettings
     {
-        private PerformanceMode _mode = PerformanceMode.Standard;
-        private double _temperature = 0.2;
-        private int _maxChatTokens = 4096;
-
-        public PerformanceMode Mode 
-        { 
-            get => _mode; 
-            set 
-            {
-                if (_mode == value) return;
-                _mode = value;
-                if (_mode != PerformanceMode.Custom)
-                {
-                    ApplyModePresets();
-                }
-            }
-        }
+        public PerformanceMode Mode { get; set; } = PerformanceMode.Standard;
 
         // ── Connection ─────────────────────────────────────────────────────────
         public string OllamaBaseUrl    { get; set; } = "http://localhost:11434";
@@ -51,37 +34,13 @@ namespace LocalPilot.Settings
         public int    CompletionDelayMs      { get; set; } = 600;   // debounce
         public int    MaxCompletionTokens    { get; set; } = 256;
         
-        public int MaxChatTokens
-        {
-            get => _maxChatTokens;
-            set
-            {
-                if (_maxChatTokens == value) return;
-                _maxChatTokens = value;
-                _mode = PerformanceMode.Custom;
-            }
-        }
-
-        public double Temperature
-        {
-            get => _temperature;
-            set
-            {
-                if (Math.Abs(_temperature - value) < 0.001) return;
-                _temperature = value;
-                _mode = PerformanceMode.Custom;
-            }
-        }
-
         public bool   ShowCompletionGhost    { get; set; } = true;  // ghost-text
 
 
-        // ── Context window ─────────────────────────────────────────────────────
-        public int    ContextLinesBefore { get; set; } = 60;
-        public int    ContextLinesAfter  { get; set; } = 10;
-
         // ── Chat panel ─────────────────────────────────────────────────────────
         public int    ChatHistoryMaxItems { get; set; } = 50;
+        public float  Temperature         { get; set; } = 0.7f;
+        public int    MaxChatTokens       { get; set; } = 4096;
 
         // ── Agent ─────────────────────────────────────────────────────────────
         public bool   AutonomousModeEnabled    { get; set; } = true;
@@ -95,7 +54,6 @@ namespace LocalPilot.Settings
 
         // ── Workspace Snapshot ────────────────────────────────────────────────
         public bool   EnableProjectMap   { get; set; } = true;
-        public int    MaxMapSizeKB       { get; set; } = 600;
 
         // ── UI Preferences ────────────────────────────────────────────────────
 
@@ -113,24 +71,5 @@ namespace LocalPilot.Settings
             _instance = updated;
         }
 
-        private void ApplyModePresets()
-        {
-            switch (_mode)
-            {
-                case PerformanceMode.Fast:
-                    _temperature = 0.7;
-                    _maxChatTokens = 1024;
-                    break;
-                case PerformanceMode.HighAccuracy:
-                    _temperature = 0.0;
-                    _maxChatTokens = 8192;
-                    break;
-                case PerformanceMode.Standard:
-                default:
-                    _temperature = 0.2;
-                    _maxChatTokens = 4096;
-                    break;
-            }
-        }
     }
 }

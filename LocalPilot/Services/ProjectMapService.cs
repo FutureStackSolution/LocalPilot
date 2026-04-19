@@ -74,98 +74,73 @@ namespace LocalPilot.Services
         /// Generates or retrieves a shallow snapshot of the workspace.
         /// Reads the first ~500 bytes of each relevant text file.
         /// </summary>
-        public async Task<string> GenerateProjectMapAsync(string rootPath, int maxBytesPerFile = 500, int maxTotalBytes = 800000)
+        public async Task<string> GenerateProjectMapAsync(string rootPath, int maxBytesPerFile = 250, int maxTotalBytes = 600000)
         {
             if (string.IsNullOrEmpty(rootPath) || !Directory.Exists(rootPath))
                 return "Project root not found.";
 
-            // 1. Try Loading from Disk first if cache is empty
-            if (_cachedMap == null)
-            {
-                await LoadFromDiskAsync(rootPath);
-            }
-
-            // Return cache if it's fresh (within 5 minutes) and same root
+            // 🚀 INCREMENTAL WARM-UP
+            if (_cachedMap == null) await LoadFromDiskAsync(rootPath);
             if (_cachedMap != null && _lastRoot == rootPath && (DateTime.Now - _lastCacheTime).TotalMinutes < 5)
-            {
                 return _cachedMap;
-            }
 
             await _lock.WaitAsync();
             try
             {
-                // Double check after lock
-                if (_cachedMap != null && _lastRoot == rootPath && (DateTime.Now - _lastCacheTime).TotalMinutes < 5)
-                    return _cachedMap;
-
-                LocalPilotLogger.Log($"[ProjectMap] Starting high-speed scan of {rootPath}...");
+                LocalPilotLogger.Log($"[ProjectMap] Generating High-Signal YAML snapshot of {rootPath}...");
                 
                 var sb = new StringBuilder();
-                sb.AppendLine("<PROJECT_MAP>");
-                sb.AppendLine($"Generated: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
-                sb.AppendLine($"Workspace: {rootPath}");
+                sb.AppendLine("## WORKSPACE EXECUTIVE SUMMARY (YAML)");
+                sb.AppendLine($"# Generated: {DateTime.Now:O}");
+                sb.AppendLine($"# Root: {rootPath}");
                 sb.AppendLine("---");
 
                 var directoryInfo = new DirectoryInfo(rootPath);
                 var files = GetProjectFiles(directoryInfo).ToList();
-                int currentBytes = 0;
+                // sb.AppendLine($"## PROJECT MAP (ROOT: {rootPath})");
 
-                // Process files in small parallel batches for ultra-fast I/O
-                var tasks = files.Select(async file =>
+                foreach (var file in files)
                 {
-                    try
-                    {
-                        string relativePath = GetRelativePath(rootPath, file.FullName);
-                        string head = await ReadFilePrefixAsync(file.FullName, maxBytesPerFile);
-                        return (Path: relativePath, Content: head);
-                    }
-                    catch { return (Path: null, Content: null); }
-                });
-
-                var results = await Task.WhenAll(tasks);
-
-                foreach (var res in results)
-                {
-                    if (res.Path == null) continue;
+                    string relativePath = GetRelativePath(rootPath, file.FullName);
+                    string ext = Path.GetExtension(file.FullName).ToLowerInvariant();
                     
-                    // Get symbol summary for this file
-                    string symbolSummary = "";
+                    // 🚀 COMPACT NODE REPRESENTATION
+                    sb.AppendLine($"- File: {relativePath}");
+                    
+                    // Grab signatures from the index
                     lock (_symbolIndex)
                     {
-                        var symbolsInFile = _symbolIndex.Values.SelectMany(v => v)
-                            .Where(l => l.FilePath.EndsWith(res.Path))
-                            .OrderBy(l => l.Line)
-                            .Select(l => $"{l.Name}@{l.Line}");
+                        var symbols = _symbolIndex.Values.SelectMany(v => v)
+                            .Where(l => l.FilePath == file.FullName)
+                            .Take(20);
                         
-                        if (symbolsInFile.Any())
+                        if (symbols.Any())
                         {
-                            symbolSummary = $" (Symbols: {string.Join(", ", symbolsInFile)})";
+                            sb.AppendLine($"  Symbols: [{string.Join(", ", symbols.Select(s => s.Name))}]");
                         }
                     }
 
-                    string block = $"\nFILE: {res.Path}{symbolSummary}\n{res.Content}\n---";
-                    int blockLength = Encoding.UTF8.GetByteCount(block);
-                    
-                    if (currentBytes + blockLength > maxTotalBytes)
+                    // Shallow content preview (optimized for local LLM token density)
+                    string head = await ReadFilePrefixAsync(file.FullName, maxBytesPerFile);
+                    if (!string.IsNullOrEmpty(head) && head != "[Binary/Excluded]")
                     {
-                        sb.AppendLine("\n[Snapshot truncated: context limit reached]");
-                        break;
+                        string sanitized = head.Replace("\r", "").Replace("\n", " ").Replace("  ", " ");
+                        if (sanitized.Length > 150) sanitized = sanitized.Substring(0, 150) + "...";
+                        sb.AppendLine($"  Preview: \"{sanitized.Replace("\"", "'")}\"");
                     }
 
-                    sb.Append(block);
-                    currentBytes += blockLength;
+                    if (sb.Length > maxTotalBytes) 
+                    {
+                        sb.AppendLine("  # Note: Snapshot truncated due to context window limits.");
+                        break;
+                    }
                 }
 
-                sb.AppendLine("\n</PROJECT_MAP>");
-                
                 _cachedMap = sb.ToString();
                 _lastRoot = rootPath;
                 _lastCacheTime = DateTime.Now;
-
-                // 2. Persist to disk for smarter loading next session
                 await SaveToDiskAsync(rootPath);
                 
-                LocalPilotLogger.Log($"[ProjectMap] Snapshot complete ({_cachedMap.Length} bytes). Processed {files.Count} files.");
                 return _cachedMap;
             }
             finally

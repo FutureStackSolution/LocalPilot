@@ -59,19 +59,10 @@ namespace LocalPilot.Options
         {
             TxtBaseUrl.Text          = s.OllamaBaseUrl;
 
-            // Sliders
-            SldrDelay.Value          = s.CompletionDelayMs;
-            SldrMaxTokens.Value      = s.MaxCompletionTokens;
-            SldrMaxChatTokens.Value  = s.MaxChatTokens;
-            SldrTemp.Value           = s.Temperature;
-            SldrMaxMapSize.Value     = s.MaxMapSizeKB;
             
             // Intelligence Mode
             CmbPerformanceMode.SelectedIndex = (int)s.Mode;
 
-            // Context
-            TxtContextBefore.Text   = s.ContextLinesBefore.ToString();
-            TxtContextAfter.Text    = s.ContextLinesAfter.ToString();
 
             // Toggles
             ChkEnableInline.IsChecked = s.EnableInlineCompletion;
@@ -83,6 +74,7 @@ namespace LocalPilot.Options
             ChkFix.IsChecked          = s.EnableFix;
             ChkUnitTest.IsChecked     = s.EnableUnitTest;
             ChkStatusBar.IsChecked    = s.ShowStatusBar;
+            ChkEnableLogging.IsChecked = s.EnableLogging;
 
             ChkEnableProjectMap.IsChecked = s.EnableProjectMap;
 
@@ -113,16 +105,9 @@ namespace LocalPilot.Options
             var s = LocalPilotSettings.Instance;
 
             s.OllamaBaseUrl         = TxtBaseUrl.Text.Trim();
-            s.CompletionDelayMs     = (int)SldrDelay.Value;
-            s.MaxCompletionTokens   = (int)SldrMaxTokens.Value;
-            s.MaxChatTokens         = (int)SldrMaxChatTokens.Value;
-            s.Temperature           = Math.Round(SldrTemp.Value, 2);
             s.Mode                  = (PerformanceMode)CmbPerformanceMode.SelectedIndex;
-            s.MaxMapSizeKB          = (int)SldrMaxMapSize.Value;
             s.EnableProjectMap      = ChkEnableProjectMap.IsChecked == true;
 
-            if (int.TryParse(TxtContextBefore.Text, out int cb)) s.ContextLinesBefore = cb;
-            if (int.TryParse(TxtContextAfter.Text,  out int ca)) s.ContextLinesAfter  = ca;
             if (int.TryParse(TxtChatHistory.Text,   out int ch)) s.ChatHistoryMaxItems = ch;
 
             s.EnableInlineCompletion = ChkEnableInline.IsChecked  == true;
@@ -134,6 +119,7 @@ namespace LocalPilot.Options
             s.EnableFix              = ChkFix.IsChecked            == true;
             s.EnableUnitTest         = ChkUnitTest.IsChecked       == true;
             s.ShowStatusBar          = ChkStatusBar.IsChecked      == true;
+            s.EnableLogging          = ChkEnableLogging.IsChecked  == true;
 
 
             s.CompletionModel = (CmbCompletionModel.SelectedItem as ComboBoxItem)?.Content?.ToString()
@@ -160,8 +146,10 @@ namespace LocalPilot.Options
             {
                 try
                 {
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    
                     string url = TxtBaseUrl.Text.Trim();
-                    if (!url.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+                    if (string.IsNullOrEmpty(url) || !url.StartsWith("http", StringComparison.OrdinalIgnoreCase))
                     {
                         TxtConnectionResult.Text = "✗  URL must start with http:// or https://";
                         TxtConnectionResult.Foreground = Brushes.Red;
@@ -169,17 +157,25 @@ namespace LocalPilot.Options
                         return;
                     }
 
-                    _ollama.UpdateBaseUrl(url);
+                    // Busy State
+                    BtnTestConnection.IsEnabled = false;
+                    BtnTestConnection.Content = "Testing...";
+                    TxtConnectionResult.Text = "Checking Ollama status...";
+                    TxtConnectionResult.Foreground = (Brush)this.Resources["LpMutedFgBrush"];
                     TxtConnectionResult.Visibility = Visibility.Visible;
-                    TxtConnectionResult.Text = "Testing connection…";
-                    TxtConnectionResult.Foreground = SystemColors.GrayTextBrush;
 
+                    _ollama.UpdateBaseUrl(url);
                     bool ok = await _ollama.IsAvailableAsync();
+
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    
                     if (ok)
                     {
                         TxtConnectionResult.Text = "✓  Ollama is running and reachable!";
                         TxtConnectionResult.Foreground = new SolidColorBrush(Color.FromRgb(0x4E, 0xC9, 0xB0));
                         SetConnectionStatus(true);
+                        
+                        // Try to reload models immediately if connected
                         await LoadModelsAsync(url, _cts.Token);
 
                         MessageBox.Show("Successfully connected to Ollama!", "LocalPilot",
@@ -187,15 +183,24 @@ namespace LocalPilot.Options
                     }
                     else
                     {
-                        TxtConnectionResult.Text = "✗  Cannot reach Ollama. Check URL and ensure it's running.";
+                        TxtConnectionResult.Text = "✗  Cannot reach Ollama. Ensure it's running at the specified URL.";
                         TxtConnectionResult.Foreground = new SolidColorBrush(Color.FromRgb(0xF4, 0x47, 0x47));
                         SetConnectionStatus(false);
+                        
+                        MessageBox.Show("Failed to connect to Ollama. Please verify the service is running.", "Connection Failed",
+                                        MessageBoxButton.OK, MessageBoxImage.Warning);
                     }
                 }
                 catch (Exception ex)
                 {
                     TxtConnectionResult.Text = $"✗  Error: {ex.Message}";
                     TxtConnectionResult.Foreground = Brushes.Red;
+                }
+                finally
+                {
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    BtnTestConnection.IsEnabled = true;
+                    BtnTestConnection.Content = "Test Connection";
                 }
             });
         }
@@ -253,6 +258,30 @@ namespace LocalPilot.Options
         }
 
 
+
+        private void BtnOpenLog_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                string path = LocalPilotLogger.GetLogPath();
+                if (System.IO.File.Exists(path))
+                {
+                    System.Diagnostics.Process.Start("notepad.exe", path); // Or just process.start(path)
+                }
+                else
+                {
+                    // Create an empty file so it opens
+                    string dir = System.IO.Path.GetDirectoryName(path);
+                    if (!System.IO.Directory.Exists(dir)) System.IO.Directory.CreateDirectory(dir);
+                    System.IO.File.WriteAllText(path, $"--- LocalPilot Log Initialized {DateTime.Now} ---" + Environment.NewLine);
+                    System.Diagnostics.Process.Start("notepad.exe", path);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to open log: {ex.Message}", "LocalPilot", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
 
         private void BtnOpenPrompts_Click(object sender, RoutedEventArgs e)
         {
@@ -331,50 +360,16 @@ namespace LocalPilot.Options
             return null;
         }
 
-        private void SldrDelay_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
-        {
-            if (TxtDelay != null)
-                TxtDelay.Text = $"{(int)e.NewValue} ms";
-        }
 
-        private void SldrMaxTokens_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
-        {
-            if (TxtMaxTokens != null)
-                TxtMaxTokens.Text = $"{(int)e.NewValue}";
-        }
 
-        private void SldrTemp_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
-        {
-            if (TxtTemp != null)
-                TxtTemp.Text = $"{e.NewValue:F2}";
-        }
-
-        private void SldrMaxChatTokens_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
-        {
-            if (TxtMaxChatTokens != null)
-                TxtMaxChatTokens.Text = $"{(int)e.NewValue}";
-        }
-
-        private void SldrMaxMapSize_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
-        {
-            if (TxtMaxMapSize != null)
-                TxtMaxMapSize.Text = $"{(int)e.NewValue} KB";
-        }
 
         private void CmbPerformanceMode_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (CmbPerformanceMode == null || CmbPerformanceMode.SelectedIndex == -1) return;
             
             var selectedMode = (PerformanceMode)CmbPerformanceMode.SelectedIndex;
-            if (selectedMode == PerformanceMode.Custom) return;
-
-            // Apply presets to the UI elements immediately so user sees the change
             var s = LocalPilotSettings.Instance;
-            s.Mode = selectedMode; // This triggers ApplyModePresets internally in Settings
-            
-            // Sync UI Sliders to the new preset values
-            SldrTemp.Value = s.Temperature;
-            SldrMaxChatTokens.Value = s.MaxChatTokens;
+            s.Mode = selectedMode; 
         }
 
         // ── Helpers ───────────────────────────────────────────────────────────
