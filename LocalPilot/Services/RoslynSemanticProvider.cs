@@ -102,7 +102,7 @@ namespace LocalPilot.Services
             var root = await document.GetSyntaxRootAsync(ct).ConfigureAwait(false);
             
             var csSb = new System.Text.StringBuilder();
-            csSb.AppendLine($"## PROACTIVE SEMANTIC CONTEXT: {Path.GetFileName(filePath)}");
+            csSb.AppendLine($"## SEMANTIC NEIGHBORHOOD: {Path.GetFileName(filePath)}");
 
             // 1. Identify all types defined in this file
             var declaredTypes = root.DescendantNodes().OfType<Microsoft.CodeAnalysis.CSharp.Syntax.BaseTypeDeclarationSyntax>()
@@ -111,35 +111,45 @@ namespace LocalPilot.Services
                 .Cast<INamedTypeSymbol>()
                 .ToList();
 
+            var displayFormat = new SymbolDisplayFormat(
+                typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypes,
+                memberOptions: SymbolDisplayMemberOptions.IncludeParameters | SymbolDisplayMemberOptions.IncludeType | SymbolDisplayMemberOptions.IncludeAccessibility,
+                parameterOptions: SymbolDisplayParameterOptions.IncludeName | SymbolDisplayParameterOptions.IncludeType,
+                genericsOptions: SymbolDisplayGenericsOptions.IncludeTypeParameters);
+
             foreach (var type in declaredTypes)
             {
-                csSb.AppendLine($"### Type: {type.Name} ({type.TypeKind})");
-                if (type.BaseType != null && type.BaseType.SpecialType == SpecialType.None)
-                    csSb.AppendLine($"  Inherits: {type.BaseType.Name}");
+                csSb.AppendLine($"### [Definition] {type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat)}");
                 
-                // 2. Identify external types referenced (Fields, Properties, Parameters)
-                var relatedTypes = type.GetMembers()
+                // 2. Hierarchy Check (Base & Interfaces)
+                var hierarchy = new List<INamedTypeSymbol>();
+                if (type.BaseType != null && type.BaseType.SpecialType == SpecialType.None) hierarchy.Add(type.BaseType);
+                hierarchy.AddRange(type.AllInterfaces.Take(3));
+
+                foreach (var h in hierarchy)
+                {
+                    csSb.AppendLine($"  - Contract: {h.Name} ({h.TypeKind})");
+                    var members = h.GetMembers().Where(m => m.DeclaredAccessibility == Accessibility.Public).Take(8);
+                    foreach(var m in members) csSb.AppendLine($"    - {m.ToDisplayString(displayFormat)}");
+                }
+                
+                // 3. Dependency Check (Field & Property Injection)
+                var dependencies = type.GetMembers()
                     .Select(m => m switch {
                         IFieldSymbol f => f.Type,
                         IPropertySymbol p => p.Type,
-                        IMethodSymbol meth => meth.ReturnType,
                         _ => null
                     })
-                    .Where(t => t != null && t.TypeKind == TypeKind.Class && SymbolEqualityComparer.Default.Equals(t.ContainingAssembly, type.ContainingAssembly))
+                    .Where(t => t != null && t.TypeKind != TypeKind.Unknown && SymbolEqualityComparer.Default.Equals(t.ContainingAssembly, type.ContainingAssembly))
                     .Cast<INamedTypeSymbol>()
-                    .GroupBy(t => t.Name)
-                    .Select(g => g.First())
-                    .Take(5); // Limit to top 5 to save tokens
+                    .Distinct(SymbolEqualityComparer.Default)
+                    .Take(3);
 
-                foreach (var rel in relatedTypes)
+                foreach (var dep in dependencies)
                 {
-                    csSb.AppendLine($"  - Related: {rel.Name} (found in project)");
-                    // Proactively grab signatures of the related type
-                    var publicMembers = rel.GetMembers()
-                        .Where(m => m.DeclaredAccessibility == Accessibility.Public && !m.IsImplicitlyDeclared)
-                        .Select(m => m.Name)
-                        .Take(10);
-                    csSb.AppendLine($"    API: {string.Join(", ", publicMembers)}");
+                    csSb.AppendLine($"  - Dependency: {dep.Name} (API)");
+                    var members = dep.GetMembers().Where(m => m.DeclaredAccessibility == Accessibility.Public && !m.IsImplicitlyDeclared).Take(10);
+                    foreach(var m in members) csSb.AppendLine($"    - {m.ToDisplayString(displayFormat)}");
                 }
             }
 

@@ -424,7 +424,7 @@ namespace LocalPilot.Chat
                 _cts?.Dispose();
                 _cts = new CancellationTokenSource();
                 
-                await _agentOrchestrator.RunTaskAsync(task, _cts.Token);
+                await _agentOrchestrator.RunTaskAsync(task, _history, _cts.Token);
             }
             catch (OperationCanceledException)
             {

@@ -53,105 +53,138 @@ namespace LocalPilot.Services
         /// Initiates an autonomous task for the agent.
         /// Uses Ollama's native tool calling API for structured, reliable tool invocation.
         /// </summary>
-        public async Task RunTaskAsync(string taskDescription, CancellationToken ct)
+        public async Task RunTaskAsync(string taskDescription, List<ChatMessage> messages, CancellationToken ct)
         {
             try
             {
-            string solutionPath = "unknown";
-            try
-            {
-                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                var sol = await VS.Solutions.GetCurrentSolutionAsync();
-                if (sol != null && !string.IsNullOrEmpty(sol.FullPath))
+                string solutionPath = "unknown";
+                try
                 {
-                    solutionPath = Path.GetDirectoryName(sol.FullPath);
-                }
-                else
-                {
-                    var prj = await VS.Solutions.GetActiveProjectAsync();
-                    if (prj != null && !string.IsNullOrEmpty(prj.FullPath))
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    var sol = await VS.Solutions.GetCurrentSolutionAsync();
+                    if (sol != null && !string.IsNullOrEmpty(sol.FullPath))
                     {
-                        solutionPath = Path.GetDirectoryName(prj.FullPath);
+                        solutionPath = Path.GetDirectoryName(sol.FullPath);
                     }
                 }
-            }
-            catch { }
+                catch { }
 
-            var messages = new List<ChatMessage>();
-            _toolRegistry.WorkspaceRoot = solutionPath;
+                _toolRegistry.WorkspaceRoot = solutionPath;
+                string contextModel = LocalPilot.Settings.LocalPilotSettings.Instance.ChatModel;
 
-            // 🚀 UNIFIED CONTEXT PIPELINE: Proactively gather implicit context (Errors, Git, Symbols)
-            string unifiedContext = await GetUnifiedContextAsync(solutionPath, ct);
-            if (!string.IsNullOrEmpty(unifiedContext))
-            {
-                messages.Add(new ChatMessage { Role = "system", Content = unifiedContext });
-            }
-
-            // ═══════════════════════════════════════════════════════════════════
-            // NATIVE TOOL DEFINITIONS
-            // ═══════════════════════════════════════════════════════════════════
-            var toolDefinitions = _toolRegistry.GetOllamaToolDefinitions();
-            LocalPilotLogger.Log($"[Agent] Registered {toolDefinitions.Count} native tools for Ollama", LogCategory.Agent);
-
-            // 🚀 SECTION-HEADER FORMAT: Structured system prompt loaded from template
-            var systemPrompt = PromptLoader.GetPrompt("SystemPrompt", new Dictionary<string, string> 
-            {
-                { "solutionPath", solutionPath }
-            });
-
-            if (string.IsNullOrEmpty(systemPrompt))
-            {
-                // Fallback if file load fails
-                systemPrompt = $"## IDENTITY\nYou are LocalPilot.\n## WORKSPACE\nPath: {solutionPath}";
-            }
-
-            messages.Insert(0, new ChatMessage { Role = "system", Content = systemPrompt });
-
-            // 🚀 PERSISTENT RULES: Inject project-specific instructions from LOCALPILOT.md (like CLAUDE.md)
-            try
-            {
-                string rulesPath = Path.Combine(solutionPath, "LOCALPILOT.md");
-                if (File.Exists(rulesPath))
-                {
-                    string localRules = File.ReadAllText(rulesPath);
-                    messages.Add(new ChatMessage { Role = "system", Content = $"## PROJECT-SPECIFIC RULES\n{localRules}" });
-                }
-            }
-            catch { }
-
-            if (LocalPilot.Settings.LocalPilotSettings.Instance.EnableProjectMap)
-            {
-                OnStatusUpdate?.Invoke(AgentStatus.Thinking, "Analyzing project structure...");
-                string projectMapContent = await _projectMap.GenerateProjectMapAsync(solutionPath, 
-                    maxTotalBytes: 2048 * 1024); // 2MB Limit
+                // 🚀 CONTEXT AUTO-COMPACTION: Prune if history is getting too deep
+                var compactor = new HistoryCompactor(_ollama);
+                var originalCount = messages.Count;
+                var compactedMessages = await compactor.CompactIfNeededAsync(messages, contextModel);
                 
-                if (!string.IsNullOrEmpty(projectMapContent))
+                // If compaction happened, we swap the list content (preserving the reference if possible, 
+                // but since we return it to the UI, we'll just update the local variable here).
+                if (compactedMessages.Count < messages.Count)
                 {
-                    messages.Add(new ChatMessage { Role = "system", Content = $"## PROJECT STRUCTURE\n{projectMapContent}" });
+                    messages.Clear();
+                    messages.AddRange(compactedMessages);
+                    LocalPilotLogger.Log($"[Orchestrator] Context Compacted: {originalCount} -> {messages.Count} messages.");
                 }
-            }
-            
-            // Context Injection: Fetch active selection for slash commands
-            string activeSelection = "";
-            string activeFilePath = "";
-            try
-            {
-                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                var activeDoc = await VS.Documents.GetActiveDocumentViewAsync();
-                if (activeDoc?.TextView != null)
+
+                // If this is a NEW session, inject the foundational prompts
+                if (!messages.Any(m => m.Role == "system" && m.Content.Contains("Identity")))
                 {
-                    activeFilePath = activeDoc.FilePath;
-                    activeSelection = activeDoc.TextView.Selection.SelectedSpans.Count > 0 
-                                      ? activeDoc.TextView.Selection.SelectedSpans[0].GetText() 
-                                      : "";
-                    
-                    if (string.IsNullOrWhiteSpace(activeSelection))
+                    var systemPrompt = PromptLoader.GetPrompt("SystemPrompt", new Dictionary<string, string> { { "solutionPath", solutionPath } });
+                    messages.Insert(0, new ChatMessage { Role = "system", Content = systemPrompt ?? "You are LocalPilot." });
+                }
+
+                // Inject project-specific rules if they haven't been added yet
+                if (!messages.Any(m => m.Content.Contains("PROJECT-SPECIFIC RULES")))
+                {
+                    try
                     {
-                        activeSelection = activeDoc.TextBuffer.CurrentSnapshot.GetText();
+                        string rulesPath = Path.Combine(solutionPath, "LOCALPILOT.md");
+                        if (File.Exists(rulesPath))
+                        {
+                            string localRules = File.ReadAllText(rulesPath);
+                            messages.Add(new ChatMessage { Role = "system", Content = $"## PROJECT-SPECIFIC RULES\n{localRules}" });
+                        }
+                    }
+                    catch { }
+                }
+
+                // ═══════════════════════════════════════════════════════════════════
+                // NATIVE TOOL DEFINITIONS
+                // ═══════════════════════════════════════════════════════════════════
+                var toolDefinitions = _toolRegistry.GetOllamaToolDefinitions();
+                LocalPilotLogger.Log($"[Agent] Registered {toolDefinitions.Count} native tools for Ollama", LogCategory.Agent);
+
+                // 🚀 UNIFIED CONTEXT PIPELINE: Proactively gather implicit context (Errors, Git, Symbols)
+                if (!messages.Any(m => m.Content.Contains("ACTIVE DIAGNOSTICS")))
+                {
+                    string unifiedContext = await GetUnifiedContextAsync(solutionPath, ct);
+                    if (!string.IsNullOrEmpty(unifiedContext))
+                    {
+                        messages.Add(new ChatMessage { Role = "system", Content = unifiedContext });
                     }
                 }
-            }
-            catch { }
+
+                if (LocalPilot.Settings.LocalPilotSettings.Instance.EnableProjectMap && !messages.Any(m => m.Content.Contains("PROJECT STRUCTURE")))
+                {
+                    OnStatusUpdate?.Invoke(AgentStatus.Thinking, "Analyzing project structure...");
+                    string projectMapContent = await _projectMap.GenerateProjectMapAsync(solutionPath, 2048 * 1024);
+                    if (!string.IsNullOrEmpty(projectMapContent))
+                    {
+                        messages.Add(new ChatMessage { Role = "system", Content = $"## PROJECT STRUCTURE\n{projectMapContent}" });
+                    }
+                }
+                
+                // Fetch initial grounding context from the project
+                string groundingContext = await _projectContext.SearchContextAsync(_ollama, taskDescription, topN: 5);
+                if (!string.IsNullOrEmpty(groundingContext))
+                {
+                    messages.Add(new ChatMessage { Role = "system", Content = $"## GROUNDING CONTEXT (VECTORS)\n{groundingContext}" });
+                }
+
+                // Inject Active Document context for better grounding
+                try
+                {
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    var activeDoc = await VS.Documents.GetActiveDocumentViewAsync();
+                    if (activeDoc?.FilePath != null)
+                    {
+                        // 🚀 AUTO-RAG: Inject semantic neighborhood awareness
+                        string neighborhood = await SymbolIndexService.Instance.GetNeighborhoodContextAsync(activeDoc.FilePath, ct);
+                        if (!string.IsNullOrEmpty(neighborhood))
+                        {
+                            messages.Add(new ChatMessage { Role = "system", Content = neighborhood });
+                        }
+
+                        string content = activeDoc.TextBuffer.CurrentSnapshot.GetText();
+                        if (content.Length > 3000) content = content.Substring(0, 3000) + "... [truncated]";
+                        
+                        messages.Add(new ChatMessage { 
+                            Role = "system", 
+                            Content = $"## ACTIVE EDITOR SNIPPET\nPath: {activeDoc.FilePath}\nCode:\n```\n{content}\n```" 
+                        });
+                    }
+                }
+                catch { }
+
+                // Context Injection: Fetch active selection for slash commands
+                string activeSelection = "";
+                try
+                {
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    var activeDoc = await VS.Documents.GetActiveDocumentViewAsync();
+                    if (activeDoc?.TextView != null)
+                    {
+                        activeSelection = activeDoc.TextView.Selection.SelectedSpans.Count > 0 
+                                          ? activeDoc.TextView.Selection.SelectedSpans[0].GetText() 
+                                          : "";
+                        
+                        if (string.IsNullOrWhiteSpace(activeSelection))
+                        {
+                            activeSelection = activeDoc.TextBuffer.CurrentSnapshot.GetText();
+                        }
+                    }
+                }
+                catch { }
 
             // Handle Slash Commands
             string processedTask = taskDescription.Trim();
@@ -266,6 +299,14 @@ namespace LocalPilot.Services
                 // 🚀 STREAM INTERCEPTOR: Buffer and suppress tool-text leaking to UI
                 string contextModel = LocalPilot.Settings.LocalPilotSettings.Instance.ChatModel;
                 var options = ApplyPerformancePresets(LocalPilot.Settings.LocalPilotSettings.Instance.Mode, messages);
+                
+                // 🚀 OODA ORIENTATION: Inject Turn Summary to prevent amnesia
+                if (step > 1)
+                {
+                    string historySummary = GenerateActionHistorySummary(messages);
+                    messages.Add(new ChatMessage { Role = "system", Content = $"## OODA ORIENTATION (Turn {step})\n{historySummary}\n\nSTAY FOCUSED: Proceed to the next step of your plan." });
+                }
+
                 LocalPilotLogger.Log($"[Agent] Turn {step}: Running model {contextModel} with context={options.NumCtx}", LogCategory.Agent);
 
                 // Stream with native tool calling
@@ -800,5 +841,31 @@ namespace LocalPilot.Services
         }
 
 
+        private string GenerateActionHistorySummary(List<ChatMessage> history)
+        {
+            var summaryParts = new List<string>();
+            var lastTurns = history.Where(m => m.Role == "assistant" || m.Role == "tool").TakeLast(10).ToList();
+
+            foreach (var msg in lastTurns)
+            {
+                if (msg.Role == "assistant")
+                {
+                    var clean = StripToolCalls(msg.Content);
+                    if (!string.IsNullOrWhiteSpace(clean))
+                    {
+                        var preview = clean.Length > 100 ? clean.Substring(0, 100) + "..." : clean;
+                        summaryParts.Add($"[Agent]: {preview}");
+                    }
+                }
+                else if (msg.Role == "tool")
+                {
+                    string status = msg.Content.Contains("Error") ? "FAILED" : "SUCCESS";
+                    summaryParts.Add($"[Action]: {msg.Content.Split('\n').FirstOrDefault() ?? "Unknown"} ({status})");
+                }
+            }
+
+            if (!summaryParts.Any()) return "No prior actions in this session.";
+            return "Summary of recent steps:\n" + string.Join("\n", summaryParts);
+        }
     }
 }
