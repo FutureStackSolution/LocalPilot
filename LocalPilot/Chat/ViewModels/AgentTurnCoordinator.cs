@@ -1,4 +1,5 @@
 using LocalPilot.Models;
+using LocalPilot.Services;
 
 namespace LocalPilot.Chat.ViewModels
 {
@@ -16,6 +17,8 @@ namespace LocalPilot.Chat.ViewModels
             else if (status == AgentStatus.Executing) statusString = "Executing";
             else if (status == AgentStatus.Completed) statusString = "Completed";
 
+            var lastMetric = PerformanceTracer.Instance.GetLastMetric();
+
             return new AgentStatusViewState
             {
                 Status = status,
@@ -24,7 +27,9 @@ namespace LocalPilot.Chat.ViewModels
                 IsTerminal = status == AgentStatus.Completed || status == AgentStatus.Failed || status == AgentStatus.Idle,
                 IsCompletion = status == AgentStatus.Completed,
                 IsFailure = status == AgentStatus.Failed,
-                IsCancelled = status == AgentStatus.Idle
+                IsCancelled = status == AgentStatus.Idle,
+                LatencyMs = lastMetric?.DurationMs ?? 0,
+                TokenCount = lastMetric?.TokenCount ?? 0
             };
         }
 
@@ -51,6 +56,8 @@ namespace LocalPilot.Chat.ViewModels
         public bool IsCompletion { get; set; }
         public bool IsFailure { get; set; }
         public bool IsCancelled { get; set; }
+        public long LatencyMs { get; set; }
+        public int TokenCount { get; set; }
     }
 
     public sealed class StreamingViewState

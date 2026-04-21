@@ -8,6 +8,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Diagnostics;
 
 namespace LocalPilot.Services
 {
@@ -39,7 +40,7 @@ namespace LocalPilot.Services
         
         public Func<ToolCallRequest, Task<bool>> RequestPermissionAsync;
 
-        private Dictionary<string, (string original, string improved)> _stagedChanges = new Dictionary<string, (string original, string improved)>();
+        private Dictionary<string, (string original, string improved)> _stagedChanges = new Dictionary<string, (string original, string improved)>(StringComparer.OrdinalIgnoreCase);
 
         public AgentOrchestrator(OllamaService ollama, ToolRegistry toolRegistry, ProjectContextService projectContext, ProjectMapService projectMap)
         {
@@ -53,7 +54,7 @@ namespace LocalPilot.Services
         /// Initiates an autonomous task for the agent.
         /// Uses Ollama's native tool calling API for structured, reliable tool invocation.
         /// </summary>
-        public async Task RunTaskAsync(string taskDescription, List<ChatMessage> messages, CancellationToken ct)
+        public async Task RunTaskAsync(string taskDescription, List<ChatMessage> messages, CancellationToken ct, string modelOverride = null)
         {
             try
             {
@@ -70,7 +71,9 @@ namespace LocalPilot.Services
                 catch { }
 
                 _toolRegistry.WorkspaceRoot = solutionPath;
-                string contextModel = LocalPilot.Settings.LocalPilotSettings.Instance.ChatModel;
+                
+                // 🚀 MODEL SELECTION: Use specific model for tasks (Explain, Refactor, etc) if provided
+                string contextModel = modelOverride ?? LocalPilot.Settings.LocalPilotSettings.Instance.ChatModel;
 
                 // 🚀 CONTEXT AUTO-COMPACTION: Prune if history is getting too deep
                 var compactor = new HistoryCompactor(_ollama);
@@ -224,7 +227,9 @@ namespace LocalPilot.Services
             // Finally, the user request with a task header
             messages.Add(new ChatMessage { Role = "user", Content = $"## TASK\n{processedTask}" });
 
-            // 🔍 FILE NESTING: Use Roslyn to find definitions for potential symbols in the task
+
+            // 🔍 FILE NESTING: Use Roslyn/LSP to find definitions for potential symbols in the task
+            // This provides the model with structural awareness of the code it's discussing.
             var words = processedTask.Split(new[] { ' ', '.', '(', ')', '[', ']', '<', '>', ',', ';', ':', '!', '?' }, StringSplitOptions.RemoveEmptyEntries);
             var PascalNames = words.Where(w => w.Length >= 3 && char.IsUpper(w[0])).Distinct();
 
@@ -238,44 +243,12 @@ namespace LocalPilot.Services
                 }
             }
 
-            // Fetch initial grounding context from the project
-            string groundingContext = await _projectContext.SearchContextAsync(_ollama, taskDescription, topN: 5);
-            if (!string.IsNullOrEmpty(groundingContext))
-            {
-                messages.Add(new ChatMessage { Role = "system", Content = $"## GROUNDING CONTEXT (VECTORS)\n{groundingContext}" });
-            }
-
-            // Inject known symbols for fuzzy matching
+            // Inject known symbols summary for fuzzy matching
             string symbolSummary = SymbolIndexService.Instance.GetSummary();
             if (!string.IsNullOrEmpty(symbolSummary))
             {
                 messages.Add(new ChatMessage { Role = "system", Content = $"## WORKSPACE SYMBOLS\n{symbolSummary}" });
             }
-
-            // Inject Active Document context for better grounding
-            try
-            {
-                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                var activeDoc = await VS.Documents.GetActiveDocumentViewAsync();
-                if (activeDoc?.FilePath != null)
-                {
-                    // 🚀 AUTO-RAG: Inject semantic neighborhood awareness
-                    string neighborhood = await SymbolIndexService.Instance.GetNeighborhoodContextAsync(activeDoc.FilePath, ct);
-                    if (!string.IsNullOrEmpty(neighborhood))
-                    {
-                        messages.Add(new ChatMessage { Role = "system", Content = neighborhood });
-                    }
-
-                    string content = activeDoc.TextBuffer.CurrentSnapshot.GetText();
-                    if (content.Length > 3000) content = content.Substring(0, 3000) + "... [truncated]";
-                    
-                    messages.Add(new ChatMessage { 
-                        Role = "system", 
-                        Content = $"## ACTIVE EDITOR SNIPPET\nPath: {activeDoc.FilePath}\nCode:\n```\n{content}\n```" 
-                    });
-                }
-            }
-            catch { }
 
             // ═══════════════════════════════════════════════════════════════════
             // AGENT LOOP: Native tool calling — no parsing, no nudging
@@ -297,7 +270,6 @@ namespace LocalPilot.Services
                 var toolCallsThisTurn = new List<ToolCallRequest>();
 
                 // 🚀 STREAM INTERCEPTOR: Buffer and suppress tool-text leaking to UI
-                string contextModel = LocalPilot.Settings.LocalPilotSettings.Instance.ChatModel;
                 var options = ApplyPerformancePresets(LocalPilot.Settings.LocalPilotSettings.Instance.Mode, messages);
                 
                 // 🚀 OODA ORIENTATION: Inject Turn Summary to prevent amnesia
@@ -309,6 +281,9 @@ namespace LocalPilot.Services
 
                 LocalPilotLogger.Log($"[Agent] Turn {step}: Running model {contextModel} with context={options.NumCtx}", LogCategory.Agent);
 
+                var turnSw = Stopwatch.StartNew();
+                int estimatedTokens = 0;
+
                 // Stream with native tool calling
                 await foreach (var result in _ollama.StreamChatWithToolsAsync(contextModel, messages, toolDefinitions, options, ct))
                 {
@@ -316,6 +291,7 @@ namespace LocalPilot.Services
                     {
                         string token = result.TextToken;
                         responseBuilder.Append(token);
+                        estimatedTokens++; 
 
                         // 🚀 NARRATIVE STREAMING: Pass tokens to UI for a 'live' feel.
                         OnMessageFragment?.Invoke(token);
@@ -331,7 +307,13 @@ namespace LocalPilot.Services
                     }
                 }
 
+                turnSw.Stop();
                 var responseText = responseBuilder.ToString();
+                
+                // Record metrics
+                PerformanceTracer.Instance.RecordTurn(taskDescription, step, turnSw.ElapsedMilliseconds, estimatedTokens, contextModel);
+                OnStatusUpdate?.Invoke(AgentStatus.Thinking, $"Finished turn {step} in {turnSw.ElapsedMilliseconds}ms ({estimatedTokens} tokens)");
+
                 var cleanText = StripToolCalls(responseText);
 
                 // 🚀 UI CLEANUP: Always invoke message completion to ensure the 'rendered' 
@@ -437,7 +419,8 @@ namespace LocalPilot.Services
                             
                             string rawCode = GetSafeToolArg(toolCall, "content") ?? 
                                              GetSafeToolArg(toolCall, "new_text") ?? 
-                                             GetSafeToolArg(toolCall, "CodeContent");
+                                             GetSafeToolArg(toolCall, "CodeContent") ??
+                                             GetSafeToolArg(toolCall, "ReplacementContent"); // 🛡️ Support more tool variants
 
                             // 🚀 INTELLIGENT STAGING: For replacements, calculate the FULL NEW CONTENT for the diff
                             if (toolCall.Name == "replace_text")
@@ -472,15 +455,18 @@ namespace LocalPilot.Services
                             if (!string.IsNullOrEmpty(target) && !string.IsNullOrEmpty(code))
                             {
                                 lock (_stagedChanges) {
-                                    var existing = _stagedChanges.ContainsKey(target) ? _stagedChanges[target].original : "";
-                                    if (string.IsNullOrEmpty(existing)) {
+                                    bool hasExisting = _stagedChanges.ContainsKey(target);
+                                    string originalCode = hasExisting ? _stagedChanges[target].original : null;
+                                    
+                                    if (!hasExisting) {
                                         // If we didn't capture original yet (e.g. write_file vs replace_text)
                                         try {
                                              string absPath = _toolRegistry.ResolvePath(target);
-                                             if (File.Exists(absPath)) existing = File.ReadAllText(absPath);
-                                        } catch {}
+                                             if (File.Exists(absPath)) originalCode = File.ReadAllText(absPath);
+                                             else originalCode = ""; // New file original is empty
+                                        } catch { originalCode = ""; }
                                     }
-                                    _stagedChanges[target] = (existing, code);
+                                    _stagedChanges[target] = (originalCode ?? "", code);
                                 }
                             }
                         }
@@ -503,12 +489,12 @@ namespace LocalPilot.Services
                             OnStatusUpdate?.Invoke(AgentStatus.Thinking, "Roslyn performing deep project-wide analysis...");
                         }
 
-                        var sw = System.Diagnostics.Stopwatch.StartNew();
+                        var toolSw = System.Diagnostics.Stopwatch.StartNew();
                         var result = await toolTask;
-                        sw.Stop();
+                        toolSw.Stop();
                         
                         OnToolCallCompleted?.Invoke(toolCall, result);
-                        LocalPilotLogger.Log($"[Agent] Tool '{toolCall.Name}' executed in {sw.ElapsedMilliseconds}ms. Success: {!result.IsError}");
+                        LocalPilotLogger.Log($"[Agent] Tool '{toolCall.Name}' executed in {toolSw.ElapsedMilliseconds}ms. Success: {!result.IsError}");
 
                         string output = result.Output ?? string.Empty;
                         if (output.Length > 2000) output = output.Substring(0, 2000) + "... [Truncated]";
@@ -844,7 +830,8 @@ namespace LocalPilot.Services
         private string GenerateActionHistorySummary(List<ChatMessage> history)
         {
             var summaryParts = new List<string>();
-            var lastTurns = history.Where(m => m.Role == "assistant" || m.Role == "tool").TakeLast(10).ToList();
+            var filtered = history.Where(m => m.Role == "assistant" || m.Role == "tool").ToList();
+            var lastTurns = filtered.Skip(Math.Max(0, filtered.Count - 10)).ToList();
 
             foreach (var msg in lastTurns)
             {

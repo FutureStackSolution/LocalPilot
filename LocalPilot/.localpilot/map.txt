@@ -1,0 +1,100 @@
+## WORKSPACE EXECUTIVE SUMMARY (YAML)
+# Generated: 2026-04-21T11:50:07.9908977+05:30
+# Root: D:\Data\Github\LocalPilot\LocalPilot
+---
+- File: LocalPilot.csproj
+  Preview: "<?xml version='1.0' encoding='utf-8'?> <Project ToolsVersion='15.0' DefaultTargets='Build' xmlns='http://schemas.microsoft.com/developer/msbuild/2003'..."
+- File: LocalPilot.slnx
+  Preview: "<Solution>  <Configurations>   <Platform Name='Any CPU' />   <Platform Name='arm64' />   <Platform Name='x86' />  </Configurations>  <Project Path='Lo..."
+- File: LocalPilotPackage.cs
+  Preview: "using LocalPilot.Chat; using LocalPilot.Commands; using LocalPilot.Options; using LocalPilot.Services; using LocalPilot.Settings; using Microsoft.Visu..."
+- File: Chat\LocalPilotChatControl.xaml.cs
+  Preview: "using LocalPilot.Models; using LocalPilot.Services; using LocalPilot.Settings; using LocalPilot.Chat.ViewModels; using System.IO; using Microsoft.Visu..."
+- File: Chat\LocalPilotChatWindow.cs
+  Preview: "using Microsoft.VisualStudio.Shell; using System; using System.Runtime.InteropServices; namespace LocalPilot.Chat {   /// <summary>   /// LocalPilot C..."
+- File: Chat\ViewModels\AgentTurnCoordinator.cs
+  Preview: "using LocalPilot.Models; using LocalPilot.Services; namespace LocalPilot.Chat.ViewModels {   /// <summary>   /// Owns chat-session state transitions f..."
+- File: Chat\ViewModels\AgentTurnLayoutBuilder.cs
+  Preview: "using System; using System.Windows; using System.Windows.Controls; namespace LocalPilot.Chat.ViewModels {   /// <summary>   /// Builds top-level agent..."
+- File: Chat\ViewModels\AgentTurnViewModel.cs
+  Preview: "using System.ComponentModel; using System.Runtime.CompilerServices; namespace LocalPilot.Chat.ViewModels {   public sealed class AgentTurnViewModel : ..."
+- File: Chat\ViewModels\AgentUiRenderer.cs
+  Preview: "using System; using System.Collections.Generic; using System.Windows; using System.Windows.Controls; using System.Windows.Media; using System.Windows...."
+- File: Chat\ViewModels\ChatSessionViewModel.cs
+  Preview: "using System.ComponentModel; using System.Runtime.CompilerServices; namespace LocalPilot.Chat.ViewModels {   public sealed class ChatSessionViewModel ..."
+- File: Commands\LocalPilotCommands.cs
+  Preview: "using LocalPilot.Services; using LocalPilot.Settings; using LocalPilot.Options; using Microsoft.VisualStudio.Shell; using System; using System.Compone..."
+- File: Completion\CompletionPromptBuilder.cs
+  Preview: "using LocalPilot.Settings; namespace LocalPilot.Completion {   /// <summary>   /// Builds the prompt that is sent to Ollama for inline completion.   /..."
+- File: Completion\GhostTextAdornment.cs
+  Preview: "using Microsoft.VisualStudio.Text.Editor; using System.Windows; using System.Windows.Controls; using System.Windows.Media; namespace LocalPilot.Comple..."
+- File: Completion\GhostTextAdornmentLayer.cs
+  Preview: "using Microsoft.VisualStudio.Text.Editor; using Microsoft.VisualStudio.Utilities; using System.ComponentModel.Composition; namespace LocalPilot.Comple..."
+- File: Completion\InlineCompletionController.cs
+  Preview: "using LocalPilot.Services; using LocalPilot.Settings; using Microsoft.VisualStudio.Text; using Microsoft.VisualStudio.Text.Editor; using Microsoft.Vis..."
+- File: Models\AgentModels.cs
+  Preview: "using Newtonsoft.Json; using System.Collections.Generic; namespace LocalPilot.Models {   /// <summary>   /// Represents a tool available for the Agent..."
+- File: Options\LocalPilotOptionsControl.xaml.cs
+  Preview: "using LocalPilot.Services; using LocalPilot.Settings; using Microsoft.VisualStudio.Shell; using Microsoft.VisualStudio.Threading; using System; using ..."
+- File: Options\LocalPilotOptionsPage.cs
+  Preview: "using LocalPilot.Settings; using Microsoft.VisualStudio.Shell; using System; using System.Runtime.InteropServices; using System.Windows; namespace Loc..."
+- File: Options\SettingsPersistence.cs
+  Preview: "using LocalPilot.Settings; using Newtonsoft.Json; using System; using System.IO; namespace LocalPilot.Options {   /// <summary>   /// Saves/loads Loca..."
+- File: Prompts\DocumentPrompt.md
+  Preview: "# INSTRUCTION Generate professional documentation for the provided code block. 1. STANDARDS: Use XML Doc tags for C#, JSDoc for JS/TS, or appropriate ..."
+- File: Prompts\ExplainPrompt.md
+  Preview: "<task_type>code_explanation</task_type> <instruction> Provide a deep-dive technical explanation of the provided code block. 1. LOGIC FLOW: Describe th..."
+- File: Prompts\FixPrompt.md
+  Preview: "<task_type>bug_fix</task_type> <instruction> Analyze and repair the issue in the provided code block using the Sentinel Protocol. 1. REPRODUCE: Identi..."
+- File: Prompts\RefactorPrompt.md
+  Preview: "<task_type>refactoring</task_type> <instruction> Refactor the provided code block using the Sentinel Protocol. 1. HYPOTHESIZE: State what design princ..."
+- File: Prompts\RenamePrompt.md
+  Preview: "<task_type>semantic_rename</task_type> <instruction> Perform a project-wide semantic rename of the specified symbol. 1. NATIVE TOOLS: Always prioritiz..."
+- File: Prompts\ReviewPrompt.md
+  Preview: "# INSTRUCTION Perform a comprehensive code review of the provided block. 1. SECURITY: Check for vulnerabilities (e.g., injection, insecure handling). ..."
+- File: Prompts\SystemPrompt.md
+  Preview: "<identity> You are LocalPilot, an elite local AI engineer. Operate directly on Visual Studio via tools. Solve tasks with surgical precision and minima..."
+- File: Prompts\TestPrompt.md
+  Preview: "<task_type>unit_testing</task_type> <instruction> Generate high-coverage unit tests for the provided code block. 1. POSITIVE PATHS: Test standard expe..."
+- File: Properties\AssemblyInfo.cs
+  Preview: "using System.Reflection; using System.Runtime.CompilerServices; using System.Runtime.InteropServices; // General Information about an assembly is cont..."
+- File: Services\AgentOrchestrator.cs
+  Preview: "using Community.VisualStudio.Toolkit; using LocalPilot.Models; using Microsoft.VisualStudio.Shell; using Newtonsoft.Json; using System; using System.C..."
+- File: Services\CapabilityCatalog.cs
+  Preview: "using System; using System.Collections.Generic; using System.Collections.ObjectModel; using System.Linq; using LocalPilot.Commands; using LocalPilot.S..."
+- File: Services\HistoryCompactor.cs
+  Preview: "using System; using System.Collections.Generic; using System.Linq; using System.Text.RegularExpressions; using System.Threading.Tasks; using LocalPilo..."
+- File: Services\ISemanticProvider.cs
+  Preview: "using System.Collections.Generic; using System.Threading; using System.Threading.Tasks; using LocalPilot.Models; namespace LocalPilot.Services {   ///..."
+- File: Services\LocalParserProvider.cs
+  Preview: "using LocalPilot.Models; using System; using System.Collections.Generic; using System.IO; using System.Linq; using System.Text; using System.Threading..."
+- File: Services\LocalPilotCommandRouter.cs
+  Preview: "using System; using System.Threading.Tasks; using Community.VisualStudio.Toolkit; using LocalPilot.Chat; using Microsoft.VisualStudio.Shell; namespace..."
+- File: Services\LocalPilotLogger.cs
+  Preview: "using LocalPilot.Settings; using Microsoft.VisualStudio.Shell; using Microsoft.VisualStudio.Shell.Interop; using Microsoft.VisualStudio.Threading; usi..."
+- File: Services\LspSemanticProvider.cs
+  Preview: "using System; using System.Collections.Generic; using System.IO; using System.Threading; using System.Threading.Tasks; using Microsoft.VisualStudio.Sh..."
+- File: Services\OllamaService.cs
+  Preview: "using Newtonsoft.Json; using Newtonsoft.Json.Linq; using System; using System.Collections.Generic; using System.IO; using System.Net.Http; using Syste..."
+- File: Services\PerformanceSentinel.cs
+  Preview: "using System; using System.Collections.Generic; using System.Linq; using System.Threading.Tasks; using Microsoft.CodeAnalysis; using Microsoft.CodeAna..."
+- File: Services\PerformanceTracer.cs
+  Preview: "using System; using System.Collections.Concurrent; using System.Collections.Generic; using System.Diagnostics; using System.Linq; namespace LocalPilot..."
+- File: Services\ProjectContextService.cs
+  Preview: "using Microsoft.VisualStudio.Shell; using System; using System.Collections.Generic; using System.IO; using System.Linq; using System.Threading; using ..."
+- File: Services\ProjectMapService.cs
+  Preview: "using System; using System.Collections.Generic; using System.IO; using System.Linq; using System.Text; using System.Threading; using System.Text.Regul..."
+- File: Services\PromptLoader.cs
+  Preview: "using System; using System.IO; using System.Reflection; using System.Collections.Generic; namespace LocalPilot.Services {   /// <summary>   /// Loads ..."
+- File: Services\RoslynSemanticProvider.cs
+  Preview: "using LocalPilot.Models; using Community.VisualStudio.Toolkit; using Microsoft.CodeAnalysis; using Microsoft.VisualStudio.ComponentModelHost; using Mi..."
+- File: Services\SentinelDebugger.cs
+  Preview: "using System; using System.Collections.Generic; using System.Linq; using System.Threading; using System.Threading.Tasks; using Community.VisualStudio...."
+- File: Services\SymbolIndexService.cs
+  Preview: "using System; using System.Collections.Generic; using System.IO; using System.Linq; using System.Threading; using System.Threading.Tasks; using LocalP..."
+- File: Services\ToolRegistry.cs
+  Preview: "using System; using System.Collections.Generic; using System.IO; using System.Linq; using System.Threading; using System.Threading.Tasks; using LocalP..."
+- File: Services\UniversalSemanticProvider.cs
+  Preview: "using System.Text.RegularExpressions; using System.Threading; using System.Threading.Tasks; using Microsoft.VisualStudio.Shell; using System.Collectio..."
+- File: Settings\LocalPilotSettings.cs
+  Preview: "using System; namespace LocalPilot.Settings {   /// <summary>   /// All user-configurable settings for LocalPilot.   /// Values are persisted by Visua..."

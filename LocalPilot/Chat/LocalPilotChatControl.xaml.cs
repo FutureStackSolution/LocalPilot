@@ -84,6 +84,17 @@ namespace LocalPilot.Chat
             _projectMap = new ProjectMapService();
             _agentOrchestrator = new AgentOrchestrator(_ollama, _toolRegistry, ProjectContextService.Instance, _projectMap);
             
+            // 🚀 SENTINEL INITIALIZATION: Connect the error-watchdog to the brain
+            SentinelDebugger.Instance.Initialize(_agentOrchestrator);
+            SentinelDebugger.Instance.OnFixReady += (suggestion) => {
+                _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () => {
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    AppendAIBanner($"Sentinel detected build error {suggestion.ErrorCode}. Would you like me to analyze and fix it?", "Fix with Autopilot", () => {
+                        _ = RunAgentTaskAsync($"Fix build error {suggestion.ErrorCode}: {suggestion.ErrorMessage} in {suggestion.FilePath}");
+                    });
+                });
+            };
+            
             // Wire up Agent events
             _agentOrchestrator.OnStatusUpdate += OnAgentStatusUpdate;
             _agentOrchestrator.OnToolCallPending += OnAgentToolCallPending;
@@ -146,6 +157,34 @@ namespace LocalPilot.Chat
             {
                 _ = StartBackgroundIndexingAsync();
             }
+
+            // 🚀 PERFORMANCE SENTINEL: Initial scan of the active document
+            _ = Task.Run(async () => {
+                await Task.Delay(5000); // Wait for warm-up
+                await ScanCurrentFileForPerformanceAsync();
+            });
+        }
+
+        private async Task ScanCurrentFileForPerformanceAsync()
+        {
+            try
+            {
+                var activeDoc = await VS.Documents.GetActiveDocumentViewAsync();
+                if (activeDoc?.FilePath == null) return;
+
+                string content = activeDoc.TextBuffer.CurrentSnapshot.GetText();
+                var issues = await PerformanceSentinel.Instance.AnalyzeFileAsync(activeDoc.FilePath, content);
+
+                if (issues.Any())
+                {
+                    var primary = issues.First();
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    AppendAIBanner($"Performance Sentinel found a bottleneck in {System.IO.Path.GetFileName(primary.FilePath)}: {primary.Title}.", "Optimize with AI", () => {
+                        _ = RunAgentTaskAsync($"Analyze and optimize the {primary.Title} issue at line {primary.Line} in {primary.FilePath}. {primary.Description}");
+                    });
+                }
+            }
+            catch { }
         }
 
         private async Task StartBackgroundIndexingAsync()
@@ -394,7 +433,7 @@ namespace LocalPilot.Chat
             await RunAgentTaskAsync(text);
         }
 
-        private async Task RunAgentTaskAsync(string task)
+        private async Task RunAgentTaskAsync(string task, string modelOverride = null)
         {
             await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
             ReviewPanel.Visibility = Visibility.Collapsed;
@@ -402,21 +441,18 @@ namespace LocalPilot.Chat
             if (WelcomePanel.Visibility == Visibility.Visible)
                 WelcomePanel.Visibility = Visibility.Collapsed;
 
+            // 🛡️ UI SANITIZATION: Don't show the raw technical XML block if it's a prompt template
+            bool isTechnicalPrompt = task.Trim().StartsWith("<task_type>");
+
             // Ensure bubble is added if it hasn't been added by queue logic already
-            // (Heuristic: check if last bubble matches this task content or just always add for simplicity?)
-            // Actually, HandleSendInput already added the bubble if queueing.
-            // But if it's the FIRST message, it hasn't been added yet.
-            
-            // For now, always append bubble in RunAgentTaskAsync unless we are processing a queue item 
-            // that was already appended.
-            if (_requestQueue.Count == 0 || !_isProcessingQueue)
+            if ((_requestQueue.Count == 0 || !_isProcessingQueue) && !isTechnicalPrompt)
             {
                 AppendUserBubble(task);
             }
 
             // 🚀 STATE RESET: Ensure no stale modifications from previous turns leak into this one
             _lastStagedChanges = null;
-            SetStreaming(true);
+            SetStreaming(true, modelOverride);
             StartNewAgentTurn();
 
             try
@@ -424,7 +460,7 @@ namespace LocalPilot.Chat
                 _cts?.Dispose();
                 _cts = new CancellationTokenSource();
                 
-                await _agentOrchestrator.RunTaskAsync(task, _history, _cts.Token);
+                await _agentOrchestrator.RunTaskAsync(task, _history, _cts.Token, modelOverride);
             }
             catch (OperationCanceledException)
             {
@@ -551,7 +587,7 @@ namespace LocalPilot.Chat
         private void OnAgentModificationsPending(Dictionary<string, (string original, string improved)> stagedChanges)
         {
             if (stagedChanges == null || stagedChanges.Count == 0) return;
-            _lastStagedChanges = stagedChanges;
+            _lastStagedChanges = new Dictionary<string, (string original, string improved)>(stagedChanges, StringComparer.OrdinalIgnoreCase);
 
             _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
             {
@@ -866,6 +902,8 @@ namespace LocalPilot.Chat
                     return;
                 }
 
+                _lastAuthoringCode = selectedCode; // 🛡️ Buffer for Diff View logic
+
                 // 2. Prepare Prompt
                 string prompt = BuildActionPrompt(action, selectedCode);
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
@@ -874,8 +912,9 @@ namespace LocalPilot.Chat
                 TxtInput.Clear();
                 AppendUserBubble($"/{action}");
                 
-                // 4. Trigger Agent Task
-                await RunAgentTaskAsync(prompt);
+                // 4. Trigger Agent Task with specialized model
+                string specializedModel = GetActionModel(action);
+                await RunAgentTaskAsync(prompt, specializedModel);
             }
             catch (Exception ex)
             {
@@ -1959,6 +1998,68 @@ namespace LocalPilot.Chat
             ChatScroll.ScrollToEnd();
 
             return await _permissionTcs.Task;
+        }
+        private void AppendAIBanner(string text, string buttonText, Action onButtonClick)
+        {
+             var banner = new Border
+            {
+                Background = (Brush)this.Resources["LpBannerBgBrush"],
+                BorderBrush = (Brush)this.Resources["LpMenuBorderBrush"],
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(16, 12, 16, 12),
+                Margin = new Thickness(0, 8, 0, 8)
+            };
+
+            var sp = new StackPanel { Orientation = Orientation.Horizontal };
+            
+            // Sentinel Shield Icon
+            sp.Children.Add(new TextBlock
+            {
+                Text = "\uE73E", // Shield icon
+                FontFamily = new FontFamily("Segoe MDL2 Assets"),
+                FontSize = 18,
+                Foreground = (Brush)this.Resources["LpAccentBrush"],
+                Margin = new Thickness(0, 0, 16, 0),
+                VerticalAlignment = VerticalAlignment.Center
+            });
+
+            var contentStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            contentStack.Children.Add(new TextBlock
+            {
+                Text = "SENTINEL SUGGESTION",
+                FontSize = 10,
+                FontWeight = FontWeights.Bold,
+                Foreground = (Brush)this.Resources["LpMutedFgBrush"],
+                Margin = new Thickness(0, 0, 0, 2)
+            });
+            contentStack.Children.Add(new TextBlock
+            {
+                Text = text,
+                FontSize = 12,
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = (Brush)this.Resources["LpWindowFgBrush"]
+            });
+            
+            var btn = new Button
+            {
+                Content = buttonText,
+                Style = (Style)this.Resources["LpPrimaryActionButtonStyle"],
+                Margin = new Thickness(16, 0, 0, 0),
+                Padding = new Thickness(12, 6, 12, 6),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            btn.Click += (s, e) => {
+                MessagesContainer.Children.Remove(banner);
+                onButtonClick();
+            };
+
+            sp.Children.Add(contentStack);
+            sp.Children.Add(btn);
+            banner.Child = sp;
+
+            MessagesContainer.Children.Add(banner);
+            ChatScroll.ScrollToEnd();
         }
     }
 }

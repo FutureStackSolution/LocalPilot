@@ -25,6 +25,8 @@ namespace LocalPilot
     // Options page — accessible via Tools > Options > LocalPilot
     [ProvideOptionPage(typeof(LocalPilotOptionsPage),
       "LocalPilot", "General", 0, 0, supportsAutomation: true)]
+    [ProvideOptionPage(typeof(LocalPilotAdvancedOptionsPage),
+      "LocalPilot", "Advanced", 0, 0, supportsAutomation: true)]
 
     // Auto-load when a solution opens
     [ProvideAutoLoad(

@@ -72,12 +72,18 @@
     <Compile Include="Services\RoslynSemanticProvider.cs" />
     <Compile Include="Services\LspSemanticProvider.cs" />
     <Compile Include="Services\LocalParserProvider.cs" />
+    <Compile Include="Services\HistoryCompactor.cs" />
+    <Compile Include="Services\PerformanceSentinel.cs" />
+    <Compile Include="Services\PerformanceTracer.cs" />
+    <Compile Include="Services\SentinelDebugger.cs" />
+    <Compile Include="Services\UniversalSemanticProvider.cs" />
     <!-- Models -->
     <Compile Include="Models\AgentModels.cs" />
     <!-- Settings -->
     <Compile Include="Settings\LocalPilotSettings.cs" />
     <!-- Options -->
     <Compile Include="Options\LocalPilotOptionsPage.cs" />
+    <Compile Include="Options\LocalPilotAdvancedOptionsPage.cs" />
     <Compile Include="Options\LocalPilotOptionsControl.xaml.cs">
       <DependentUpon>LocalPilotOptionsControl.xaml</DependentUpon>
     </Compile>
@@ -127,6 +133,10 @@
       <IncludeInVSIX>true</IncludeInVSIX>
     </Content>
     <Content Include="Prompts\*.md">
+      <IncludeInVSIX>true</IncludeInVSIX>
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Prompts\CompletionPrompt.md">
       <IncludeInVSIX>true</IncludeInVSIX>
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>

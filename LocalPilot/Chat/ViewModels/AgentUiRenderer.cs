@@ -114,6 +114,19 @@ namespace LocalPilot.Chat.ViewModels
                 VerticalAlignment = VerticalAlignment.Center
             });
 
+            if (statusState.LatencyMs > 0)
+            {
+                sp.Children.Add(new TextBlock
+                {
+                    Text = $"  {statusState.LatencyMs}ms · {statusState.TokenCount} tokens",
+                    FontSize = 10,
+                    Foreground = resources["LpMutedFgBrush"] as Brush,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(8, 2, 0, 0),
+                    Opacity = 0.8
+                });
+            }
+
             if (statusState.IsCompletion)
             {
                 acceptButton = new Button

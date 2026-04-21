@@ -306,7 +306,7 @@
         </StackPanel>
 
         <!-- ═══ Content Tabs ═══════════════════════════════════════════════ -->
-        <TabControl Grid.Row="1" Margin="24,0,24,0">
+        <TabControl x:Name="MainTabControl" Grid.Row="1" Margin="24,0,24,0">
             <!-- ───────────────── GENERAL TAB ───────────────── -->
             <TabItem Header="General">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="0,0,16,0">

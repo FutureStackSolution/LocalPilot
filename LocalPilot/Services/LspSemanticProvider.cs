@@ -20,7 +20,7 @@ namespace LocalPilot.Services
             // Specifically languages that typically have LSP servers in VS
             var lspExts = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { 
                 ".py", ".cpp", ".h", ".js", ".ts", ".go", ".rs", ".java", 
-                ".vue", ".svelte", ".jsx", ".tsx", ".json" 
+                ".vue", ".svelte", ".jsx", ".tsx", ".json", ".html", ".css", ".md"
             };
             return lspExts.Contains(extension);
         }

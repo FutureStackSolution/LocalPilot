@@ -7,12 +7,12 @@ using System.Windows;
 namespace LocalPilot.Options
 {
     /// <summary>
-    /// VS DialogPage that hosts the WPF Options UI.
+    /// VS DialogPage that hosts the Advanced portion of the Options UI.
     /// </summary>
     [System.ComponentModel.DesignerCategory("")]
     [ComVisible(true)]
-    [Guid("4A5B6C7D-8E9F-4A5B-6C7D-8E9F4A5B6C7D")]
-    public class LocalPilotOptionsPage : UIElementDialogPage
+    [Guid("5B6C7D8E-9F0A-5B6C-7D8E-9F0A5B6C7D8E")]
+    public class LocalPilotAdvancedOptionsPage : UIElementDialogPage
     {
         private LocalPilotOptionsControl _control;
 
@@ -24,7 +24,9 @@ namespace LocalPilot.Options
                 {
                     _control = new LocalPilotOptionsControl();
                     _control.LoadSettings(LocalPilotSettings.Instance);
-                    _control.SetSelectedTab(0); // General
+                    
+                    // Force the Advanced tab to be selected
+                    _control.SetSelectedTab(1); 
                 }
                 return _control;
             }

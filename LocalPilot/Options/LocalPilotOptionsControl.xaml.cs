@@ -32,6 +32,17 @@ namespace LocalPilot.Options
             });
         }
 
+        /// <summary>
+        /// Programmatically switch to a specific tab (0=General, 1=Advanced)
+        /// </summary>
+        public void SetSelectedTab(int index)
+        {
+            if (MainTabControl != null && index >= 0 && index < MainTabControl.Items.Count)
+            {
+                MainTabControl.SelectedIndex = index;
+            }
+        }
+
         private void OnUnloaded(object sender, RoutedEventArgs e)
         {
             _cts?.Cancel();
@@ -104,36 +115,34 @@ namespace LocalPilot.Options
         {
             var s = LocalPilotSettings.Instance;
 
-            s.OllamaBaseUrl         = TxtBaseUrl.Text.Trim();
-            s.Mode                  = (PerformanceMode)CmbPerformanceMode.SelectedIndex;
-            s.EnableProjectMap      = ChkEnableProjectMap.IsChecked == true;
+            // Only save fields from the active tab to prevent multi-page overwrites
+            if (MainTabControl.SelectedIndex == 0) // General
+            {
+                s.OllamaBaseUrl = TxtBaseUrl.Text.Trim();
+                s.EnableInlineCompletion = ChkEnableInline.IsChecked == true;
+                s.ShowCompletionGhost    = ChkShowGhost.IsChecked    == true;
+                s.EnableExplain          = ChkExplain.IsChecked      == true;
+                s.EnableRefactor         = ChkRefactor.IsChecked     == true;
+                s.EnableDocGen           = ChkDocGen.IsChecked       == true;
+                s.EnableReview           = ChkReview.IsChecked       == true;
+                s.EnableFix              = ChkFix.IsChecked          == true;
+                s.EnableUnitTest         = ChkUnitTest.IsChecked     == true;
+                s.ShowStatusBar          = ChkStatusBar.IsChecked    == true;
+                s.EnableLogging          = ChkEnableLogging.IsChecked == true;
 
-            if (int.TryParse(TxtChatHistory.Text,   out int ch)) s.ChatHistoryMaxItems = ch;
-
-            s.EnableInlineCompletion = ChkEnableInline.IsChecked  == true;
-            s.ShowCompletionGhost    = ChkShowGhost.IsChecked      == true;
-            s.EnableExplain          = ChkExplain.IsChecked        == true;
-            s.EnableRefactor         = ChkRefactor.IsChecked       == true;
-            s.EnableDocGen           = ChkDocGen.IsChecked         == true;
-            s.EnableReview           = ChkReview.IsChecked         == true;
-            s.EnableFix              = ChkFix.IsChecked            == true;
-            s.EnableUnitTest         = ChkUnitTest.IsChecked       == true;
-            s.ShowStatusBar          = ChkStatusBar.IsChecked      == true;
-            s.EnableLogging          = ChkEnableLogging.IsChecked  == true;
-
-
-            s.CompletionModel = (CmbCompletionModel.SelectedItem as ComboBoxItem)?.Content?.ToString()
-                                ?? CmbCompletionModel.Text;
-            s.ChatModel       = (CmbChatModel.SelectedItem as ComboBoxItem)?.Content?.ToString()
-                                ?? CmbChatModel.Text;
-            s.ExplainModel    = (CmbExplainModel.SelectedItem as ComboBoxItem)?.Content?.ToString()
-                                ?? CmbExplainModel.Text;
-            s.RefactorModel   = (CmbRefactorModel.SelectedItem as ComboBoxItem)?.Content?.ToString()
-                                ?? CmbRefactorModel.Text;
-            s.DocModel        = (CmbDocModel.SelectedItem as ComboBoxItem)?.Content?.ToString()
-                                ?? CmbDocModel.Text;
-            s.ReviewModel     = (CmbReviewModel.SelectedItem as ComboBoxItem)?.Content?.ToString()
-                                ?? CmbReviewModel.Text;
+                s.CompletionModel = (CmbCompletionModel.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? CmbCompletionModel.Text;
+                s.ChatModel       = (CmbChatModel.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? CmbChatModel.Text;
+                s.ExplainModel    = (CmbExplainModel.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? CmbExplainModel.Text;
+                s.RefactorModel   = (CmbRefactorModel.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? CmbRefactorModel.Text;
+                s.DocModel        = (CmbDocModel.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? CmbDocModel.Text;
+                s.ReviewModel     = (CmbReviewModel.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? CmbReviewModel.Text;
+            }
+            else if (MainTabControl.SelectedIndex == 1) // Advanced
+            {
+                s.Mode             = (PerformanceMode)CmbPerformanceMode.SelectedIndex;
+                s.EnableProjectMap = ChkEnableProjectMap.IsChecked == true;
+                if (int.TryParse(TxtChatHistory.Text, out int ch)) s.ChatHistoryMaxItems = ch;
+            }
 
             // Persist to disk
             SettingsPersistence.Save(s);

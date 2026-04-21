@@ -141,11 +141,11 @@ namespace LocalPilot.Services
                         _ => null
                     })
                     .Where(t => t != null && t.TypeKind != TypeKind.Unknown && SymbolEqualityComparer.Default.Equals(t.ContainingAssembly, type.ContainingAssembly))
-                    .Cast<INamedTypeSymbol>()
+                    .OfType<INamedTypeSymbol>()
                     .Distinct(SymbolEqualityComparer.Default)
                     .Take(3);
 
-                foreach (var dep in dependencies)
+                foreach (INamedTypeSymbol dep in dependencies)
                 {
                     csSb.AppendLine($"  - Dependency: {dep.Name} (API)");
                     var members = dep.GetMembers().Where(m => m.DeclaredAccessibility == Accessibility.Public && !m.IsImplicitlyDeclared).Take(10);

@@ -8,6 +8,7 @@ namespace LocalPilot.Chat.ViewModels
         private string _statusText = "Working...";
         private string _detailText = string.Empty;
 
+        private string _performanceInfo = string.Empty;
         public string StatusText
         {
             get => _statusText;
@@ -18,6 +19,12 @@ namespace LocalPilot.Chat.ViewModels
         {
             get => _detailText;
             set => SetProperty(ref _detailText, value);
+        }
+
+        public string PerformanceInfo
+        {
+            get => _performanceInfo;
+            set => SetProperty(ref _performanceInfo, value);
         }
 
         public event PropertyChangedEventHandler PropertyChanged;

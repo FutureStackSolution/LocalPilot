@@ -89,6 +89,18 @@ namespace LocalPilot.Completion
                 await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory
                       .SwitchToMainThreadAsync(token);
 
+                // 🚀 DEBUG GUARD: Silence completions during debugging sessions to prevent clashing with Watchdog/Copilot
+                var shellDebugger = await Community.VisualStudio.Toolkit.VS.GetRequiredServiceAsync<Microsoft.VisualStudio.Shell.Interop.SVsShellDebugger, Microsoft.VisualStudio.Shell.Interop.IVsDebugger>();
+                if (shellDebugger != null)
+                {
+                    Microsoft.VisualStudio.Shell.Interop.DBGMODE[] mode = new Microsoft.VisualStudio.Shell.Interop.DBGMODE[1];
+                    shellDebugger.GetMode(mode);
+                    if (mode[0] != Microsoft.VisualStudio.Shell.Interop.DBGMODE.DBGMODE_Design)
+                    {
+                        return;
+                    }
+                }
+
                 var snapshot = _view.TextBuffer.CurrentSnapshot;
                 var caretPos = _view.Caret.Position.BufferPosition.Position;
                 
