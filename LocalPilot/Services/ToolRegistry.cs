@@ -44,6 +44,8 @@ namespace LocalPilot.Services
             RegisterTool(new DeleteFileTool(this));
             RegisterTool(new RenameSymbolTool(this));
             RegisterTool(new RunTestsTool(this));
+            RegisterTool(new TraceDependencyTool(this));
+            RegisterTool(new AnalyzeImpactTool(this));
         }
 
         public void RegisterTool(IAgentTool tool)
@@ -726,6 +728,116 @@ namespace LocalPilot.Services
             {
                 return new ToolResponse { IsError = true, Output = $"Failed to execute {cmd}: {ex.Message}. Ensure the tool is installed in your PATH." };
             }
+        }
+    }
+    public class TraceDependencyTool : IAgentTool
+    {
+        private readonly ToolRegistry _registry;
+        public TraceDependencyTool(ToolRegistry registry) => _registry = registry;
+        public string Name => "trace_dependency";
+        public string Description => "Finds end-to-end dependencies for a file (e.g., UI Component -> API Endpoint -> .NET Controller). Use this for cross-language navigation.";
+        public string ParameterSchema => "{ \"path\": \"string\" }";
+
+        public async Task<ToolResponse> ExecuteAsync(Dictionary<string, object> args, CancellationToken ct)
+        {
+            if (!args.TryGetValue("path", out var pathObj) || pathObj == null)
+                return new ToolResponse { IsError = true, Output = "Missing 'path' argument." };
+
+            var path = _registry.ResolvePath(pathObj.ToString());
+            var graph = NexusService.Instance.GetGraph();
+            
+            var node = graph.Nodes.FirstOrDefault(n => n.FilePath != null && n.FilePath.Equals(path, StringComparison.OrdinalIgnoreCase));
+            if (node == null) return new ToolResponse { Output = "No dependency mapping found for this file in the Nexus graph." };
+
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine($"Dependencies for {node.Name} ({node.Type}):");
+
+            // Outgoing edges
+            var outgoing = graph.Edges.Where(e => e.FromId == node.Id).ToList();
+            if (outgoing.Any())
+            {
+                sb.AppendLine("\nDirect dependencies (Calls/DependsOn):");
+                foreach (var edge in outgoing)
+                {
+                    var target = graph.Nodes.FirstOrDefault(n => n.Id == edge.ToId);
+                    sb.AppendLine($" - {target?.Name ?? edge.ToId} ({target?.Type.ToString() ?? "Unknown"}) {(string.IsNullOrEmpty(edge.Description) ? "" : ": " + edge.Description)}");
+                    
+                    // Trace one more level (e.g. Endpoint -> Controller)
+                    var subEdges = graph.Edges.Where(e => e.FromId == edge.ToId).ToList();
+                    foreach (var sub in subEdges)
+                    {
+                        var subTarget = graph.Nodes.FirstOrDefault(n => n.Id == sub.ToId);
+                        sb.AppendLine($"   └─ {subTarget?.Name ?? sub.ToId} ({subTarget?.Type.ToString() ?? "Unknown"})");
+                    }
+                }
+            }
+
+            // Incoming edges
+            var incoming = graph.Edges.Where(e => e.ToId == node.Id).ToList();
+            if (incoming.Any())
+            {
+                sb.AppendLine("\nDepended on by (Consumed by):");
+                foreach (var edge in incoming)
+                {
+                    var source = graph.Nodes.FirstOrDefault(n => n.Id == edge.FromId);
+                    sb.AppendLine($" - {source?.Name ?? edge.FromId} ({source?.Type.ToString() ?? "Unknown"})");
+                }
+            }
+
+            return new ToolResponse { Output = sb.ToString() };
+        }
+    }
+
+    public class AnalyzeImpactTool : IAgentTool
+    {
+        private readonly ToolRegistry _registry;
+        public AnalyzeImpactTool(ToolRegistry registry) => _registry = registry;
+        public string Name => "analyze_impact";
+        public string Description => "Calculates the 'blast radius' of a change to a file. Shows all affected components and services across the entire stack.";
+        public string ParameterSchema => "{ \"path\": \"string\" }";
+
+        public async Task<ToolResponse> ExecuteAsync(Dictionary<string, object> args, CancellationToken ct)
+        {
+            if (!args.TryGetValue("path", out var pathObj) || pathObj == null)
+                return new ToolResponse { IsError = true, Output = "Missing 'path' argument." };
+
+            var path = _registry.ResolvePath(pathObj.ToString());
+            var graph = NexusService.Instance.GetGraph();
+            
+            var node = graph.Nodes.FirstOrDefault(n => n.FilePath != null && n.FilePath.Equals(path, StringComparison.OrdinalIgnoreCase));
+            if (node == null) return new ToolResponse { Output = "No impact mapping found for this file." };
+
+            var affected = new HashSet<string>();
+            var queue = new Queue<string>();
+            queue.Enqueue(node.Id);
+
+            // Simple BFS to find all upstream dependants
+            while (queue.Count > 0)
+            {
+                var currentId = queue.Dequeue();
+                var dependants = graph.Edges.Where(e => e.ToId == currentId).Select(e => e.FromId);
+                foreach (var depId in dependants)
+                {
+                    if (affected.Add(depId))
+                    {
+                        queue.Enqueue(depId);
+                    }
+                }
+            }
+
+            if (affected.Count == 0) return new ToolResponse { Output = "Low Impact: No direct upstream dependants found for this file." };
+
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine($"CRITICAL IMPACT ANALYSIS for {node.Name}:");
+            sb.AppendLine($"Total Affected Components/Services: {affected.Count}");
+            
+            foreach (var id in affected)
+            {
+                var n = graph.Nodes.FirstOrDefault(nodeObj => nodeObj.Id == id);
+                sb.AppendLine($" - [{(n?.Language ?? "??")}] {n?.Name ?? id} ({n?.Type.ToString() ?? "Unknown"})");
+            }
+
+            return new ToolResponse { Output = sb.ToString() };
         }
     }
 }

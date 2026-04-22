@@ -182,6 +182,41 @@ namespace LocalPilot.Services
                 }
                 catch { }
 
+                // 🚀 NEXUS INTELLIGENCE: Inject cross-language dependency awareness
+                try
+                {
+                    var nexus = NexusService.Instance.GetGraph();
+                    if (nexus.Nodes.Any())
+                    {
+                        var activeDoc = await VS.Documents.GetActiveDocumentViewAsync();
+                        if (activeDoc?.FilePath != null)
+                        {
+                            var node = nexus.Nodes.FirstOrDefault(n => n.FilePath != null && n.FilePath.Equals(activeDoc.FilePath, StringComparison.OrdinalIgnoreCase));
+                            if (node != null)
+                            {
+                                var deps = nexus.Edges.Where(e => e.FromId == node.Id).ToList();
+                                if (deps.Any())
+                                {
+                                    var sb = new System.Text.StringBuilder();
+                                    sb.AppendLine("## NEXUS CONTEXT (Stack Dependencies)");
+                                    sb.AppendLine($"Active File '{node.Name}' connects to {deps.Count} resources.");
+                                    
+                                    // Budgeting: Only show top 5 dependencies to avoid context bloat
+                                    foreach (var edge in deps.Take(5))
+                                    {
+                                        var target = nexus.Nodes.FirstOrDefault(n => n.Id == edge.ToId);
+                                        sb.AppendLine($" - {target?.Name ?? edge.ToId} ({target?.Type})");
+                                    }
+                                    if (deps.Count > 5) sb.AppendLine($" ... and {deps.Count - 5} other architectural links.");
+                                    
+                                    messages.Add(new ChatMessage { Role = "system", Content = sb.ToString() });
+                                }
+                            }
+                        }
+                    }
+                }
+                catch { }
+
                 // Context Injection: Fetch active selection for slash commands
                 string activeSelection = "";
                 try
@@ -510,7 +545,13 @@ namespace LocalPilot.Services
                         LocalPilotLogger.Log($"[Agent] Tool '{toolCall.Name}' executed in {toolSw.ElapsedMilliseconds}ms. Success: {!result.IsError}");
 
                         string output = result.Output ?? string.Empty;
-                        if (output.Length > 2000) output = output.Substring(0, 2000) + "... [Truncated]";
+                        
+                        // 🚀 CONTEXT BUDGETING: Prune massive tool outputs
+                        if (output.Length > 3000) 
+                        {
+                            LocalPilotLogger.Log($"[Agent] Pruning tool output ({output.Length} chars -> 3000 chars)");
+                            output = output.Substring(0, 1500) + "\n\n... [TRUNCATED FOR CONTEXT BUDGET] ...\n\n" + output.Substring(output.Length - 1500);
+                        }
                         
                         lock (messages)
                         {

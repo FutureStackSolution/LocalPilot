@@ -69,7 +69,11 @@ namespace LocalPilot.Services
         {
             try
             {
-                var payload = new { model, prompt };
+                var payload = new { 
+                    model, 
+                    prompt, 
+                    keep_alive = "10m" // Keep embedding model warm for 10 mins
+                };
                 var body = JsonConvert.SerializeObject(payload);
                 var content = new StringContent(body, Encoding.UTF8, "application/json");
 
@@ -102,7 +106,8 @@ namespace LocalPilot.Services
                 model,
                 prompt,
                 stream  = true,
-                options = options ?? new OllamaOptions()
+                options = options ?? new OllamaOptions(),
+                keep_alive = "5m" // Default keep_alive for completions
             };
 
             var body    = JsonConvert.SerializeObject(payload);
@@ -205,7 +210,8 @@ namespace LocalPilot.Services
                     model,
                     messages,
                     stream = true,
-                    options = options ?? new OllamaOptions()
+                    options = options ?? new OllamaOptions(),
+                    keep_alive = "5m"
                 };
             }
 
@@ -425,6 +431,9 @@ namespace LocalPilot.Services
 
         [JsonProperty("stop")]
         public List<string> Stop { get; set; } = new List<string>();
+
+        [JsonProperty("keep_alive")]
+        public string KeepAlive { get; set; } = "5m";
     }
 
     public class ChatMessage

@@ -63,6 +63,17 @@ namespace LocalPilot
                     var ollama = new OllamaService(settings.OllamaBaseUrl);
                     LocalPilotLogger.Log("[Autopilot] Indexing project context in background...");
                     await ProjectContextService.Instance.IndexSolutionAsync(ollama, cancellationToken);
+
+                    // v3.0 Nexus Intelligence: Build the Full-Stack Dependency Graph
+                    string root = "";
+                    await JoinableTaskFactory.RunAsync(async () => {
+                         var sol = await Community.VisualStudio.Toolkit.VS.Solutions.GetCurrentSolutionAsync();
+                         if (sol != null) root = System.IO.Path.GetDirectoryName(sol.FullPath);
+                    });
+                    if (!string.IsNullOrEmpty(root)) {
+                        await NexusService.Instance.InitializeAsync(root);
+                        await NexusService.Instance.RebuildGraphAsync(cancellationToken);
+                    }
                 }
                 catch { /* Quiet skip - background indexing is best-effort */ }
             }, cancellationToken);

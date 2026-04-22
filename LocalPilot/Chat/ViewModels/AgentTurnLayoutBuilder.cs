@@ -23,7 +23,16 @@ namespace LocalPilot.Chat.ViewModels
             activityLabel.Visibility = Visibility.Collapsed; // 👻 Hidden until activity starts
             turnContainer.Children.Add(activityLabel);
             
-            var activityContainer = new StackPanel();
+            var activityContainer = new ItemsControl
+            {
+                // 🚀 UI VIRTUALIZATION: Use VirtualizingStackPanel for high performance with 100+ logs
+                ItemsPanel = new ItemsPanelTemplate(new FrameworkElementFactory(typeof(VirtualizingStackPanel))),
+            };
+
+            // Enable virtualization properties
+            VirtualizingStackPanel.SetIsVirtualizing(activityContainer, true);
+            VirtualizingStackPanel.SetVirtualizationMode(activityContainer, VirtualizationMode.Recycling);
+
             var activityScroller = new ScrollViewer 
             { 
                 Content = activityContainer, 
@@ -35,6 +44,9 @@ namespace LocalPilot.Chat.ViewModels
                 BorderThickness = new Thickness(0),
                 Visibility = Visibility.Collapsed
             };
+            
+            // Critical for VirtualizingStackPanel to work inside a ScrollViewer
+            ScrollViewer.SetCanContentScroll(activityScroller, true);
             
             turnContainer.Children.Add(activityScroller);
 
@@ -82,7 +94,7 @@ namespace LocalPilot.Chat.ViewModels
     {
         public StackPanel TurnContainer { get; set; }
         public StackPanel CurrentContainer { get; set; }
-        public StackPanel ActivityContainer { get; set; }
+        public ItemsControl ActivityContainer { get; set; }
         public ScrollViewer ActivityScroller { get; set; }
         public FrameworkElement ActivityLabel { get; set; }
         public StackPanel NarrativeContainer { get; set; }

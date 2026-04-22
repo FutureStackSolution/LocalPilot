@@ -14,13 +14,15 @@ graph TD
     AM --> PC[ProjectContextService]
     AM --> RS[RoslynSemanticProvider]
     
-    PC -- RAG --> AM
+    PC -- Incremental RAG --> AM
     RS -- Symbols/Refactoring --> AM
     TR -- File/Shell Access --> AM
     OS -- LLM Inference --> AM
     
     SENT[SentinelDebugger] -- Error Detection --> AM
     PERF[PerformanceSentinel] -- Bottleneck Analysis --> AM
+    
+    NEXUS[NexusService] -- Full-Stack Bridge --> AM
 ```
 
 ---
@@ -29,14 +31,14 @@ graph TD
 
 | Service | Responsibility | Key Features |
 | :--- | :--- | :--- |
-| **AgentOrchestrator** | The "Brain". Manages the 20-step autonomous loop. | Native Ollama Tool Calling, Context Compaction, OODA Orientation. |
-| **OllamaService** | LLM Interface. Communicates with local Ollama instance. | Streaming Support, Native Tool Calling support, Embeddings. |
-| **ProjectContextService**| RAG Layer. Indexes solution for semantic search. | Differential sync, Hyper-compressed vector storage (.localpilot/index.json). |
-| **RoslynSemanticProvider**| Semantic Intelligence. Uses MSBuild/Roslyn for accuracy. | Neighborhood Context, Project-wide Rename, Semantic Diagnostics. |
-| **ToolRegistry** | Capability Layer. Safe interfaces for the agent to act. | File I/O, Grep, Terminal, Unit Testing, Symbol Renaming. |
+| **AgentOrchestrator** | The "Brain". Manages the autonomous loop. | **Context Budgeting** (Head/Tail pruning), Nexus summarization, OODA Orientation. |
+| **OllamaService** | LLM Interface. Communicates with local Ollama. | **Keep-Alive Tuning** (5m/10m VRAM), Native Tool Calling, Embedding support. |
+| **ProjectContextService**| RAG Layer. Indexes solution for semantic search. | **Throttled Parallel Indexing**, Incremental Watcher, 256KB File Cap. |
+| **NexusService** | Full-Stack Bridge. Maps dependencies. | **Incremental Graph Updates**, Parallel Initial Scan, C# to TS/TSX Bridge. |
+| **RoslynSemanticProvider**| Semantic Intelligence. Uses MSBuild/Roslyn. | Neighborhood Context, Project-wide Rename, Semantic Diagnostics. |
+| **ToolRegistry** | Capability Layer. Safe interfaces for the agent. | File I/O, Grep, Terminal, Unit Testing, Symbol Renaming. |
 | **SentinelDebugger** | Self-Heal Watchdog. Monitors build errors. | Real-time "Fix with AI" proposals for compilation errors. |
-| **PerformanceSentinel** | Proactive Optimization. Analyzes C# for bottlenecks. | Detects O(n²) loops, blocking async, redundant allocations. |
-| **ProjectMapService** | Structural Awareness. Generates solution headers. | Zero-latency folder structure mapping for LLM grounding. |
+| **PerformanceSentinel** | Proactive Optimization. Analyzes bottlenecks. | Detects O(n²) loops, blocking async, redundant allocations. |
 
 ---
 
@@ -45,10 +47,10 @@ graph TD
 The agent has access to several native tools via the `ToolRegistry`:
 
 *   **FileSystem**: `read_file`, `write_file`, `list_directory`, `delete_file`.
-*   **Search**: `grep_search` (parallel scan), `SearchContextAsync` (semantic/vector).
-*   **Editing**: `replace_text` (precise block replacement with normalization).
+*   **Search**: `grep_search` (High-perf parallel scan), `SearchContextAsync` (Vector RAG).
+*   **Editing**: `replace_text` (Precise block replacement with CRLF/LF normalization).
 *   **Development**: `run_terminal` (cmd.exe commands), `run_tests` (auto-detects toolchain).
-*   **Semantic**: `rename_symbol` (project-wide Roslyn refactoring).
+*   **Nexus**: `trace_dependency` (Cross-stack path tracing), `analyze_impact` (Full-stack change impact analysis).
 *   **Analysis**: `list_errors` (VS Error List access).
 
 ---
@@ -58,25 +60,26 @@ The agent has access to several native tools via the `ToolRegistry`:
 The UI is built using **WPF** and adheres to the "Ghost UI" design mandate: minimalist, responsive, and natively theme-aware.
 
 *   **ChatControl**: The primary container. Manages streaming narrative and activity logs.
+*   **UI Virtualization**: Uses a virtualized `ItemsControl` for the **Activity Log**, ensuring **60fps scrolling** even with hundreds of tool logs.
 *   **AgentTurnLayout**: Separates the **Narrative** (LLM text) from the **Activity** (Tool execution timeline).
-*   **AgentUiRenderer**: Renders tool execution badges, thinking states, and confirmation chips.
-*   **Human-in-the-Loop (HIL)**: A security layer requiring explicit user approval for "risky" tools (`write_file`, `replace_text`, `run_terminal`).
-*   **Staged Review**: Uses a custom diff view for multi-file changes before final acceptance.
+*   **Human-in-the-Loop (HIL)**: A security layer requiring user approval for "risky" tools.
+*   **Staged Review**: Custom diff view for multi-file changes before final acceptance.
 
 ---
 
-## 💡 Key Coding Patterns
+## ⚡ Performance & Resource Management
 
-1.  **Threading**: Heavy use of `JoinableTaskFactory` to ensure UI interactions happen on the main thread while CPU/IO tasks run on background threads.
-2.  **Normalization**: The `replace_text` tool uses sophisticated normalization to handle line-ending (CRLF vs LF) mismatches between LLM output and Windows files.
-3.  **Deduplication**: The `AgentOrchestrator` implements "Context Compaction" and "System Prompt Deduplication" to keep the LLM context window clean.
-4.  **Security**: Restricted access to the `.localpilot` directory via `IsInternalMetadata` in `ToolRegistry` to prevent agent "self-modification" or leakage of vector data.
-5.  **Synchronization**: Files are read/written via VS TextBuffers when open in the editor to support undo/redo and live synchronization.
+1.  **VRAM Management**: Models are automatically unloaded from VRAM after 5-10 minutes of inactivity using `keep_alive` tuning.
+2.  **I/O Efficiency**: **Incremental Syncing** via `FileSystemWatcher` ensures that only changed files are re-indexed for Nexus and RAG.
+3.  **Parallelization**: Solution-wide scans utilize all available CPU cores via throttled `Parallel.ForEach` to avoid system lag.
+4.  **Context Budgeting**: Agent prompts are kept lean by summarizing the Nexus graph and pruning large tool results (Head/Tail truncation).
+5.  **Quantization Recommendation**: Optimized for **q4_K_M** or **q5_K_M** GGUF models on local laptop hardware.
 
 ---
 
 ## 📂 Project Metadata (Internal)
 
-*   **Directory**: `.localpilot/` (stored in solution root)
-*   **Index**: `index.json` (Semantic embeddings)
-*   **Rules**: `LOCALPILOT.md` (Project-specific instructions for the agent)
+*   **Directory**: `.localpilot/` (solution root)
+*   **Nexus Graph**: `nexus.json` (Cross-language dependency map)
+*   **Vector Index**: `index.json` (Semantic embeddings)
+*   **Rules**: `LOCALPILOT.md` (Project-specific instructions)

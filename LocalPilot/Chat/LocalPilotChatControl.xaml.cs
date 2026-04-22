@@ -370,6 +370,9 @@ namespace LocalPilot.Chat
 
             // Modern introductory text is now partly in XAML, but we can add a greet
             AppendAIBubble("Hi, I am ready to help with your code. Select text and use the actions above, or ask a question below.");
+
+            // 🚀 PERFORMANCE GUIDE: Recommend optimal local settings
+            AppendAIBanner("Laptop Optimization: For best performance, use models with q4_K_M or q5_K_M quantization.", "Dismiss", () => { });
         }
 
         // ── Send message ──────────────────────────────────────────────────────
@@ -526,12 +529,12 @@ namespace LocalPilot.Chat
             if (_currentActivityContainer == null) return;
 
             var node = _agentUiRenderer.CreateWorkRow(label, icon, detail, this.Resources, iconBrush);
-            _currentActivityContainer.Children.Add(node);
+            _currentActivityContainer.Items.Add(node);
 
             // Update ACTIVITY label visibility and counter
             if (_currentActivityLabel is TextBlock tb)
             {
-                int count = _currentActivityContainer.Children.Count;
+                int count = _currentActivityContainer.Items.Count;
                 tb.Text = $"ACTIVITY ({count})";
                 if (tb.Visibility != Visibility.Visible) tb.Visibility = Visibility.Visible;
             }
