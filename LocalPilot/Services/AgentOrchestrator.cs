@@ -89,12 +89,16 @@ namespace LocalPilot.Services
                     LocalPilotLogger.Log($"[Orchestrator] Context Compacted: {originalCount} -> {messages.Count} messages.");
                 }
 
-                // If this is a NEW session, inject the foundational prompts
-                if (!messages.Any(m => m.Role == "system" && m.Content.Contains("Identity")))
-                {
-                    var systemPrompt = PromptLoader.GetPrompt("SystemPrompt", new Dictionary<string, string> { { "solutionPath", solutionPath } });
-                    messages.Insert(0, new ChatMessage { Role = "system", Content = systemPrompt ?? "You are LocalPilot." });
-                }
+                // 🚀 SISTEM PROMPT DEDUPLICATION: Ensure we don't stack duplicate identity prompts
+                // Clear any existing prompts that look like the LocalPilot Identity to prevent bloat
+                messages.RemoveAll(m => m.Role == "system" && 
+                                        (m.Content.Contains("<identity>") || 
+                                         m.Content.Contains("LocalPilot, an elite") ||
+                                         m.Content.Contains("{solutionPath}")));
+
+                // Inject the fresh foundational prompts
+                var systemPrompt = PromptLoader.GetPrompt("SystemPrompt", new Dictionary<string, string> { { "solutionPath", solutionPath } });
+                messages.Insert(0, new ChatMessage { Role = "system", Content = systemPrompt ?? "You are LocalPilot." });
 
                 // Inject project-specific rules if they haven't been added yet
                 if (!messages.Any(m => m.Content.Contains("PROJECT-SPECIFIC RULES")))
@@ -117,8 +121,11 @@ namespace LocalPilot.Services
                 var toolDefinitions = _toolRegistry.GetOllamaToolDefinitions();
                 LocalPilotLogger.Log($"[Agent] Registered {toolDefinitions.Count} native tools for Ollama", LogCategory.Agent);
 
+                // Determine if this is a specialized Quick Action (Explain, Document, etc)
+                bool isQuickAction = !string.IsNullOrEmpty(modelOverride);
+
                 // 🚀 UNIFIED CONTEXT PIPELINE: Proactively gather implicit context (Errors, Git, Symbols)
-                if (!messages.Any(m => m.Content.Contains("ACTIVE DIAGNOSTICS")))
+                if (!isQuickAction && !messages.Any(m => m.Content.Contains("ACTIVE DIAGNOSTICS")))
                 {
                     string unifiedContext = await GetUnifiedContextAsync(solutionPath, ct);
                     if (!string.IsNullOrEmpty(unifiedContext))
@@ -129,19 +136,25 @@ namespace LocalPilot.Services
 
                 if (LocalPilot.Settings.LocalPilotSettings.Instance.EnableProjectMap && !messages.Any(m => m.Content.Contains("PROJECT STRUCTURE")))
                 {
+                    // 🛡️ PERFORMANCE: For Quick Actions, we use a much smaller map or skip it entirely to prevent timeouts
+                    int mapLimit = isQuickAction ? 32 * 1024 : 512 * 1024; // 32KB vs 512KB
+                    
                     OnStatusUpdate?.Invoke(AgentStatus.Thinking, "Analyzing project structure...");
-                    string projectMapContent = await _projectMap.GenerateProjectMapAsync(solutionPath, 2048 * 1024);
+                    string projectMapContent = await _projectMap.GenerateProjectMapAsync(solutionPath, mapLimit);
                     if (!string.IsNullOrEmpty(projectMapContent))
                     {
                         messages.Add(new ChatMessage { Role = "system", Content = $"## PROJECT STRUCTURE\n{projectMapContent}" });
                     }
                 }
                 
-                // Fetch initial grounding context from the project
-                string groundingContext = await _projectContext.SearchContextAsync(_ollama, taskDescription, topN: 5);
-                if (!string.IsNullOrEmpty(groundingContext))
+                // Fetch initial grounding context from the project (Skip for simple Quick Actions)
+                if (!isQuickAction)
                 {
-                    messages.Add(new ChatMessage { Role = "system", Content = $"## GROUNDING CONTEXT (VECTORS)\n{groundingContext}" });
+                    string groundingContext = await _projectContext.SearchContextAsync(_ollama, taskDescription, topN: 5);
+                    if (!string.IsNullOrEmpty(groundingContext))
+                    {
+                        messages.Add(new ChatMessage { Role = "system", Content = $"## GROUNDING CONTEXT (VECTORS)\n{groundingContext}" });
+                    }
                 }
 
                 // Inject Active Document context for better grounding

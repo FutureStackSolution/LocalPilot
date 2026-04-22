@@ -810,7 +810,7 @@ namespace LocalPilot.Chat
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                 
                 string model = LocalPilotSettings.Instance.ChatModel;
-                var statusState = _agentTurnCoordinator.BuildStatusState(model, status, detail);
+                var statusState = _agentTurnCoordinator.BuildStatusState(model, status, detail, _currentAction);
                 _sessionViewModel.AgentTurn.StatusText = statusState.HeaderText;
                 _sessionViewModel.AgentTurn.DetailText = statusState.DetailText;
                 

@@ -16,7 +16,7 @@ namespace LocalPilot.Services
     /// </summary>
     public class OllamaService
     {
-        private static readonly HttpClient _httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
+        private static readonly HttpClient _httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(15) };
         private string _baseUrl;
 
         public OllamaService(string baseUrl = "http://localhost:11434")

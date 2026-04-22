@@ -9,11 +9,30 @@ namespace LocalPilot.Chat.ViewModels
     /// </summary>
     public sealed class AgentTurnCoordinator
     {
-        public AgentStatusViewState BuildStatusState(string modelName, AgentStatus status, string detail)
+        public AgentStatusViewState BuildStatusState(string modelName, AgentStatus status, string detail, string action = null)
         {
             string statusString = status.ToString();
             if (status == AgentStatus.Idle) statusString = "Cancelled";
-            else if (status == AgentStatus.Thinking) statusString = "Thinking";
+            else if (status == AgentStatus.Thinking) 
+            {
+                if (!string.IsNullOrEmpty(action))
+                {
+                    statusString = action.ToLowerInvariant() switch
+                    {
+                        "explain" => "Explaining",
+                        "refactor" => "Refactoring",
+                        "document" => "Documenting",
+                        "test"     => "Generating Tests",
+                        "review"   => "Reviewing",
+                        "fix"      => "Fixing Build",
+                        _          => "Thinking"
+                    };
+                }
+                else
+                {
+                    statusString = "Thinking";
+                }
+            }
             else if (status == AgentStatus.Executing) statusString = "Executing";
             else if (status == AgentStatus.Completed) statusString = "Completed";
 
