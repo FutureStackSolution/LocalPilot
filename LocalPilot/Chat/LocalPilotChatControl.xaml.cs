@@ -84,12 +84,12 @@ namespace LocalPilot.Chat
             _projectMap = new ProjectMapService();
             _agentOrchestrator = new AgentOrchestrator(_ollama, _toolRegistry, ProjectContextService.Instance, _projectMap);
             
-            // 🚀 SENTINEL INITIALIZATION: Connect the error-watchdog to the brain
-            SentinelDebugger.Instance.Initialize(_agentOrchestrator);
-            SentinelDebugger.Instance.OnFixReady += (suggestion) => {
+            // 🚀 SMART FIX INITIALIZATION: Connect the error-watchdog to the brain
+            SmartFixService.Instance.Initialize(_agentOrchestrator);
+            SmartFixService.Instance.OnFixReady += (suggestion) => {
                 _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () => {
                     await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                    AppendAIBanner($"Sentinel detected build error {suggestion.ErrorCode}. Would you like me to analyze and fix it?", "Fix with Autopilot", () => {
+                    AppendAIBanner($"Smart Fix detected build error {suggestion.ErrorCode}. Would you like me to analyze and fix it?", "Fix with Autopilot", () => {
                         _ = RunAgentTaskAsync($"Fix build error {suggestion.ErrorCode}: {suggestion.ErrorMessage} in {suggestion.FilePath}");
                     });
                 });
@@ -158,7 +158,7 @@ namespace LocalPilot.Chat
                 _ = StartBackgroundIndexingAsync();
             }
 
-            // 🚀 PERFORMANCE SENTINEL: Initial scan of the active document
+            // 🚀 PERFORMANCE OPTIMIZER: Initial scan of the active document
             _ = Task.Run(async () => {
                 await Task.Delay(5000); // Wait for warm-up
                 await ScanCurrentFileForPerformanceAsync();
@@ -173,13 +173,13 @@ namespace LocalPilot.Chat
                 if (activeDoc?.FilePath == null) return;
 
                 string content = activeDoc.TextBuffer.CurrentSnapshot.GetText();
-                var issues = await PerformanceSentinel.Instance.AnalyzeFileAsync(activeDoc.FilePath, content);
+                var issues = await PerformanceOptimizer.Instance.AnalyzeFileAsync(activeDoc.FilePath, content);
 
                 if (issues.Any())
                 {
                     var primary = issues.First();
                     await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                    AppendAIBanner($"Performance Sentinel found a bottleneck in {System.IO.Path.GetFileName(primary.FilePath)}: {primary.Title}.", "Optimize with AI", () => {
+                    AppendAIBanner($"Performance Optimizer found a bottleneck in {System.IO.Path.GetFileName(primary.FilePath)}: {primary.Title}.", "Optimize with AI", () => {
                         _ = RunAgentTaskAsync($"Analyze and optimize the {primary.Title} issue at line {primary.Line} in {primary.FilePath}. {primary.Description}");
                     });
                 }
@@ -2016,7 +2016,7 @@ namespace LocalPilot.Chat
 
             var sp = new StackPanel { Orientation = Orientation.Horizontal };
             
-            // Sentinel Shield Icon
+            // Smart Fix Shield Icon
             sp.Children.Add(new TextBlock
             {
                 Text = "\uE73E", // Shield icon
@@ -2030,7 +2030,7 @@ namespace LocalPilot.Chat
             var contentStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
             contentStack.Children.Add(new TextBlock
             {
-                Text = "SENTINEL SUGGESTION",
+                Text = "SMART FIX SUGGESTION",
                 FontSize = 10,
                 FontWeight = FontWeights.Bold,
                 Foreground = (Brush)this.Resources["LpMutedFgBrush"],

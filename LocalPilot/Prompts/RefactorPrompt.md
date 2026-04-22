@@ -1,7 +1,7 @@
 <task_type>refactoring</task_type>
 
 <instruction>
-Refactor the provided code block using the Sentinel Protocol.
+Refactor the provided code block using the Smart Fix Protocol.
 1. HYPOTHESIZE: State what design principle (SOLID, DRY) is being improved and why.
 2. EXECUTE: Perform the refactor while maintaining existing behavior exactly.
 3. VERIFY: Immediately run `list_errors` to ensure no regressions were introduced.

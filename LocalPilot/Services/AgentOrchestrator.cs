@@ -587,15 +587,15 @@ namespace LocalPilot.Services
                             }
 
                             // 🚀 AUTO-VERIFICATION: If we edited code, immediately check for errors
-                            // 🚀 SELF-HEAL ENGINE (Sentinel Protocol): If we edited code, immediately check for new errors
+                            // 🚀 SELF-HEAL ENGINE (Smart Fix Protocol): If we edited code, immediately check for new errors
                             if (isWrite)
                             {
                                 var diagResult = await GetVisibleDiagnosticsAsync(ct);
                                 bool hasErrors = !string.IsNullOrEmpty(diagResult);
                                 
                                 string verificationMsg = hasErrors
-                                    ? $"[SENTINEL] Build errors detected:\n{diagResult}\n\nFix or revert now."
-                                    : "[SENTINEL] Verified: No compilation errors.";
+                                    ? $"[SMART FIX] Build errors detected:\n{diagResult}\n\nFix or revert now."
+                                    : "[SMART FIX] Verified: No compilation errors.";
                                 
                                 lock (messages)
                                 {
@@ -604,7 +604,7 @@ namespace LocalPilot.Services
                                 
                                 if (hasErrors) 
                                 {
-                                    LocalPilotLogger.Log("[Agent] Build errors detected after write. Triggering Self-Heal protocol feedback.", LogCategory.Build, LogSeverity.Warning);
+                                    LocalPilotLogger.Log("[Agent] Build errors detected after write. Triggering Smart Fix protocol feedback.", LogCategory.Build, LogSeverity.Warning);
                                 }
                                 else
                                 {
@@ -795,7 +795,7 @@ namespace LocalPilot.Services
         {
             var sb = new System.Text.StringBuilder();
 
-            // 1. 🛡️ ENVIRONMENT SENTINEL: Host & Framework Details
+            // 1. 🛡️ ENVIRONMENT SMART FIX: Host & Framework Details
             try {
                  await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                  var dte = Microsoft.VisualStudio.Shell.Package.GetGlobalService(typeof(global::EnvDTE.DTE)) as global::EnvDTE80.DTE2;

@@ -12,7 +12,7 @@ using EnvDTE80;
 
 namespace LocalPilot.Services
 {
-    public class SentinelFixSuggestion
+    public class SmartFixSuggestion
     {
         public string ErrorCode { get; set; }
         public string ErrorMessage { get; set; }
@@ -23,18 +23,18 @@ namespace LocalPilot.Services
     }
 
     /// <summary>
-    /// The 'Sentinel Debugger' - Proactively monitors the error list 
+    /// The 'Smart Fix' - Proactively monitors the error list 
     /// and prepares background fixes for build errors.
     /// </summary>
-    public class SentinelDebugger
+    public class SmartFixService
     {
-        private static readonly Lazy<SentinelDebugger> _instance = new Lazy<SentinelDebugger>(() => new SentinelDebugger());
-        public static SentinelDebugger Instance => _instance.Value;
+        private static readonly Lazy<SmartFixService> _instance = new Lazy<SmartFixService>(() => new SmartFixService());
+        public static SmartFixService Instance => _instance.Value;
 
         private DTE2 _dte;
-        public event Action<SentinelFixSuggestion> OnFixReady;
+        public event Action<SmartFixSuggestion> OnFixReady;
 
-        private SentinelDebugger()
+        private SmartFixService()
         {
         }
 
@@ -61,25 +61,15 @@ namespace LocalPilot.Services
                     };
                 }
 
-                LocalPilotLogger.Log("[Sentinel] Debugger Active. Monitoring builds and runtime crashes.");
+                LocalPilotLogger.Log("[SmartFix] Service Active. Monitoring builds and runtime crashes.");
             });
-        }
-
-        private void OnExceptionThrown(string exceptionType, string exceptionMessage)
-        {
-            HandleRuntimeExceptionAsync(exceptionType, exceptionMessage, "Thrown").FireAndForget();
-        }
-
-        private void OnExceptionNotHandled(string exceptionType, string exceptionMessage)
-        {
-            HandleRuntimeExceptionAsync(exceptionType, exceptionMessage, "UnHandled").FireAndForget();
         }
 
         private async Task HandleRuntimeExceptionAsync(string type, string message, string mode)
         {
-            LocalPilotLogger.Log($"[Sentinel] Runtime crash detected ({mode}): {type}. Analyzing state...", category: LogCategory.Context);
+            LocalPilotLogger.Log($"[SmartFix] Runtime crash detected ({mode}): {type}. Analyzing state...", category: LogCategory.Context);
 
-            var suggestion = new SentinelFixSuggestion
+            var suggestion = new SmartFixSuggestion
             {
                 ErrorCode = type,
                 ErrorMessage = message,
@@ -119,9 +109,9 @@ namespace LocalPilot.Services
                 
                 if (primaryError == null) return;
 
-                LocalPilotLogger.Log($"[Sentinel] Build failed with error {primaryError.Description}. Analyzing root cause...", category: LogCategory.Build);
+                LocalPilotLogger.Log($"[SmartFix] Build failed with error {primaryError.Description}. Analyzing root cause...", category: LogCategory.Build);
 
-                var suggestion = new SentinelFixSuggestion
+                var suggestion = new SmartFixSuggestion
                 {
                     ErrorCode = "BuildError",
                     ErrorMessage = primaryError.Description,
@@ -134,11 +124,11 @@ namespace LocalPilot.Services
             }
             catch (Exception ex)
             {
-                LocalPilotLogger.LogError("[Sentinel] Error analysis failed", ex, category: LogCategory.Build);
+                LocalPilotLogger.LogError("[SmartFix] Error analysis failed", ex, category: LogCategory.Build);
             }
         }
 
-        public async Task<string> GenerateDraftFixAsync(AgentOrchestrator orchestrator, SentinelFixSuggestion suggestion, CancellationToken ct)
+        public async Task<string> GenerateDraftFixAsync(AgentOrchestrator orchestrator, SmartFixSuggestion suggestion, CancellationToken ct)
         {
             if (suggestion == null) return "No active error to fix.";
 
@@ -146,7 +136,7 @@ namespace LocalPilot.Services
                             $"Analyze the surrounding files and propose a surgical fix. Focus ONLY on fixing this error.";
 
             await orchestrator.RunTaskAsync(prompt, new List<ChatMessage>(), ct);
-            return "Sentinel fix drafted.";
+            return "Smart Fix drafted.";
         }
     }
 }

@@ -74,9 +74,9 @@
     <Compile Include="Services\LspSemanticProvider.cs" />
     <Compile Include="Services\LocalParserProvider.cs" />
     <Compile Include="Services\HistoryCompactor.cs" />
-    <Compile Include="Services\PerformanceSentinel.cs" />
+    <Compile Include="Services\PerformanceOptimizer.cs" />
     <Compile Include="Services\PerformanceTracer.cs" />
-    <Compile Include="Services\SentinelDebugger.cs" />
+    <Compile Include="Services\SmartFixService.cs" />
     <Compile Include="Services\UniversalSemanticProvider.cs" />
     <!-- Models -->
     <Compile Include="Models\AgentModels.cs" />

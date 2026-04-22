@@ -46,7 +46,7 @@ namespace LocalPilot.Services
         {
             if (!LocalPilotSettings.Instance.EnableLogging && severity != LogSeverity.Error)
             {
-                // Specialized routing: even if logging is off, we still route to Watchdog if it's a Sentinel event during Debugging
+                // Specialized routing: even if logging is off, we still route to Watchdog if it's a Smart Fix event during Debugging
                 if (category != LogCategory.Build && category != LogCategory.Agent) return;
             }
 

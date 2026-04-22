@@ -19,13 +19,13 @@ namespace LocalPilot.Services
     }
 
     /// <summary>
-    /// The 'Performance Sentinel' - Scans active files for O(n^2) patterns, 
+    /// The 'Performance Optimizer' - Scans active files for O(n^2) patterns, 
     /// blocking async calls, and high-allocation anti-patterns.
     /// </summary>
-    public class PerformanceSentinel
+    public class PerformanceOptimizer
     {
-        private static readonly Lazy<PerformanceSentinel> _instance = new Lazy<PerformanceSentinel>(() => new PerformanceSentinel());
-        public static PerformanceSentinel Instance => _instance.Value;
+        private static readonly Lazy<PerformanceOptimizer> _instance = new Lazy<PerformanceOptimizer>(() => new PerformanceOptimizer());
+        public static PerformanceOptimizer Instance => _instance.Value;
 
         public async Task<List<PerformanceIssue>> AnalyzeFileAsync(string filePath, string sourceCode)
         {
