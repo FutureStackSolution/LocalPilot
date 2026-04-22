@@ -116,9 +116,23 @@ namespace LocalPilot.Chat.ViewModels
 
             if (statusState.LatencyMs > 0)
             {
+                string timeDisplay;
+                if (statusState.LatencyMs < 1000)
+                {
+                    timeDisplay = $"{statusState.LatencyMs}ms";
+                }
+                else if (statusState.LatencyMs < 60000)
+                {
+                    timeDisplay = $"{(statusState.LatencyMs / 1000.0):F1}s";
+                }
+                else
+                {
+                    timeDisplay = $"{(statusState.LatencyMs / 60000.0):F1}m";
+                }
+
                 sp.Children.Add(new TextBlock
                 {
-                    Text = $"  {statusState.LatencyMs}ms · {statusState.TokenCount} tokens",
+                    Text = $"  {timeDisplay} · {statusState.TokenCount} tokens",
                     FontSize = 10,
                     Foreground = resources["LpMutedFgBrush"] as Brush,
                     VerticalAlignment = VerticalAlignment.Center,

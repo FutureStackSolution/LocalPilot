@@ -89,6 +89,21 @@ namespace LocalPilot.Services
             {
                 LocalPilotLogger.Log($"[ProjectMap] Generating High-Signal YAML snapshot of {rootPath}...");
                 
+                // 🚀 PERFORMANCE FIX: Grab all open document views ONCE on the Main Thread
+                // to avoid switching 400+ times in the loop below.
+                var openDocContents = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                try {
+                    await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    var openDocs = await Community.VisualStudio.Toolkit.VS.Documents.GetOpenDocumentViewsAsync();
+                    foreach (var doc in openDocs)
+                    {
+                        if (doc?.FilePath != null)
+                        {
+                            openDocContents[doc.FilePath] = doc.TextBuffer.CurrentSnapshot.GetText();
+                        }
+                    }
+                } catch { /* Fail gracefully, we will fallback to disk */ }
+
                 var sb = new StringBuilder();
                 sb.AppendLine("## WORKSPACE EXECUTIVE SUMMARY (YAML)");
                 sb.AppendLine($"# Generated: {DateTime.Now:O}");
@@ -97,12 +112,10 @@ namespace LocalPilot.Services
 
                 var directoryInfo = new DirectoryInfo(rootPath);
                 var files = GetProjectFiles(directoryInfo).ToList();
-                // sb.AppendLine($"## PROJECT MAP (ROOT: {rootPath})");
 
                 foreach (var file in files)
                 {
                     string relativePath = GetRelativePath(rootPath, file.FullName);
-                    string ext = Path.GetExtension(file.FullName).ToLowerInvariant();
                     
                     // 🚀 COMPACT NODE REPRESENTATION
                     sb.AppendLine($"- File: {relativePath}");
@@ -121,7 +134,8 @@ namespace LocalPilot.Services
                     }
 
                     // Shallow content preview (optimized for local LLM token density)
-                    string head = await ReadFilePrefixAsync(file.FullName, maxBytesPerFile);
+                    // 🚀 PERFORMANCE FIX: Pass the pre-fetched contents to avoid context switching
+                    string head = await ReadFilePrefixAsync(file.FullName, maxBytesPerFile, openDocContents);
                     if (!string.IsNullOrEmpty(head) && head != "[Binary/Excluded]")
                     {
                         string sanitized = head.Replace("\r", "").Replace("\n", " ").Replace("  ", " ");
@@ -193,15 +207,27 @@ namespace LocalPilot.Services
             return segments.Any(s => ExcludedDirs.Contains(s, StringComparer.OrdinalIgnoreCase));
         }
 
-        public async Task<string> GetLiveContentAsync(string filePath)
+        public async Task<string> GetLiveContentAsync(string filePath, Dictionary<string, string> preFetched = null)
         {
+            if (preFetched != null && preFetched.TryGetValue(filePath, out var content))
+                return content;
+
             try
             {
-                await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                var doc = await Community.VisualStudio.Toolkit.VS.Documents.GetDocumentViewAsync(filePath);
-                if (doc?.TextBuffer != null)
+                if (Microsoft.VisualStudio.Shell.ThreadHelper.CheckAccess())
                 {
-                    return doc.TextBuffer.CurrentSnapshot.GetText();
+                    var doc = await Community.VisualStudio.Toolkit.VS.Documents.GetDocumentViewAsync(filePath);
+                    if (doc?.TextBuffer != null) return doc.TextBuffer.CurrentSnapshot.GetText();
+                }
+                else
+                {
+                    // If we're not on the main thread and don't have pre-fetched data, 
+                    // we'll try to jump to UI thread once, but this is what we want to avoid in loops.
+                    return await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.RunAsync(async () => {
+                        await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                        var doc = await Community.VisualStudio.Toolkit.VS.Documents.GetDocumentViewAsync(filePath);
+                        return doc?.TextBuffer?.CurrentSnapshot?.GetText();
+                    }) ?? await Task.Run(() => File.ReadAllText(filePath));
                 }
             }
             catch { /* Fallback to disk */ }
@@ -209,21 +235,21 @@ namespace LocalPilot.Services
             return await Task.Run(() => File.ReadAllText(filePath));
         }
 
-        public async Task<Stream> GetLiveStreamAsync(string filePath)
+        public async Task<Stream> GetLiveStreamAsync(string filePath, Dictionary<string, string> preFetched = null)
         {
             // 🛡️ MEMORY CEILING FIX: Convert live content to stream
-            string content = await GetLiveContentAsync(filePath);
+            string content = await GetLiveContentAsync(filePath, preFetched);
             return new MemoryStream(Encoding.UTF8.GetBytes(content));
         }
 
-        private async Task<string> ReadFilePrefixAsync(string filePath, int bytesToRead)
+        private async Task<string> ReadFilePrefixAsync(string filePath, int bytesToRead, Dictionary<string, string> preFetched = null)
         {
             try
             {
                 if (IsBinaryFile(filePath)) return "[Binary/Excluded]";
 
                 // 🚀 SENIOR ARCHITECT FIX: Prioritize Live Buffer over Disk
-                string content = await GetLiveContentAsync(filePath);
+                string content = await GetLiveContentAsync(filePath, preFetched);
                 
                 string text = content.Length > bytesToRead ? content.Substring(0, bytesToRead) : content;
                 

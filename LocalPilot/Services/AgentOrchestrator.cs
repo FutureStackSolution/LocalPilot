@@ -311,7 +311,7 @@ namespace LocalPilot.Services
             while (!isDone && step < maxSteps)
             {
                 step++;
-                OnStatusUpdate?.Invoke(AgentStatus.Thinking, string.Empty);
+                OnStatusUpdate?.Invoke(AgentStatus.Thinking, "Analyzing context and planning next step...");
 
                 // 1. Get LLM response with native tool support
                 var responseBuilder = new System.Text.StringBuilder();

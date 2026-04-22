@@ -89,6 +89,8 @@ namespace LocalPilot.Chat
             SmartFixService.Instance.OnFixReady += (suggestion) => {
                 _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () => {
                     await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    if (_isStreaming) return;
+                    
                     AppendAIBanner($"Smart Fix detected build error {suggestion.ErrorCode}. Would you like me to analyze and fix it?", "Fix with Autopilot", () => {
                         _ = RunAgentTaskAsync($"Fix build error {suggestion.ErrorCode}: {suggestion.ErrorMessage} in {suggestion.FilePath}");
                     });
@@ -167,6 +169,8 @@ namespace LocalPilot.Chat
 
         private async Task ScanCurrentFileForPerformanceAsync()
         {
+            if (_isStreaming) return;
+
             try
             {
                 var activeDoc = await VS.Documents.GetActiveDocumentViewAsync();
@@ -494,7 +498,13 @@ namespace LocalPilot.Chat
         {
             _currentChunkSb.Clear();
             _currentNarrativeContainer = null;
-            var layout = _agentTurnLayoutBuilder.BuildTurnLayout(() => CreateAIHeader(out _), this.Resources);
+            
+            // 🚀 PERFORMANCE FEEDBACK: Initialize with a 'Thinking' status immediately
+            string initialStatus = _currentAction != null ? 
+                _agentTurnCoordinator.BuildStatusState(LocalPilotSettings.Instance.ChatModel, AgentStatus.Thinking, string.Empty, _currentAction).HeaderText :
+                "Thinking...";
+
+            var layout = _agentTurnLayoutBuilder.BuildTurnLayout(() => CreateAIHeader(out _, initialStatus), this.Resources);
             _agentTurnContainer = layout.TurnContainer;
             _agentCurrentContainer = layout.CurrentContainer;
             _currentActivityContainer = layout.ActivityContainer;
@@ -504,6 +514,10 @@ namespace LocalPilot.Chat
             _currentActivityLabel = layout.ActivityLabel;
 
             MessagesContainer.Children.Add(_agentTurnContainer);
+            
+            // Ensure status bar reflects the new turn
+            AgentStatusBar.Visibility = Visibility.Visible;
+            
             ChatScroll.ScrollToEnd();
         }
 
@@ -905,15 +919,34 @@ namespace LocalPilot.Chat
                     return;
                 }
 
+                if (_history.Count == 0 && WelcomePanel.Visibility == Visibility.Visible)
+                    WelcomePanel.Visibility = Visibility.Collapsed;
+
+                _currentAction = action; // 🚀 STORE THE ACTION CONTEXT
                 _lastAuthoringCode = selectedCode; // 🛡️ Buffer for Diff View logic
 
                 // 2. Prepare Prompt
                 string prompt = BuildActionPrompt(action, selectedCode);
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                 
-                // 3. UI Update: Show the user's request as a slash command for visual consistency
+                // 3. UI Update: Show the user's request with context for visual clarity
+                string fileName = string.Empty;
+                try {
+                    var doc = await VS.Documents.GetActiveDocumentViewAsync();
+                    if (doc != null) fileName = System.IO.Path.GetFileName(doc.FilePath);
+                } catch { }
+
                 TxtInput.Clear();
-                AppendUserBubble($"/{action}");
+                
+                // 🚀 ENHANCED FEEDBACK: Show the filename and a small snippet of the selection
+                string preview = (selectedCode ?? "").Trim().Replace("\r", "").Replace("\n", " ");
+                if (preview.Length > 80) preview = preview.Substring(0, 77) + "...";
+
+                string displayMessage = $"/{action}";
+                if (!string.IsNullOrEmpty(fileName)) displayMessage += $" on **{fileName}**";
+                if (!string.IsNullOrEmpty(preview)) displayMessage += $"\n\n> {preview}";
+
+                AppendUserBubble(displayMessage);
                 
                 // 4. Trigger Agent Task with specialized model
                 string specializedModel = GetActionModel(action);
@@ -2004,6 +2037,9 @@ namespace LocalPilot.Chat
         }
         private void AppendAIBanner(string text, string buttonText, Action onButtonClick)
         {
+            // 🛡️ DYNAMIC SUPPRESSION: Don't interrupt the user if the agent is already busy
+            if (_isStreaming) return;
+
              var banner = new Border
             {
                 Background = (Brush)this.Resources["LpBannerBgBrush"],
@@ -2014,53 +2050,75 @@ namespace LocalPilot.Chat
                 Margin = new Thickness(0, 8, 0, 8)
             };
 
-            var sp = new StackPanel { Orientation = Orientation.Horizontal };
+            // 🚀 GRID LAYOUT: Required for proper text wrapping in fluid containers
+            var grid = new Grid();
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); // Icon
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); // Content
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); // Actions
             
-            // Smart Fix Shield Icon
-            sp.Children.Add(new TextBlock
+            // 1. Icon (Shield)
+            var icon = new TextBlock
             {
                 Text = "\uE73E", // Shield icon
                 FontFamily = new FontFamily("Segoe MDL2 Assets"),
                 FontSize = 18,
                 Foreground = (Brush)this.Resources["LpAccentBrush"],
                 Margin = new Thickness(0, 0, 16, 0),
-                VerticalAlignment = VerticalAlignment.Center
-            });
+                VerticalAlignment = VerticalAlignment.Top
+            };
+            Grid.SetColumn(icon, 0);
+            grid.Children.Add(icon);
 
-            var contentStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+            // 2. Content Stack (Title + Wrapped Text)
+            var contentStack = new StackPanel { VerticalAlignment = VerticalAlignment.Top };
             contentStack.Children.Add(new TextBlock
             {
                 Text = "SMART FIX SUGGESTION",
                 FontSize = 10,
                 FontWeight = FontWeights.Bold,
                 Foreground = (Brush)this.Resources["LpMutedFgBrush"],
-                Margin = new Thickness(0, 0, 0, 2)
+                Margin = new Thickness(0, 0, 0, 4)
             });
             contentStack.Children.Add(new TextBlock
             {
                 Text = text,
                 FontSize = 12,
                 TextWrapping = TextWrapping.Wrap,
-                Foreground = (Brush)this.Resources["LpWindowFgBrush"]
+                Foreground = (Brush)this.Resources["LpWindowFgBrush"],
+                LineHeight = 18
             });
+            Grid.SetColumn(contentStack, 1);
+            grid.Children.Add(contentStack);
+
+            // 3. Action Buttons (Fix + Ignore)
+            var buttonStack = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(16, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
             
-            var btn = new Button
+            var btnIgnore = new Button
+            {
+                Content = "Ignore",
+                Style = (Style)this.Resources["LpSecondaryActionButtonStyle"],
+                Margin = new Thickness(0, 0, 8, 0),
+                Padding = new Thickness(10, 4, 10, 4)
+            };
+            btnIgnore.Click += (s, e) => { MessagesContainer.Children.Remove(banner); };
+            buttonStack.Children.Add(btnIgnore);
+
+            var btnFix = new Button
             {
                 Content = buttonText,
                 Style = (Style)this.Resources["LpPrimaryActionButtonStyle"],
-                Margin = new Thickness(16, 0, 0, 0),
-                Padding = new Thickness(12, 6, 12, 6),
-                VerticalAlignment = VerticalAlignment.Center
+                Padding = new Thickness(12, 6, 12, 6)
             };
-            btn.Click += (s, e) => {
+            btnFix.Click += (s, e) => {
                 MessagesContainer.Children.Remove(banner);
                 onButtonClick();
             };
+            buttonStack.Children.Add(btnFix);
 
-            sp.Children.Add(contentStack);
-            sp.Children.Add(btn);
-            banner.Child = sp;
+            Grid.SetColumn(buttonStack, 2);
+            grid.Children.Add(buttonStack);
 
+            banner.Child = grid;
             MessagesContainer.Children.Add(banner);
             ChatScroll.ScrollToEnd();
         }

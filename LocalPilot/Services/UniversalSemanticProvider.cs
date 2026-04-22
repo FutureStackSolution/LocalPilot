@@ -60,9 +60,21 @@ namespace LocalPilot.Services
                     case ".tsx":
                     case ".js":
                     case ".jsx":
-                        var webMatches = Regex.Matches(content, @"export\s+(?:class|interface|type|const|function|enum)\s+(?<name>[a-zA-Z_]\w*)");
+                        // 🚀 WEB HEURISTICS: Deep scanning for React/Angular/Vue
+                        var webMatches = Regex.Matches(content, @"(?:export\s+)?(?:class|interface|type|const|function|enum)\s+(?<name>[a-zA-Z_]\w*)");
                         foreach (Match m in webMatches) sb.AppendLine($" - Symbol: {m.Groups["name"].Value}");
-                        if (content.Contains("useEffect") || content.Contains("useState")) sb.AppendLine(" - Tech: React (Functional/Hooks)");
+                        
+                        // React Specifics
+                        if (content.Contains("useEffect") || content.Contains("useState") || content.Contains("useContext") || content.Contains("useMemo") || content.Contains("useCallback"))
+                            sb.AppendLine(" - Tech: React (Functional/Hooks)");
+                        
+                        // Angular Specifics
+                        if (content.Contains("@Component") || content.Contains("@Injectable") || content.Contains("@Directive") || content.Contains("@NgModule"))
+                            sb.AppendLine(" - Tech: Angular (Decorator-driven)");
+                        
+                        // Import Context (Top 5 libraries)
+                        var imports = Regex.Matches(content, @"from\s+['""](?<lib>[\w@\/\-]+)['""]").Cast<Match>().Select(m => m.Groups["lib"].Value).Distinct().Take(5);
+                        if (imports.Any()) sb.AppendLine(" - Imports: " + string.Join(", ", imports));
                         break;
 
                     case ".py":
