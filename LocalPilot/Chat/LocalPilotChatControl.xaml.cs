@@ -55,7 +55,7 @@ namespace LocalPilot.Chat
         private DateTime _lastUiUpdateTime = DateTime.MinValue;
         private StringBuilder _currentChunkSb = new StringBuilder(); // 🚀 Text since last activity
         private StackPanel _currentNarrativeContainer = null;
-        private StackPanel _currentActivityContainer;
+        private ItemsControl _currentActivityContainer;
         private ScrollViewer _currentActivityScroller;
         private FrameworkElement _currentNarrativeLabel;
         private FrameworkElement _currentActivityLabel;

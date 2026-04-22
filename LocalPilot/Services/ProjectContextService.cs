@@ -122,7 +122,7 @@ namespace LocalPilot.Services
             _watcher.Changed += (s, e) => { if (IsRelevantFile(e.FullPath)) _pendingFiles.TryAdd(e.FullPath, 0); };
             
             // Start background consumer for incremental RAG
-            Task.Run(async () => {
+            _ = Task.Run(async () => {
                 while (!_watcherCts.Token.IsCancellationRequested)
                 {
                     if (!_pendingFiles.IsEmpty)
