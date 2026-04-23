@@ -98,6 +98,8 @@
         <CommandFlag>DynamicVisibility</CommandFlag>
       </Button>
 
+      <!-- Inline Chat removed from context menu per user request to declutter -->
+
       <Button guid="guidLocalPilotCmdSet" id="cmdidOpenOptions" priority="0x0107" type="Button">
         <Parent guid="guidLocalPilotCmdSet" id="LocalPilotMenuGroup"/>
         <Strings>
@@ -164,6 +166,7 @@
   <!-- Global Hotkeys for summoned AI -->
   <KeyBindings>
     <KeyBinding guid="guidLocalPilotCmdSet" id="cmdidOpenChat" editor="guidVSStd97" key1="L" mod1="Alt"/>
+    <!-- Inline Chat KeyBinding removed per user request -->
   </KeyBindings>
 
 </CommandTable>

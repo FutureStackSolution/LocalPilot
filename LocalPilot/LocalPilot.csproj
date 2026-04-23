@@ -20,6 +20,9 @@
     <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
     <LangVersion>latest</LangVersion>
     <GeneratePkgDefFile>true</GeneratePkgDefFile>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <GenerateBindingRedirectsOutputType>true</GenerateBindingRedirectsOutputType>
+    <NoWarn>$(NoWarn);MSB3277</NoWarn>
     <UseCodebase>true</UseCodebase>
     <IncludeAssemblyInVSIXContainer>true</IncludeAssemblyInVSIXContainer>
     <IncludeDebugSymbolsInVSIXContainer>false</IncludeDebugSymbolsInVSIXContainer>
@@ -56,16 +59,34 @@
     <Compile Include="LocalPilotPackage.cs" />
     <!-- Services -->
     <Compile Include="Services\OllamaService.cs" />
+    <Compile Include="Services\NexusService.cs" />
     <Compile Include="Services\LocalPilotLogger.cs" />
     <Compile Include="Services\ProjectContextService.cs" />
     <Compile Include="Services\AgentOrchestrator.cs" />
+    <Compile Include="Services\LocalPilotCommandRouter.cs" />
+    <Compile Include="Services\ProjectMapService.cs" />
     <Compile Include="Services\ToolRegistry.cs" />
+    <Compile Include="Services\SymbolIndexService.cs" />
+    <Compile Include="Services\PromptLoader.cs" />
+    <Compile Include="Services\CapabilityCatalog.cs" />
+    <Compile Include="Services\ISemanticProvider.cs" />
+    <Compile Include="Services\RoslynSemanticProvider.cs" />
+    <Compile Include="Services\LspSemanticProvider.cs" />
+    <Compile Include="Services\LocalParserProvider.cs" />
+    <Compile Include="Services\HistoryCompactor.cs" />
+    <Compile Include="Services\PerformanceOptimizer.cs" />
+    <Compile Include="Services\PerformanceTracer.cs" />
+    <Compile Include="Services\SmartFixService.cs" />
+    <Compile Include="Services\UniversalSemanticProvider.cs" />
+    <Compile Include="Services\GlobalPriorityGuard.cs" />
     <!-- Models -->
     <Compile Include="Models\AgentModels.cs" />
+    <Compile Include="Models\NexusModels.cs" />
     <!-- Settings -->
     <Compile Include="Settings\LocalPilotSettings.cs" />
     <!-- Options -->
     <Compile Include="Options\LocalPilotOptionsPage.cs" />
+    <Compile Include="Options\LocalPilotAdvancedOptionsPage.cs" />
     <Compile Include="Options\LocalPilotOptionsControl.xaml.cs">
       <DependentUpon>LocalPilotOptionsControl.xaml</DependentUpon>
     </Compile>
@@ -80,6 +101,11 @@
     <Compile Include="Chat\LocalPilotChatControl.xaml.cs">
       <DependentUpon>LocalPilotChatControl.xaml</DependentUpon>
     </Compile>
+    <Compile Include="Chat\ViewModels\AgentTurnViewModel.cs" />
+    <Compile Include="Chat\ViewModels\AgentTurnCoordinator.cs" />
+    <Compile Include="Chat\ViewModels\AgentTurnLayoutBuilder.cs" />
+    <Compile Include="Chat\ViewModels\AgentUiRenderer.cs" />
+    <Compile Include="Chat\ViewModels\ChatSessionViewModel.cs" />
     <!-- Commands -->
     <Compile Include="Commands\LocalPilotCommands.cs" />
   </ItemGroup>
@@ -109,7 +135,23 @@
     <Content Include="Assets\Logo_Concept_Minimalist.png">
       <IncludeInVSIX>true</IncludeInVSIX>
     </Content>
+    <Content Include="Prompts\*.md">
+      <IncludeInVSIX>true</IncludeInVSIX>
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="Prompts\CompletionPrompt.md">
+      <IncludeInVSIX>true</IncludeInVSIX>
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
+  <!-- 🛡️ ATTENTION: System Exclusion for Absolute Autonomy -->
+  <ItemGroup>
+    <None Remove=".localpilot\**" />
+    <Compile Remove=".localpilot\**" />
+    <EmbeddedResource Remove=".localpilot\**" />
+    <Content Remove=".localpilot\**" />
+  </ItemGroup>
+  <!-- ────────────────────────────────────────────────── -->
   <!-- ── Framework References ──────────────────────────────────────────────── -->
   <ItemGroup>
     <Reference Include="System" />
@@ -131,6 +173,9 @@
     <PackageReference Include="Newtonsoft.Json" Version="13.0.1" />
     <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="9.0.0" />
     <PackageReference Include="System.Runtime.CompilerServices.Unsafe" Version="6.1.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="4.8.0" />
+    <PackageReference Include="Microsoft.VisualStudio.LanguageServices" Version="4.8.0" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <Import Project="$(UserProfile)\.nuget\packages\microsoft.vssdk.buildtools\17.1.4054\tools\vssdk\Microsoft.VsSDK.targets" Condition="Exists('$(UserProfile)\.nuget\packages\microsoft.vssdk.buildtools\17.1.4054\tools\vssdk\Microsoft.VsSDK.targets')" />

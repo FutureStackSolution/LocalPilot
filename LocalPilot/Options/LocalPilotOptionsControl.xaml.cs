@@ -32,6 +32,17 @@ namespace LocalPilot.Options
             });
         }
 
+        /// <summary>
+        /// Programmatically switch to a specific tab (0=General, 1=Advanced)
+        /// </summary>
+        public void SetSelectedTab(int index)
+        {
+            if (MainTabControl != null && index >= 0 && index < MainTabControl.Items.Count)
+            {
+                MainTabControl.SelectedIndex = index;
+            }
+        }
+
         private void OnUnloaded(object sender, RoutedEventArgs e)
         {
             _cts?.Cancel();
@@ -59,15 +70,10 @@ namespace LocalPilot.Options
         {
             TxtBaseUrl.Text          = s.OllamaBaseUrl;
 
-            // Sliders
-            SldrDelay.Value          = s.CompletionDelayMs;
-            SldrMaxTokens.Value      = s.MaxCompletionTokens;
-            SldrMaxChatTokens.Value  = s.MaxChatTokens;
-            SldrTemp.Value           = s.Temperature;
+            
+            // Intelligence Mode
+            CmbPerformanceMode.SelectedIndex = (int)s.Mode;
 
-            // Context
-            TxtContextBefore.Text   = s.ContextLinesBefore.ToString();
-            TxtContextAfter.Text    = s.ContextLinesAfter.ToString();
 
             // Toggles
             ChkEnableInline.IsChecked = s.EnableInlineCompletion;
@@ -81,16 +87,9 @@ namespace LocalPilot.Options
             ChkStatusBar.IsChecked    = s.ShowStatusBar;
             ChkEnableLogging.IsChecked = s.EnableLogging;
 
+            ChkEnableProjectMap.IsChecked = s.EnableProjectMap;
+
             TxtChatHistory.Text       = s.ChatHistoryMaxItems.ToString();
-            
-            // 📝 Prompts
-            TxtSystemPrompt.Text      = s.SystemPrompt;
-            TxtExplainPrompt.Text     = s.ExplainPrompt;
-            TxtRefactorPrompt.Text    = s.RefactorPrompt;
-            TxtDocumentPrompt.Text    = s.DocumentPrompt;
-            TxtReviewPrompt.Text      = s.ReviewPrompt;
-            TxtFixPrompt.Text         = s.FixPrompt;
-            TxtTestPrompt.Text        = s.TestPrompt;
 
             // Populate model combos with current value; 
             // full list populated after async fetch
@@ -116,48 +115,34 @@ namespace LocalPilot.Options
         {
             var s = LocalPilotSettings.Instance;
 
-            s.OllamaBaseUrl         = TxtBaseUrl.Text.Trim();
-            s.CompletionDelayMs     = (int)SldrDelay.Value;
-            s.MaxCompletionTokens   = (int)SldrMaxTokens.Value;
-            s.MaxChatTokens         = (int)SldrMaxChatTokens.Value;
-            s.Temperature           = Math.Round(SldrTemp.Value, 2);
+            // Only save fields from the active tab to prevent multi-page overwrites
+            if (MainTabControl.SelectedIndex == 0) // General
+            {
+                s.OllamaBaseUrl = TxtBaseUrl.Text.Trim();
+                s.EnableInlineCompletion = ChkEnableInline.IsChecked == true;
+                s.ShowCompletionGhost    = ChkShowGhost.IsChecked    == true;
+                s.EnableExplain          = ChkExplain.IsChecked      == true;
+                s.EnableRefactor         = ChkRefactor.IsChecked     == true;
+                s.EnableDocGen           = ChkDocGen.IsChecked       == true;
+                s.EnableReview           = ChkReview.IsChecked       == true;
+                s.EnableFix              = ChkFix.IsChecked          == true;
+                s.EnableUnitTest         = ChkUnitTest.IsChecked     == true;
+                s.ShowStatusBar          = ChkStatusBar.IsChecked    == true;
+                s.EnableLogging          = ChkEnableLogging.IsChecked == true;
 
-            if (int.TryParse(TxtContextBefore.Text, out int cb)) s.ContextLinesBefore = cb;
-            if (int.TryParse(TxtContextAfter.Text,  out int ca)) s.ContextLinesAfter  = ca;
-            if (int.TryParse(TxtChatHistory.Text,   out int ch)) s.ChatHistoryMaxItems = ch;
-
-            s.EnableInlineCompletion = ChkEnableInline.IsChecked  == true;
-            s.ShowCompletionGhost    = ChkShowGhost.IsChecked      == true;
-            s.EnableExplain          = ChkExplain.IsChecked        == true;
-            s.EnableRefactor         = ChkRefactor.IsChecked       == true;
-            s.EnableDocGen           = ChkDocGen.IsChecked         == true;
-            s.EnableReview           = ChkReview.IsChecked         == true;
-            s.EnableFix              = ChkFix.IsChecked            == true;
-            s.EnableUnitTest         = ChkUnitTest.IsChecked       == true;
-            s.ShowStatusBar          = ChkStatusBar.IsChecked      == true;
-            s.EnableLogging          = ChkEnableLogging.IsChecked == true;
-
-            s.CompletionModel = (CmbCompletionModel.SelectedItem as ComboBoxItem)?.Content?.ToString()
-                                ?? CmbCompletionModel.Text;
-            s.ChatModel       = (CmbChatModel.SelectedItem as ComboBoxItem)?.Content?.ToString()
-                                ?? CmbChatModel.Text;
-            s.ExplainModel    = (CmbExplainModel.SelectedItem as ComboBoxItem)?.Content?.ToString()
-                                ?? CmbExplainModel.Text;
-            s.RefactorModel   = (CmbRefactorModel.SelectedItem as ComboBoxItem)?.Content?.ToString()
-                                ?? CmbRefactorModel.Text;
-            s.DocModel        = (CmbDocModel.SelectedItem as ComboBoxItem)?.Content?.ToString()
-                                ?? CmbDocModel.Text;
-            s.ReviewModel     = (CmbReviewModel.SelectedItem as ComboBoxItem)?.Content?.ToString()
-                                ?? CmbReviewModel.Text;
-
-            // 📝 Prompts
-            s.SystemPrompt   = TxtSystemPrompt.Text.Trim();
-            s.ExplainPrompt  = TxtExplainPrompt.Text.Trim();
-            s.RefactorPrompt = TxtRefactorPrompt.Text.Trim();
-            s.DocumentPrompt = TxtDocumentPrompt.Text.Trim();
-            s.ReviewPrompt   = TxtReviewPrompt.Text.Trim();
-            s.FixPrompt      = TxtFixPrompt.Text.Trim();
-            s.TestPrompt     = TxtTestPrompt.Text.Trim();
+                s.CompletionModel = (CmbCompletionModel.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? CmbCompletionModel.Text;
+                s.ChatModel       = (CmbChatModel.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? CmbChatModel.Text;
+                s.ExplainModel    = (CmbExplainModel.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? CmbExplainModel.Text;
+                s.RefactorModel   = (CmbRefactorModel.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? CmbRefactorModel.Text;
+                s.DocModel        = (CmbDocModel.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? CmbDocModel.Text;
+                s.ReviewModel     = (CmbReviewModel.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? CmbReviewModel.Text;
+            }
+            else if (MainTabControl.SelectedIndex == 1) // Advanced
+            {
+                s.Mode             = (PerformanceMode)CmbPerformanceMode.SelectedIndex;
+                s.EnableProjectMap = ChkEnableProjectMap.IsChecked == true;
+                if (int.TryParse(TxtChatHistory.Text, out int ch)) s.ChatHistoryMaxItems = ch;
+            }
 
             // Persist to disk
             SettingsPersistence.Save(s);
@@ -170,8 +155,10 @@ namespace LocalPilot.Options
             {
                 try
                 {
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    
                     string url = TxtBaseUrl.Text.Trim();
-                    if (!url.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+                    if (string.IsNullOrEmpty(url) || !url.StartsWith("http", StringComparison.OrdinalIgnoreCase))
                     {
                         TxtConnectionResult.Text = "✗  URL must start with http:// or https://";
                         TxtConnectionResult.Foreground = Brushes.Red;
@@ -179,17 +166,25 @@ namespace LocalPilot.Options
                         return;
                     }
 
-                    _ollama.UpdateBaseUrl(url);
+                    // Busy State
+                    BtnTestConnection.IsEnabled = false;
+                    BtnTestConnection.Content = "Testing...";
+                    TxtConnectionResult.Text = "Checking Ollama status...";
+                    TxtConnectionResult.Foreground = (Brush)this.Resources["LpMutedFgBrush"];
                     TxtConnectionResult.Visibility = Visibility.Visible;
-                    TxtConnectionResult.Text = "Testing connection…";
-                    TxtConnectionResult.Foreground = SystemColors.GrayTextBrush;
 
+                    _ollama.UpdateBaseUrl(url);
                     bool ok = await _ollama.IsAvailableAsync();
+
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    
                     if (ok)
                     {
                         TxtConnectionResult.Text = "✓  Ollama is running and reachable!";
                         TxtConnectionResult.Foreground = new SolidColorBrush(Color.FromRgb(0x4E, 0xC9, 0xB0));
                         SetConnectionStatus(true);
+                        
+                        // Try to reload models immediately if connected
                         await LoadModelsAsync(url, _cts.Token);
 
                         MessageBox.Show("Successfully connected to Ollama!", "LocalPilot",
@@ -197,15 +192,24 @@ namespace LocalPilot.Options
                     }
                     else
                     {
-                        TxtConnectionResult.Text = "✗  Cannot reach Ollama. Check URL and ensure it's running.";
+                        TxtConnectionResult.Text = "✗  Cannot reach Ollama. Ensure it's running at the specified URL.";
                         TxtConnectionResult.Foreground = new SolidColorBrush(Color.FromRgb(0xF4, 0x47, 0x47));
                         SetConnectionStatus(false);
+                        
+                        MessageBox.Show("Failed to connect to Ollama. Please verify the service is running.", "Connection Failed",
+                                        MessageBoxButton.OK, MessageBoxImage.Warning);
                     }
                 }
                 catch (Exception ex)
                 {
                     TxtConnectionResult.Text = $"✗  Error: {ex.Message}";
                     TxtConnectionResult.Foreground = Brushes.Red;
+                }
+                finally
+                {
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    BtnTestConnection.IsEnabled = true;
+                    BtnTestConnection.Content = "Test Connection";
                 }
             });
         }
@@ -262,6 +266,8 @@ namespace LocalPilot.Options
             SaveToast.Opacity    = 0;
         }
 
+
+
         private void BtnOpenLog_Click(object sender, RoutedEventArgs e)
         {
             try
@@ -269,16 +275,40 @@ namespace LocalPilot.Options
                 string path = LocalPilotLogger.GetLogPath();
                 if (System.IO.File.Exists(path))
                 {
-                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true });
+                    System.Diagnostics.Process.Start("notepad.exe", path); // Or just process.start(path)
                 }
                 else
                 {
-                    MessageBox.Show("No log file found yet. Try performing an action with logging enabled first.", "LocalPilot", MessageBoxButton.OK, MessageBoxImage.Information);
+                    // Create an empty file so it opens
+                    string dir = System.IO.Path.GetDirectoryName(path);
+                    if (!System.IO.Directory.Exists(dir)) System.IO.Directory.CreateDirectory(dir);
+                    System.IO.File.WriteAllText(path, $"--- LocalPilot Log Initialized {DateTime.Now} ---" + Environment.NewLine);
+                    System.Diagnostics.Process.Start("notepad.exe", path);
                 }
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Could not open log: {ex.Message}", "LocalPilot", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show($"Failed to open log: {ex.Message}", "LocalPilot", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void BtnOpenPrompts_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                string path = PromptLoader.GetPromptsDirectoryPath();
+                if (System.IO.Directory.Exists(path))
+                {
+                    System.Diagnostics.Process.Start("explorer.exe", path);
+                }
+                else
+                {
+                    MessageBox.Show("Prompts directory not found. Try restarting Visual Studio.", "LocalPilot", MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to open directory: {ex.Message}", "LocalPilot", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
@@ -339,28 +369,16 @@ namespace LocalPilot.Options
             return null;
         }
 
-        private void SldrDelay_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
-        {
-            if (TxtDelay != null)
-                TxtDelay.Text = $"{(int)e.NewValue} ms";
-        }
 
-        private void SldrMaxTokens_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
-        {
-            if (TxtMaxTokens != null)
-                TxtMaxTokens.Text = $"{(int)e.NewValue}";
-        }
 
-        private void SldrTemp_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
-        {
-            if (TxtTemp != null)
-                TxtTemp.Text = $"{e.NewValue:F2}";
-        }
 
-        private void SldrMaxChatTokens_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        private void CmbPerformanceMode_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            if (TxtMaxChatTokens != null)
-                TxtMaxChatTokens.Text = $"{(int)e.NewValue}";
+            if (CmbPerformanceMode == null || CmbPerformanceMode.SelectedIndex == -1) return;
+            
+            var selectedMode = (PerformanceMode)CmbPerformanceMode.SelectedIndex;
+            var s = LocalPilotSettings.Instance;
+            s.Mode = selectedMode; 
         }
 
         // ── Helpers ───────────────────────────────────────────────────────────

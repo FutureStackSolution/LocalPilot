@@ -16,15 +16,17 @@ namespace LocalPilot
     /// </summary>
     [PackageRegistration(UseManagedResourcesOnly = true, AllowsBackgroundLoading = true)]
     [Guid(PackageGuidString)]
-    [Microsoft.VisualStudio.Shell.ProvideMenuResource("Menus.ctmenu", 1)]
+    [ProvideMenuResource("Menus.ctmenu", 1)]
     [ProvideToolWindow(typeof(LocalPilotChatWindow),
-        Style       = Microsoft.VisualStudio.Shell.VsDockStyle.Tabbed,
+        Style = VsDockStyle.Tabbed,
         Window      = Microsoft.VisualStudio.Shell.Interop.ToolWindowGuids80.SolutionExplorer,
-        Orientation = Microsoft.VisualStudio.Shell.ToolWindowOrientation.Right)]
+        Orientation = ToolWindowOrientation.Right)]
 
     // Options page — accessible via Tools > Options > LocalPilot
     [ProvideOptionPage(typeof(LocalPilotOptionsPage),
       "LocalPilot", "General", 0, 0, supportsAutomation: true)]
+    [ProvideOptionPage(typeof(LocalPilotAdvancedOptionsPage),
+      "LocalPilot", "Advanced", 0, 0, supportsAutomation: true)]
 
     // Auto-load when a solution opens
     [ProvideAutoLoad(
@@ -48,6 +50,7 @@ namespace LocalPilot
 
             // Register all commands
             await LocalPilotCommands.InitializeAsync(this);
+            LocalPilotCommandRouter.Instance.Initialize(this);
 
             // Auto-Index Project Context in background (v1.3)
             _ = Task.Run(async () =>
@@ -60,6 +63,17 @@ namespace LocalPilot
                     var ollama = new OllamaService(settings.OllamaBaseUrl);
                     LocalPilotLogger.Log("[Autopilot] Indexing project context in background...");
                     await ProjectContextService.Instance.IndexSolutionAsync(ollama, cancellationToken);
+
+                    // v3.0 Nexus Intelligence: Build the Full-Stack Dependency Graph
+                    string root = "";
+                    await JoinableTaskFactory.RunAsync(async () => {
+                         var sol = await Community.VisualStudio.Toolkit.VS.Solutions.GetCurrentSolutionAsync();
+                         if (sol != null) root = System.IO.Path.GetDirectoryName(sol.FullPath);
+                    });
+                    if (!string.IsNullOrEmpty(root)) {
+                        await NexusService.Instance.InitializeAsync(root);
+                        await NexusService.Instance.RebuildGraphAsync(cancellationToken);
+                    }
                 }
                 catch { /* Quiet skip - background indexing is best-effort */ }
             }, cancellationToken);

@@ -113,7 +113,9 @@ Navigate to **Tools > Options > LocalPilot > Settings**.
 2. **Model Assignments**: Assign preferred models for **Chat** and **Inline Completions**.
 
 > [!TIP]
-> For optimal performance, use a lightweight model like `phi3` or `starcoder2:3b` for **Inline Completions**, and a larger model like `llama3:8b` or `deepseek-coder` for the **Chat Assistant**.
+> For the best experience in **v1.5**, we recommend:
+> - **Chat/Logic**: `qwen2.5-coder:7b` or `llama3.1:8b` (Excellent reasoning & tool use).
+> - **Inline Completions**: `starcoder2:3b` or `phi3:mini` (Lowest latency).
 
 ---
 
@@ -131,9 +133,25 @@ The dedicated AI chat panel can be summoned at any time:
 
 ### ⚡ Contextual Actions
 Right-click on any code selection or use the **LocalPilot** menu to access:
-- **Explain Code**: Breakdown complex logic.
+- **Explain Code**: Deep-dive breakdown of complex logic and algorithms.
+- **Fix Issues**: One-click autonomous resolution for build and runtime errors.
+- **Refactor**: Suggest improvements for readability, performance, and DRY.
+- **Review Code**: Senior-level analysis for security, patterns, and bugs.
 - **Generate Docs**: Auto-generate XML/docstring comments.
-- **Refactor**: Suggest improvements for readability and performance.
+- **Generate Unit Tests**: Create comprehensive test suites for your logic.
+- **Rename Symbol**: Project-wide semantic renaming powered by Roslyn.
+
+### ⌨️ Slash Commands
+Use these directly in the Chat panel for rapid interactions:
+- `/explain`: Analyze selected code.
+- `/fix`: Diagnose and fix the current build error or selection.
+- `/review`: Perform a technical review of the code.
+- `/test`: Generate NUnit/XUnit/Jest test cases.
+- `/map`: Refresh and summarize the project knowledge graph.
+- `/doc`: Generate professional documentation.
+
+### 🛡️ Smart Fix Protocol
+LocalPilot v1.5 is proactive. If you have active compilation errors, a **Smart Fix Banner** will automatically appear in your chat. Clicking "Fix with AI" will trigger the agent to analyze the error and the surrounding code, proposing a surgical fix that you can apply with a single click.
 
 ---
 
@@ -170,7 +188,20 @@ Since **LocalPilot** runs Large Language Models (LLMs) **entirely on your local 
 
 ## 📜 Release History
 
-### 🚀 v1.3 - The Autopilot & Security Update (latest)
+### 🚀 v1.5 - The Performance & Precision Update (latest)
+**"Blazing fast intelligence with zero hallucination overhead."**
+
+- **⚡ Performance Shield for Quick Actions**: Significantly optimized informational tasks like `/explain`, `/doc`, and `/review`. By dynamically stripping "Worker" protocols and disabling native tools for read-only queries, LocalPilot now provides near-instant responses with 0% tool-hallucination risk.
+- **🛠️ Self-Heal Engine (Smart Fix Protocol)**: Integrated a proactive verification layer that automatically triggers build-error checks after every agent edit. If an edit breaks the build, the agent detects it immediately and offers to fix or revert.
+- **🛡️ Global Priority Guard**: A new resource orchestration layer that ensures the IDE remains responsive during heavy AI turns. Background tasks (RAG indexing, Nexus syncing) now automatically yield CPU/GPU resources the moment you start an agent turn and enter a smart 30s cooldown phase upon completion.
+- **🌐 Nexus Intelligence**: Enhanced the agent's context with cross-language dependency awareness (C# ↔ TS/JS). The agent now "sees" the impact of backend changes on the frontend and vice versa.
+- **🔄 OODA Turn Orientation**: Implemented a turn-by-turn feedback loop that prevents "agent amnesia." The orchestrator now summarizes the state of the task at every step to keep the model focused on the end goal.
+- **🔍 Smart System Prompting**: LocalPilot now tailors its internal identity based on your task. It automatically switches between "Teacher" (informative) and "Worker" (surgical) personas to ensure you get the right tone and technical depth every time.
+- **📦 Context Auto-Compaction**: Intelligent history management that automatically prunes and compacts older conversation turns, preventing local models from hitting token limits during long development sessions.
+- **⚖️ Dynamic Context Allocation**: Quick Actions are now capped at 8k tokens and use compact project maps to ensure maximum inference speed on local laptop hardware while maintaining project-wide awareness.
+- **🐛 Stability & Build Hardening**: Resolved critical type-mismatch errors in the Agentic loop and optimized the thread-safety of the cross-language dependency graph for enterprise-scale solutions.
+
+### 🔨 v1.3 - The Autopilot & Security Update 
 **"A smarter, safer, and more integrated AI pair programming experience."**
 
 - **🏎️ Autonomous Agent Mode (Gated Beta)**: LocalPilot now transforms from a simple chat assistant into a proactive agent. By combining high-reasoning models with local tools, the agent can now perform multi-step tasks like "Refactor this class and update all call sites" autonomously.

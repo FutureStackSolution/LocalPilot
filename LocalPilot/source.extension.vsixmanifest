@@ -4,17 +4,11 @@
   xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
     <Metadata>
         <Identity Id="LocalPilot.d17a707d-703b-4fcd-a6f6-2ad5518c660b"
-                  Version="1.3"
+                  Version="1.5.0.0"
                   Language="en-US"
                   Publisher="FutureStackSolution" />
         <DisplayName>LocalPilot — AI Coding Assistant (Ollama)</DisplayName>
-        <Description xml:space="preserve">
-            A GitHub Copilot-style AI coding assistant for Visual Studio that runs 100% locally
-            using Ollama. Features inline ghost-text completions, AI Chat panel, code explanation,
-            refactoring, documentation generation, code review, fix suggestions, and unit test
-            generation — all powered by your locally running Ollama models with no data leaving
-            your machine.
-        </Description>
+        <Description>A GitHub Copilot-style AI coding assistant for Visual Studio that runs 100% locally using Ollama. Features inline ghost-text completions, AI Chat panel, code explanation, refactoring, documentation generation, code review, fix suggestions, and unit test generation — all powered by your locally running Ollama models with no data leaving your machine.</Description>
         <MoreInfo>https://github.com/FutureStackSolution/LocalPilot</MoreInfo>
         <GettingStartedGuide>https://github.com/FutureStackSolution/LocalPilot</GettingStartedGuide>
         <Icon>Assets\Logo_Concept_Minimalist.png</Icon>

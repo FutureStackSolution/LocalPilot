@@ -22,20 +22,19 @@ namespace LocalPilot.Completion
         {
             string langHint = GetLanguageHint(fileExtension);
 
-            // Trim to configured context window
-            prefix = TrimLines(prefix, _settings.ContextLinesBefore, fromEnd: true);
-            suffix = TrimLines(suffix, _settings.ContextLinesAfter,  fromEnd: false);
+            // Trim to configured context window (Golden Ratio: 64 before, 16 after)
+            prefix = TrimLines(prefix, 64, fromEnd: true);
+            suffix = TrimLines(suffix, 16, fromEnd: false);
 
-            return
-$@"You are an expert {langHint} developer. Complete the following code precisely.
-Return ONLY the completion text, no explanations, no markdown fences.
-File: {System.IO.Path.GetFileName(filePath)}
+            var vars = new System.Collections.Generic.Dictionary<string, string>
+            {
+                { "Language", langHint },
+                { "FileName", System.IO.Path.GetFileName(filePath) },
+                { "Prefix",   prefix },
+                { "Suffix",   suffix }
+            };
 
-<PRE>
-{prefix}</PRE>
-<SUF>
-{suffix}</SUF>
-<MID>";
+            return Services.PromptLoader.GetPrompt("CompletionPrompt", vars);
         }
 
         private static string TrimLines(string text, int maxLines, bool fromEnd)
