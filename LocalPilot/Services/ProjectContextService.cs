@@ -76,7 +76,14 @@ namespace LocalPilot.Services
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                 var solution = await VS.Solutions.GetCurrentSolutionAsync();
                 if (solution == null || string.IsNullOrEmpty(solution.FullPath)) return;
-                _solutionRoot = Path.GetDirectoryName(solution.FullPath);
+                var currentRoot = Path.GetDirectoryName(solution.FullPath);
+                if (_solutionRoot != currentRoot)
+                {
+                    LocalPilotLogger.Log($"[RAG] Solution changed. Clearing index for {currentRoot}", LogCategory.Agent);
+                    _index.Clear();
+                    _solutionRoot = currentRoot;
+                    _lastIndexTime = DateTime.MinValue;
+                }
 
                 if (_index.Count == 0) await LoadIndexAsync(_solutionRoot);
 

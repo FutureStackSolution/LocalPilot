@@ -105,8 +105,23 @@ namespace LocalPilot.Services
                                          m.Content.Contains("LocalPilot, an elite") ||
                                          m.Content.Contains("{solutionPath}")));
 
-                // Inject the fresh foundational prompts
+                // 🚀 SMART SYSTEM PROMPT: Tailor the foundation based on the task intent
                 var systemPrompt = PromptLoader.GetPrompt("SystemPrompt", new Dictionary<string, string> { { "solutionPath", solutionPath } });
+
+                bool isReadOnlyAction = taskDescription.Contains("<task_type>code_explanation") || 
+                                        taskDescription.Contains("<task_type>documentation_generation") ||
+                                        taskDescription.Contains("<task_type>code_review") ||
+                                        taskDescription.Contains("/explain") ||
+                                        taskDescription.Contains("/review") ||
+                                        taskDescription.Contains("/doc");
+
+                if (isReadOnlyAction && !string.IsNullOrEmpty(systemPrompt))
+                {
+                    // Strip the 'Worker' protocol for informational tasks to save context and prevent hallucinated tool calls
+                    systemPrompt = System.Text.RegularExpressions.Regex.Replace(systemPrompt, @"(?s)<smart_fix_protocol>.*?</smart_fix_protocol>", string.Empty);
+                    systemPrompt = System.Text.RegularExpressions.Regex.Replace(systemPrompt, @"(?s)<tool_usage>.*?</tool_usage>", string.Empty);
+                }
+
                 messages.Insert(0, new ChatMessage { Role = "system", Content = systemPrompt ?? "You are LocalPilot." });
 
                 // Inject project-specific rules if they haven't been added yet
@@ -127,8 +142,10 @@ namespace LocalPilot.Services
                 // ═══════════════════════════════════════════════════════════════════
                 // NATIVE TOOL DEFINITIONS
                 // ═══════════════════════════════════════════════════════════════════
-                var toolDefinitions = _toolRegistry.GetOllamaToolDefinitions();
-                LocalPilotLogger.Log($"[Agent] Registered {toolDefinitions.Count} native tools for Ollama", LogCategory.Agent);
+                // 🚀 PERFORMANCE SHIELD: Disable tools for informational Quick Actions to ensure near-instant responses
+                // and prevent models from hallucinating tool calls for simple questions.
+                var toolDefinitions = isReadOnlyAction ? new List<OllamaToolDefinition>() : _toolRegistry.GetOllamaToolDefinitions();
+                LocalPilotLogger.Log($"[Agent] Registered {toolDefinitions.Count} native tools for Ollama (ReadOnly: {isReadOnlyAction})", LogCategory.Agent);
 
                 // Determine if this is a specialized Quick Action (Explain, Document, etc)
                 bool isQuickAction = !string.IsNullOrEmpty(modelOverride);

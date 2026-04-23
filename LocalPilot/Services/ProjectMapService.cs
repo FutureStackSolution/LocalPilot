@@ -84,9 +84,18 @@ namespace LocalPilot.Services
             if (string.IsNullOrEmpty(rootPath) || !Directory.Exists(rootPath))
                 return "Project root not found.";
 
+            // 🚀 SOLUTION ISOLATION: Clear symbol index if solution changed
+            if (_lastRoot != rootPath)
+            {
+                LocalPilotLogger.Log($"[ProjectMap] Solution changed. Clearing symbol index for {rootPath}...");
+                lock (_symbolIndex) { _symbolIndex.Clear(); }
+                _cachedMap = null;
+                _lastRoot = rootPath;
+                _lastCacheTime = DateTime.MinValue;
+            }
+
             // 🚀 SMART DEBOUNCE: If a map was generated in the last 10 seconds, reuse it 
-            // even if the limit is different. This prevents "Double Scan" on startup.
-            if (_cachedMap != null && _lastRoot == rootPath && (DateTime.Now - _lastCacheTime).TotalSeconds < 10)
+            if (_cachedMap != null && (DateTime.Now - _lastCacheTime).TotalSeconds < 10)
                 return _cachedMap;
 
             await _lock.WaitAsync();

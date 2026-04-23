@@ -31,7 +31,8 @@ graph TD
 
 | Service | Responsibility | Key Features |
 | :--- | :--- | :--- |
-| **AgentOrchestrator** | The "Brain". Manages the autonomous loop. | **Context Budgeting** (Head/Tail pruning), Nexus summarization, OODA Orientation. |
+| **AgentOrchestrator** | The "Brain". Manages the autonomous loop. | **Performance Shield**, **Context Budgeting**, Nexus summarization, OODA Orientation. |
+| **GlobalPriorityGuard** | Resource Coordinator. | **Yield-on-Action**, 30s Smart Cooldown, immediate background task abortion. |
 | **OllamaService** | LLM Interface. Communicates with local Ollama. | **Keep-Alive Tuning** (5m/10m VRAM), Native Tool Calling, Embedding support. |
 | **ProjectContextService**| RAG Layer. Indexes solution for semantic search. | **Throttled Parallel Indexing**, Incremental Watcher, 256KB File Cap. |
 | **NexusService** | Full-Stack Bridge. Maps dependencies. | **Incremental Graph Updates**, Parallel Initial Scan, C# to TS/TSX Bridge. |
@@ -72,8 +73,10 @@ The UI is built using **WPF** and adheres to the "Ghost UI" design mandate: mini
 1.  **VRAM Management**: Models are automatically unloaded from VRAM after 5-10 minutes of inactivity using `keep_alive` tuning.
 2.  **I/O Efficiency**: **Incremental Syncing** via `FileSystemWatcher` ensures that only changed files are re-indexed for Nexus and RAG.
 3.  **Parallelization**: Solution-wide scans utilize all available CPU cores via throttled `Parallel.ForEach` to avoid system lag.
-4.  **Context Budgeting**: Agent prompts are kept lean by summarizing the Nexus graph and pruning large tool results (Head/Tail truncation).
-5.  **Quantization Recommendation**: Optimized for **q4_K_M** or **q5_K_M** GGUF models on local laptop hardware.
+4.  **Context Budgeting**: Agent prompts are kept lean by summarizing the Nexus graph and pruning large tool results.
+5.  **Performance Shield**: For read-only actions (Explain, Document, Review), native tools are disabled and system prompts are stripped of "Worker" protocols to ensure near-instant responses.
+6.  **Priority Guard**: All background services (RAG, Nexus) yield CPU/GPU resources immediately when an agent turn starts and for 30s after completion.
+7.  **Quantization Recommendation**: Optimized for **q4_K_M** or **q5_K_M** GGUF models on local laptop hardware.
 
 ---
 
