@@ -25,9 +25,9 @@ namespace LocalPilot.Services
         private SymbolIndexService() 
         {
             // 🛡️ ARCHITECTURE STRATEGY: Priority Registry
-            _providers.Add(new RoslynSemanticProvider()); // Priority 1
-            _providers.Add(new LspSemanticProvider());    // Priority 2
-            _providers.Add(new LocalParserProvider());   // Priority 3 (Fallback)
+            _providers.Add(new RoslynSemanticProvider());    // Tier 1: C# / VB.NET
+            _providers.Add(new LspSemanticProvider());       // Tier 2: LSP (TypeScript, Python, etc.)
+            _providers.Add(new UniversalSemanticProvider()); // Tier 3: Polyglot Heuristics (Enterprise Stack)
         }
 
         public RoslynSemanticProvider GetRoslynProvider()

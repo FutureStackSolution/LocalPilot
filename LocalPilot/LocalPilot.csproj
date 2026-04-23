@@ -78,6 +78,7 @@
     <Compile Include="Services\PerformanceTracer.cs" />
     <Compile Include="Services\SmartFixService.cs" />
     <Compile Include="Services\UniversalSemanticProvider.cs" />
+    <Compile Include="Services\GlobalPriorityGuard.cs" />
     <!-- Models -->
     <Compile Include="Models\AgentModels.cs" />
     <Compile Include="Models\NexusModels.cs" />

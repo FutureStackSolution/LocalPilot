@@ -8,6 +8,8 @@ using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Microsoft.VisualStudio.Text;
 using LocalPilot.Models;
+using EnvDTE;
+
 
 namespace LocalPilot.Services
 {
@@ -57,7 +59,10 @@ namespace LocalPilot.Services
             });
         }
         private static readonly HashSet<string> ExcludedDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
-            "bin", "obj", ".git", ".vs", "node_modules", "packages", "vendor", "dist", "build", "testresults", "artifacts", ".localpilot"
+            "bin", "obj", ".git", ".vs", "node_modules", "packages", "vendor", "dist", "build", 
+            "testresults", "artifacts", ".localpilot", ".angular", "wwwroot", "target", "out",
+            ".next", ".nuxt", ".svelte-kit", ".cache", ".vite", ".parcel-cache", "tmp",
+            ".eslintcache", "coverage"
         };
 
         private static readonly HashSet<string> AllowedExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
@@ -79,9 +84,9 @@ namespace LocalPilot.Services
             if (string.IsNullOrEmpty(rootPath) || !Directory.Exists(rootPath))
                 return "Project root not found.";
 
-            // 🚀 INCREMENTAL WARM-UP
-            if (_cachedMap == null) await LoadFromDiskAsync(rootPath);
-            if (_cachedMap != null && _lastRoot == rootPath && (DateTime.Now - _lastCacheTime).TotalMinutes < 5)
+            // 🚀 SMART DEBOUNCE: If a map was generated in the last 10 seconds, reuse it 
+            // even if the limit is different. This prevents "Double Scan" on startup.
+            if (_cachedMap != null && _lastRoot == rootPath && (DateTime.Now - _lastCacheTime).TotalSeconds < 10)
                 return _cachedMap;
 
             await _lock.WaitAsync();
@@ -94,12 +99,16 @@ namespace LocalPilot.Services
                 var openDocContents = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 try {
                     await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                    var openDocs = await Community.VisualStudio.Toolkit.VS.Documents.GetOpenDocumentViewsAsync();
-                    foreach (var doc in openDocs)
+                    var dte = await Community.VisualStudio.Toolkit.VS.GetRequiredServiceAsync<DTE, DTE>();
+                    foreach (Document doc in dte.Documents)
                     {
-                        if (doc?.FilePath != null)
+                        if (doc != null && !string.IsNullOrEmpty(doc.FullName))
                         {
-                            openDocContents[doc.FilePath] = doc.TextBuffer.CurrentSnapshot.GetText();
+                            var view = await Community.VisualStudio.Toolkit.VS.Documents.GetDocumentViewAsync(doc.FullName);
+                            if (view?.TextBuffer != null)
+                            {
+                                openDocContents[doc.FullName] = view.TextBuffer.CurrentSnapshot.GetText();
+                            }
                         }
                     }
                 } catch { /* Fail gracefully, we will fallback to disk */ }
@@ -289,7 +298,7 @@ namespace LocalPilot.Services
         private void IndexSymbols(string filePath, string content)
         {
             string ext = Path.GetExtension(filePath).ToLowerInvariant();
-            var supported = new HashSet<string> { ".cs", ".js", ".ts", ".tsx", ".jsx", ".vue", ".svelte", ".py", ".go" };
+            var supported = new HashSet<string> { ".cs", ".js", ".ts", ".tsx", ".jsx", ".vue", ".svelte", ".py", ".go", ".razor", ".cshtml", ".rs", ".rb", ".php", ".java", ".kt", ".sql" };
             if (!supported.Contains(ext)) return;
 
             // 🚀 Lightning Fast Polyglot Indexer

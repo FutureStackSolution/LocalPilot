@@ -96,7 +96,14 @@ namespace LocalPilot.Services
                 if (filesToUpdate.Any())
                 {
                     LocalPilotLogger.Log($"[RAG] Indexing {filesToUpdate.Count} new or modified files...", LogCategory.Agent);
-                    await ParallelUpdateAsync(filesToUpdate, ollama, ct);
+                    try 
+                    {
+                        using (var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, GlobalPriorityGuard.YieldToken))
+                        {
+                            await ParallelUpdateAsync(filesToUpdate, ollama, linkedCts.Token);
+                        }
+                    }
+                    catch (OperationCanceledException) { LocalPilotLogger.Log("[RAG] Full sync yielded to agent."); }
                     _lastIndexTime = DateTime.Now;
                     await SaveIndexAsync(_solutionRoot);
                 }
@@ -109,8 +116,20 @@ namespace LocalPilot.Services
 
         private async Task ParallelUpdateAsync(List<string> files, OllamaService ollama, CancellationToken ct)
         {
-            var tasks = files.Select(f => ProcessFileAsync(f, GetRelativePath(f), ollama, ct));
-            await Task.WhenAll(tasks);
+            // 🚀 CONTROLLED PARALLELISM: Process files in small batches to ensure YieldToken is checked frequently
+            var tasks = new List<Task>();
+            foreach (var file in files)
+            {
+                ct.ThrowIfCancellationRequested(); // Check for Agent activity
+                tasks.Add(ProcessFileAsync(file, GetRelativePath(file), ollama, ct));
+                
+                if (tasks.Count >= 5) // Process 5 files at a time
+                {
+                    await Task.WhenAll(tasks);
+                    tasks.Clear();
+                }
+            }
+            if (tasks.Count > 0) await Task.WhenAll(tasks);
         }
 
         private void SetupIncrementalWatcher(OllamaService ollama)
@@ -125,6 +144,16 @@ namespace LocalPilot.Services
             _ = Task.Run(async () => {
                 while (!_watcherCts.Token.IsCancellationRequested)
                 {
+                    if (GlobalPriorityGuard.ShouldYield() || _pendingFiles.IsEmpty)
+                    {
+                        if (GlobalPriorityGuard.ShouldYield() && !_pendingFiles.IsEmpty)
+                        {
+                            LocalPilotLogger.Log("[RAG] Priority Yield: Pausing brain sync while Agent is active...", LogCategory.Agent);
+                        }
+                        await Task.Delay(5000); // Deep Sleep during activity
+                        continue;
+                    }
+
                     if (!_pendingFiles.IsEmpty)
                     {
                         await Task.Delay(5000); // Debounce RAG updates (more expensive than Nexus)
@@ -132,7 +161,16 @@ namespace LocalPilot.Services
                         _pendingFiles.Clear();
                         
                         await _indexLock.WaitAsync();
-                        try { await ParallelUpdateAsync(batch, ollama, _watcherCts.Token); await SaveIndexAsync(_solutionRoot); }
+                        try 
+                        { 
+                            // 🚀 LINKED CANCELLATION: Abort if agent starts OR if watcher stops
+                            using (var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_watcherCts.Token, GlobalPriorityGuard.YieldToken))
+                            {
+                                await ParallelUpdateAsync(batch, ollama, linkedCts.Token); 
+                                await SaveIndexAsync(_solutionRoot); 
+                            }
+                        }
+                        catch (OperationCanceledException) { LocalPilotLogger.Log("[RAG] Background sync yielded to agent."); }
                         finally { _indexLock.Release(); }
                     }
                     await Task.Delay(2000);
@@ -157,6 +195,7 @@ namespace LocalPilot.Services
 
                 foreach (var chunkText in chunks)
                 {
+                    ct.ThrowIfCancellationRequested();
                     await _parallelLock.WaitAsync(ct);
                     try
                     {

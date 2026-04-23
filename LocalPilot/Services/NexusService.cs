@@ -90,9 +90,13 @@ namespace LocalPilot.Services
             {
                 try
                 {
-                    if (_pendingFiles.IsEmpty)
+                    if (GlobalPriorityGuard.ShouldYield() || _pendingFiles.IsEmpty)
                     {
-                        await Task.Delay(2000, _cts.Token); // Debounce: Wait 2s for more changes
+                        if (GlobalPriorityGuard.ShouldYield() && !_pendingFiles.IsEmpty)
+                        {
+                            LocalPilotLogger.Log("[Nexus] Priority Yield: Pausing graph sync while Agent is active...", LogCategory.Agent);
+                        }
+                        await Task.Delay(5000, _cts.Token); // Deep Sleep during activity
                         continue;
                     }
 
@@ -142,10 +146,17 @@ namespace LocalPilot.Services
                                !f.Contains("\\obj\\") && !f.Contains("\\bin\\") && !f.Contains("\\node_modules\\");
                     }).ToList();
 
-                Parallel.ForEach(allFiles, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount, CancellationToken = ct }, file =>
+                try
                 {
-                    AnalyzeFile(file, newGraph);
-                });
+                    using (var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, GlobalPriorityGuard.YieldToken))
+                    {
+                        Parallel.ForEach(allFiles, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount, CancellationToken = linkedCts.Token }, file =>
+                        {
+                            AnalyzeFile(file, newGraph);
+                        });
+                    }
+                }
+                catch (OperationCanceledException) { LocalPilotLogger.Log("[Nexus] Graph rebuild yielded to agent."); }
 
                 PerformBridging(newGraph);
                 _graph = newGraph;
@@ -185,6 +196,24 @@ namespace LocalPilot.Services
 
         private void AnalyzeCSharpFile(string file, string content, NexusGraph graph)
         {
+            // 🛡️ CONTRACT DISCOVERY: Detect DTOs and Models for Frontend Bridging
+            bool isModel = file.Contains("\\Models\\") || file.Contains("\\Dtos\\") || 
+                           Path.GetFileName(file).EndsWith("Dto.cs") || Path.GetFileName(file).EndsWith("Model.cs") ||
+                           Path.GetFileName(file).EndsWith("Request.cs") || Path.GetFileName(file).EndsWith("Response.cs");
+
+            if (isModel && !content.Contains(": ControllerBase"))
+            {
+                var modelNode = new NexusNode
+                {
+                    Id = file,
+                    Name = Path.GetFileNameWithoutExtension(file),
+                    Type = NexusNodeType.DataModel,
+                    Language = "cs",
+                    FilePath = file
+                };
+                lock (graph) { if (!graph.Nodes.Any(n => n.Id == file)) graph.Nodes.Add(modelNode); }
+            }
+
             if (content.Contains(": ControllerBase") || content.Contains(": Controller") || content.Contains("[ApiController]"))
             {
                 var controllerNode = new NexusNode

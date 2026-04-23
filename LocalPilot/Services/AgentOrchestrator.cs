@@ -41,8 +41,15 @@ namespace LocalPilot.Services
         public Func<ToolCallRequest, Task<bool>> RequestPermissionAsync;
 
         private Dictionary<string, (string original, string improved)> _stagedChanges = new Dictionary<string, (string original, string improved)>(StringComparer.OrdinalIgnoreCase);
+        
+        /// <summary>
+        /// Indicates if an agentic task is currently running. 
+        /// Used by background services to yield CPU/GPU resources.
+        /// </summary>
+        public bool IsActive { get; private set; }
 
         public AgentOrchestrator(OllamaService ollama, ToolRegistry toolRegistry, ProjectContextService projectContext, ProjectMapService projectMap)
+
         {
             _ollama = ollama;
             _toolRegistry = toolRegistry;
@@ -56,6 +63,8 @@ namespace LocalPilot.Services
         /// </summary>
         public async Task RunTaskAsync(string taskDescription, List<ChatMessage> messages, CancellationToken ct, string modelOverride = null)
         {
+            IsActive = true;
+            GlobalPriorityGuard.StartAgentTurn();
             try
             {
                 string solutionPath = "unknown";
@@ -134,16 +143,19 @@ namespace LocalPilot.Services
                     }
                 }
 
-                if (LocalPilot.Settings.LocalPilotSettings.Instance.EnableProjectMap && !messages.Any(m => m.Content.Contains("PROJECT STRUCTURE")))
+                if (LocalPilot.Settings.LocalPilotSettings.Instance.EnableProjectMap)
                 {
-                    // 🛡️ PERFORMANCE: For Quick Actions, we use a much smaller map or skip it entirely to prevent timeouts
-                    int mapLimit = isQuickAction ? 32 * 1024 : 512 * 1024; // 32KB vs 512KB
-                    
-                    OnStatusUpdate?.Invoke(AgentStatus.Thinking, "Analyzing project structure...");
-                    string projectMapContent = await _projectMap.GenerateProjectMapAsync(solutionPath, mapLimit);
-                    if (!string.IsNullOrEmpty(projectMapContent))
+                    // 🚀 SMART CONTEXT BUDGETING: Use a compact map for Quick Actions to avoid context bloat
+                    int mapLimit = isQuickAction ? 20 * 1024 : 600 * 1024;
+
+                    if (!messages.Any(m => m.Content.Contains("PROJECT STRUCTURE")))
                     {
-                        messages.Add(new ChatMessage { Role = "system", Content = $"## PROJECT STRUCTURE\n{projectMapContent}" });
+                        OnStatusUpdate?.Invoke(AgentStatus.Thinking, "Analyzing project structure...");
+                        string projectMapContent = await _projectMap.GenerateProjectMapAsync(solutionPath, maxTotalBytes: mapLimit);
+                        if (!string.IsNullOrEmpty(projectMapContent))
+                        {
+                            messages.Add(new ChatMessage { Role = "system", Content = $"## PROJECT STRUCTURE\n{projectMapContent}" });
+                        }
                     }
                 }
                 
@@ -318,7 +330,7 @@ namespace LocalPilot.Services
                 var toolCallsThisTurn = new List<ToolCallRequest>();
 
                 // 🚀 STREAM INTERCEPTOR: Buffer and suppress tool-text leaking to UI
-                var options = ApplyPerformancePresets(LocalPilot.Settings.LocalPilotSettings.Instance.Mode, messages);
+                var options = ApplyPerformancePresets(LocalPilot.Settings.LocalPilotSettings.Instance.Mode, messages, isQuickAction);
                 
                 // 🚀 OODA ORIENTATION: Inject Turn Summary to prevent amnesia
                 if (step > 1)
@@ -652,6 +664,11 @@ namespace LocalPilot.Services
                 LocalPilotLogger.LogError("[Agent] RunTaskAsync failed", ex);
                 OnStatusUpdate?.Invoke(AgentStatus.Failed, $"Task failed: {ex.Message}");
             }
+            finally
+            {
+                IsActive = false;
+                GlobalPriorityGuard.EndAgentTurn();
+            }
         }
 
         /// <summary>
@@ -742,7 +759,7 @@ namespace LocalPilot.Services
             return null;
         }
 
-        private OllamaOptions ApplyPerformancePresets(LocalPilot.Settings.PerformanceMode mode, List<ChatMessage> history)
+        private OllamaOptions ApplyPerformancePresets(LocalPilot.Settings.PerformanceMode mode, List<ChatMessage> history, bool isQuickAction)
         {
             var options = new OllamaOptions();
             
@@ -753,13 +770,15 @@ namespace LocalPilot.Services
             // Add a 25% safety buffer for the next generation
             long requiredCtx = (long)(estimatedTokens * 1.25);
             
-            // Tiered minimums to avoid frequent context switching (which triggers model re-shuffling)
+            // Tiered minimums to avoid frequent context switching
             if (requiredCtx < 4096) requiredCtx = 4096;
             else if (requiredCtx < 16384) requiredCtx = 16384;
-            else if (requiredCtx < 32768) requiredCtx = 32768;
             
-            options.NumCtx = (int)Math.Min(requiredCtx, 128000); // 128k hard cap for local safety
-            LocalPilotLogger.Log($"[Orchestrator] Dynamic Context Allocation: {options.NumCtx} tokens (Estimated Load: {estimatedTokens})");
+            // 🚀 QUICK ACTION CAP: Limit context to 8k for explain/fix to ensure GPU speed
+            int maxCtx = isQuickAction ? 8192 : 128000;
+            options.NumCtx = (int)Math.Min(requiredCtx, maxCtx);
+
+            LocalPilotLogger.Log($"[Orchestrator] Dynamic Context Allocation: {options.NumCtx} tokens (QuickAction: {isQuickAction})");
 
             switch (mode)
             {

@@ -60,6 +60,8 @@ namespace LocalPilot.Services
                     case ".tsx":
                     case ".js":
                     case ".jsx":
+                    case ".vue":
+                    case ".svelte":
                         // 🚀 WEB HEURISTICS: Deep scanning for React/Angular/Vue
                         var webMatches = Regex.Matches(content, @"(?:export\s+)?(?:class|interface|type|const|function|enum)\s+(?<name>[a-zA-Z_]\w*)");
                         foreach (Match m in webMatches) sb.AppendLine($" - Symbol: {m.Groups["name"].Value}");
@@ -71,6 +73,20 @@ namespace LocalPilot.Services
                         // Angular Specifics
                         if (content.Contains("@Component") || content.Contains("@Injectable") || content.Contains("@Directive") || content.Contains("@NgModule"))
                             sb.AppendLine(" - Tech: Angular (Decorator-driven)");
+
+                        // Vue Specifics
+                        if (ext == ".vue")
+                        {
+                            if (content.Contains("<script setup>")) sb.AppendLine(" - Tech: Vue 3 (Composition API / script setup)");
+                            else if (content.Contains("defineComponent") || content.Contains("export default {")) sb.AppendLine(" - Tech: Vue (Options/Composition API)");
+                        }
+
+                        // Svelte Specifics
+                        if (ext == ".svelte")
+                        {
+                            sb.AppendLine(" - Tech: Svelte (Reactive Components)");
+                            if (content.Contains("export let")) sb.AppendLine(" - Note: Props detected via 'export let'");
+                        }
                         
                         // Import Context (Top 5 libraries)
                         var imports = Regex.Matches(content, @"from\s+['""](?<lib>[\w@\/\-]+)['""]").Cast<Match>().Select(m => m.Groups["lib"].Value).Distinct().Take(5);
@@ -87,6 +103,36 @@ namespace LocalPilot.Services
                         if (goPackage.Success) sb.AppendLine($" - Go Package: {goPackage.Groups["name"].Value}");
                         var goMatches = Regex.Matches(content, @"type\s+(?<name>\w+)\s+(?:struct|interface)");
                         foreach (Match m in goMatches) sb.AppendLine($" - Go Type: {m.Groups["name"].Value}");
+                        break;
+
+                    case ".razor":
+                    case ".cshtml":
+                        sb.AppendLine($" - Tech: {(ext == ".razor" ? "Blazor" : "Razor Pages/MVC")}");
+                        if (content.Contains("@model")) sb.AppendLine(" - Note: Strongly-typed model (@model) detected.");
+                        if (content.Contains("@code") || content.Contains("@{")) sb.AppendLine(" - Note: Contains C# server-side logic.");
+                        if (content.Contains("@inject")) sb.AppendLine(" - Note: Dependency Injection used (@inject)");
+                        break;
+
+                    case ".rs":
+                        sb.AppendLine(" - Tech: Rust");
+                        var rustMatches = Regex.Matches(content, @"(?:fn|struct|enum|trait)\s+(?<name>[a-zA-Z_]\w*)");
+                        foreach (Match m in rustMatches) sb.AppendLine($" - Rust Symbol: {m.Groups["name"].Value}");
+                        break;
+
+                    case ".php":
+                        sb.AppendLine(" - Tech: PHP");
+                        if (content.Contains("class") || content.Contains("function"))
+                        {
+                            var phpMatches = Regex.Matches(content, @"(?:class|function)\s+(?<name>[a-zA-Z_]\w*)");
+                            foreach (Match m in phpMatches) sb.AppendLine($" - PHP Symbol: {m.Groups["name"].Value}");
+                        }
+                        break;
+
+                    case ".java":
+                    case ".kt":
+                        sb.AppendLine($" - Tech: {(ext == ".java" ? "Java" : "Kotlin")} (JVM)");
+                        var jvmMatches = Regex.Matches(content, @"(?:class|interface|fun|void)\s+(?<name>[a-zA-Z_]\w*)");
+                        foreach (Match m in jvmMatches) sb.AppendLine($" - Symbol: {m.Groups["name"].Value}");
                         break;
                 }
 
