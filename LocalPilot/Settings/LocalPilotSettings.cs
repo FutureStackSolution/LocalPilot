@@ -24,10 +24,22 @@ namespace LocalPilot.Settings
         // ── Models ─────────────────────────────────────────────────────────────
         public string CompletionModel  { get; set; } = "llama3:8b";
         public string ChatModel        { get; set; } = "llama3:8b";
+        public string EmbeddingModel   { get; set; } = "nomic-embed-text:latest";
         public string ExplainModel     { get; set; } = "llama3:8b";
         public string RefactorModel    { get; set; } = "llama3:8b";
         public string DocModel         { get; set; } = "llama3:8b";
         public string ReviewModel      { get; set; } = "llama3:8b";
+
+        /// <summary>
+        /// Returns true if the configured ChatModel looks like a dedicated embedding model.
+        /// Embedding models don't support /api/chat and will return HTTP 400 if used for it.
+        /// </summary>
+        public bool ChatModelIsEmbeddingModel =>
+            !string.IsNullOrEmpty(ChatModel) &&
+            (ChatModel.Contains("embed", StringComparison.OrdinalIgnoreCase) ||
+             ChatModel.Contains("nomic", StringComparison.OrdinalIgnoreCase) ||
+             ChatModel.Contains("bge-",  StringComparison.OrdinalIgnoreCase) ||
+             ChatModel.Contains("e5-",   StringComparison.OrdinalIgnoreCase));
 
         // ── Inline completion behaviour ────────────────────────────────────────
         public bool   EnableInlineCompletion { get; set; } = true;

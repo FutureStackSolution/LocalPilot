@@ -206,7 +206,7 @@ namespace LocalPilot.Services
                     await _parallelLock.WaitAsync(ct);
                     try
                     {
-                        var vector = await ollama.GetEmbeddingsAsync(LocalPilotSettings.Instance.ChatModel, chunkText, ct);
+                        var vector = await ollama.GetEmbeddingsAsync(LocalPilotSettings.Instance.EmbeddingModel, chunkText, ct);
                         if (vector != null)
                         {
                             newChunks.Add(new CodeChunk { FilePath = relativePath, Content = chunkText, Vector = vector, LastModified = fileInfo.LastWriteTime });
@@ -226,7 +226,7 @@ namespace LocalPilot.Services
         public async Task<string> SearchContextAsync(OllamaService ollama, string query, int topN = 5)
         {
             if (string.IsNullOrWhiteSpace(query)) return string.Empty;
-            var queryVector = await ollama.GetEmbeddingsAsync(LocalPilotSettings.Instance.ChatModel, query);
+            var queryVector = await ollama.GetEmbeddingsAsync(LocalPilotSettings.Instance.EmbeddingModel, query);
             if (queryVector == null || _index.Count == 0) return string.Empty;
 
             var results = _index

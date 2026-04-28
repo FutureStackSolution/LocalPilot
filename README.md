@@ -113,9 +113,10 @@ Navigate to **Tools > Options > LocalPilot > Settings**.
 2. **Model Assignments**: Assign preferred models for **Chat** and **Inline Completions**.
 
 > [!TIP]
-> For the best experience in **v1.5**, we recommend:
+> For the best experience in **v1.6**, we recommend:
 > - **Chat/Logic**: `qwen2.5-coder:7b` or `llama3.1:8b` (Excellent reasoning & tool use).
 > - **Inline Completions**: `starcoder2:3b` or `phi3:mini` (Lowest latency).
+> - **Embedding / RAG**: `nomic-embed-text` (Set separately in the new Embedding Model field).
 
 ---
 
@@ -188,7 +189,17 @@ Since **LocalPilot** runs Large Language Models (LLMs) **entirely on your local 
 
 ## 📜 Release History
 
-### 🚀 v1.5 - The Performance & Precision Update (latest)
+### 🚀 v1.6 - The Polyglot Reliability Update (latest)
+**"Smarter context, language-aware rename, and a hardened model pipeline."**
+
+- **🧠 Dedicated Embedding Model Setting**: The RAG / semantic search pipeline now uses a separate, independently configurable **Embedding Model** (default: `nomic-embed-text`). Previously, the chat model was reused for embeddings — if a user set an embed-only model as their chat model, the agent would crash with an opaque `HTTP 400`. Embedding and chat models are now fully decoupled.
+- **🛡️ Embedding-Model Guard**: `OllamaService` now detects embed-only models (`nomic`, `bge-*`, `e5-*`, etc.) before sending them to `/api/chat` and surfaces a clear, actionable error message in the chat panel instead of a cryptic network exception.
+- **🌐 Polyglot Rename (C++ / Python / TS / Go)**: The agent previously instructed itself to use `rename_symbol` for **all** renames, but `rename_symbol` is Roslyn-only (C# exclusive). For C++, Python, TypeScript, and Go files, the agent now correctly routes through `grep_search` → `replace_text` for a reliable, project-wide text rename.
+- **⚡ Context Window Fix (4096 → 16384+)**: The dynamic context sizer used a `char / 3` token heuristic and ignored the tools-schema JSON that Ollama injects at inference time. For a typical agent session with an active editor snippet and 12 tool definitions, this caused the model to receive a truncated prompt (no tool instructions visible), producing plain-text responses with no tool calls. Fixed by using `char / 2`, adding a 1500-token tools-overhead constant, and raising the minimum window from 4096 → 8192.
+- **📦 Prompt Cache Invalidation**: The `PromptLoader` now tracks file modification timestamps and automatically evicts stale prompt templates after a VSIX update, ensuring the latest system and action prompts are always in effect without restarting Visual Studio.
+- **📋 Enhanced Logging**: Context allocation log now includes the estimated input token count alongside the allocated window size for easier diagnostics.
+
+### 🚀 v1.5 - The Performance & Precision Update
 **"Blazing fast intelligence with zero hallucination overhead."**
 
 - **⚡ Performance Shield for Quick Actions**: Significantly optimized informational tasks like `/explain`, `/doc`, and `/review`. By dynamically stripping "Worker" protocols and disabling native tools for read-only queries, LocalPilot now provides near-instant responses with 0% tool-hallucination risk.

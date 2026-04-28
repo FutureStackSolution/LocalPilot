@@ -336,6 +336,17 @@
                                 <TextBlock Text="Chat Model" Style="{DynamicResource LpLabelStyle}"/>
                                 <ComboBox x:Name="CmbChatModel" Height="28"/></StackPanel>
                         </Grid>
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Margin="0,0,8,10">
+                                <TextBlock Text="Embedding Model (RAG / Semantic Search)" Style="{DynamicResource LpLabelStyle}"/>
+                                <ComboBox x:Name="CmbEmbeddingModel" Height="28" ToolTip="Used for semantic indexing and vector search. Should be a dedicated embed model, e.g. nomic-embed-text. Never set this to your chat model."/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Margin="8,0,0,10" VerticalAlignment="Bottom">
+                                <TextBlock Text="ℹ️ Use a dedicated embed model (e.g. nomic-embed-text). Setting your Chat Model here will break RAG." 
+                                           Style="{DynamicResource LpMutedLabel}" TextWrapping="Wrap" FontSize="11"/>
+                            </StackPanel>
+                        </Grid>
 
                         <TextBlock Text="🛠️  Action-Specific Models" Style="{DynamicResource LpSectionHeader}"/>
                         <Grid>
