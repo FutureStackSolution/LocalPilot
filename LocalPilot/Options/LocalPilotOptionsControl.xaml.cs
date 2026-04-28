@@ -95,6 +95,7 @@ namespace LocalPilot.Options
             // full list populated after async fetch
             SetComboItem(CmbCompletionModel, s.CompletionModel);
             SetComboItem(CmbChatModel,        s.ChatModel);
+            SetComboItem(CmbEmbeddingModel,   s.EmbeddingModel);
             SetComboItem(CmbExplainModel,     s.ExplainModel);
             SetComboItem(CmbRefactorModel,    s.RefactorModel);
             SetComboItem(CmbDocModel,         s.DocModel);
@@ -132,6 +133,7 @@ namespace LocalPilot.Options
 
                 s.CompletionModel = (CmbCompletionModel.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? CmbCompletionModel.Text;
                 s.ChatModel       = (CmbChatModel.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? CmbChatModel.Text;
+                s.EmbeddingModel  = (CmbEmbeddingModel.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? CmbEmbeddingModel.Text;
                 s.ExplainModel    = (CmbExplainModel.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? CmbExplainModel.Text;
                 s.RefactorModel   = (CmbRefactorModel.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? CmbRefactorModel.Text;
                 s.DocModel        = (CmbDocModel.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? CmbDocModel.Text;
@@ -398,6 +400,7 @@ namespace LocalPilot.Options
                 
                 PopulateCombo(CmbCompletionModel, models, LocalPilotSettings.Instance.CompletionModel);
                 PopulateCombo(CmbChatModel, models, LocalPilotSettings.Instance.ChatModel);
+                PopulateCombo(CmbEmbeddingModel, models, LocalPilotSettings.Instance.EmbeddingModel);
                 PopulateCombo(CmbExplainModel, models, LocalPilotSettings.Instance.ExplainModel);
                 PopulateCombo(CmbRefactorModel, models, LocalPilotSettings.Instance.RefactorModel);
                 PopulateCombo(CmbDocModel, models, LocalPilotSettings.Instance.DocModel);

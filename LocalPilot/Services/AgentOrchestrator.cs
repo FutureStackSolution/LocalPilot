@@ -781,21 +781,31 @@ namespace LocalPilot.Services
             var options = new OllamaOptions();
             
             // 🚀 DYNAMIC CONTEXT SIZER: Automatically calculate required memory
+            // Use char/2 (not char/3): source code is denser than prose — keywords,
+            // indentation, punctuation all inflate the token count per character.
             long estimatedTokens = 0;
-            foreach (var msg in history) estimatedTokens += (msg.Content?.Length ?? 0) / 3; // Rough char-to-token heuristic
+            foreach (var msg in history) estimatedTokens += (msg.Content?.Length ?? 0) / 2;
             
-            // Add a 25% safety buffer for the next generation
+            // Account for the tools-schema JSON that Ollama injects into the prompt
+            // but is NOT part of the messages array. 12 tools × ~400 chars ≈ ~2400 chars ≈ 1200 tokens.
+            const long ToolSchemaOverhead = 1500;
+            estimatedTokens += ToolSchemaOverhead;
+            
+            // Add a 25% safety buffer for the next generation output
             long requiredCtx = (long)(estimatedTokens * 1.25);
             
-            // Tiered minimums to avoid frequent context switching
-            if (requiredCtx < 4096) requiredCtx = 4096;
+            // Tiered minimums to avoid frequent context switching.
+            // 8192 minimum: even "small" agent sessions need room for the system prompt,
+            // tool schema, active editor snippet, and at least one tool call + result.
+            if (requiredCtx < 8192) requiredCtx = 8192;
             else if (requiredCtx < 16384) requiredCtx = 16384;
+            else if (requiredCtx < 32768) requiredCtx = 32768;
             
             // 🚀 QUICK ACTION CAP: Limit context to 8k for explain/fix to ensure GPU speed
             int maxCtx = isQuickAction ? 8192 : 128000;
             options.NumCtx = (int)Math.Min(requiredCtx, maxCtx);
 
-            LocalPilotLogger.Log($"[Orchestrator] Dynamic Context Allocation: {options.NumCtx} tokens (QuickAction: {isQuickAction})");
+            LocalPilotLogger.Log($"[Orchestrator] Dynamic Context Allocation: {options.NumCtx} tokens (QuickAction: {isQuickAction}, EstimatedInput: {estimatedTokens})");
 
             switch (mode)
             {

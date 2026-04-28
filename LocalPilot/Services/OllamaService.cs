@@ -190,6 +190,20 @@ namespace LocalPilot.Services
             OllamaOptions options = null,
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
         {
+            // ── GUARD: Detect embedding-only models early ─────────────────────────
+            // Models like nomic-embed-text, bge-*, e5-* do NOT support /api/chat.
+            // Ollama returns HTTP 400 for these. Surface a clear error instead.
+            if (!string.IsNullOrEmpty(model) &&
+                (model.IndexOf("embed", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                 model.IndexOf("nomic", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                 model.IndexOf("bge-",  StringComparison.OrdinalIgnoreCase) >= 0 ||
+                 model.IndexOf("e5-",   StringComparison.OrdinalIgnoreCase) >= 0))
+            {
+                LocalPilotLogger.LogError($"[Ollama] Misconfiguration: '{model}' is an embedding model and cannot be used for chat. Go to LocalPilot Settings and set a chat-capable model (e.g. llama3.1:8b).", null, LogCategory.Ollama);
+                yield return ChatStreamResult.Text($"\n⚠️ **LocalPilot Configuration Error:** The selected Chat Model (`{model}`) is an embedding-only model and does not support chat or tool calls.\n\nPlease open **Tools → Options → LocalPilot** and change the **Chat Model** to a chat-capable model (e.g. `llama3.1:8b`).");
+                yield break;
+            }
+
             // Build payload — include tools if provided
             object payload;
             if (tools != null && tools.Count > 0)

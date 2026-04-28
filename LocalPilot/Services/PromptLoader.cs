@@ -13,6 +13,7 @@ namespace LocalPilot.Services
     {
         private static readonly string _assemblyDir;
         private static readonly Dictionary<string, string> _cache = new Dictionary<string, string>();
+        private static readonly Dictionary<string, DateTime> _cacheTimestamps = new Dictionary<string, DateTime>();
 
         static PromptLoader()
         {
@@ -49,17 +50,25 @@ namespace LocalPilot.Services
 
         private static string LoadTemplate(string name)
         {
-            if (_cache.TryGetValue(name, out var cached)) return cached;
-
             try
             {
-                // Extension content files are deployed relative to the assembly
                 string path = Path.Combine(_assemblyDir, "Prompts", $"{name}.md");
                 
                 if (File.Exists(path))
                 {
+                    var lastWrite = File.GetLastWriteTimeUtc(path);
+                    
+                    // Invalidate cache if the file on disk is newer (e.g. after a VSIX update)
+                    if (_cache.TryGetValue(name, out var cached) &&
+                        _cacheTimestamps.TryGetValue(name, out var cachedTime) &&
+                        lastWrite <= cachedTime)
+                    {
+                        return cached;
+                    }
+                    
                     string content = File.ReadAllText(path);
                     _cache[name] = content;
+                    _cacheTimestamps[name] = lastWrite;
                     return content;
                 }
                 
