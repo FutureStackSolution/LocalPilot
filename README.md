@@ -183,7 +183,7 @@ Since **LocalPilot** runs Large Language Models (LLMs) **entirely on your local 
 *   **NVIDIA CUDA**: Ensure latest drivers are installed for GPU acceleration.
 
 > [!IMPORTANT]
-> LocalPilot is designed for efficiency, but because it performs all AI processing locally, it requires capable hardware. If suggestions feel slow, consider using a smaller, quantized model (e.g., `phi3:mini` or `starcoder2:3b`) in the settings.
+> LocalPilot is designed for efficiency, but because it performs all AI processing locally, it requires capable hardware. If suggestions feel slow, consider using a smaller, quantized model (e.g., `qwen-coder` or `codellama` or `phi3`) in the settings.
 
 ---
 
