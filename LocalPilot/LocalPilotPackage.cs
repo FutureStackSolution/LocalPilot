@@ -50,7 +50,7 @@ namespace LocalPilot
             var settings = SettingsPersistence.Load();
             LocalPilotSettings.UpdateInstance(settings);
 
-            // 🚀 FIRST-RUN AUTO-DISCOVERY (v3.1)
+            // 🚀 FIRST-RUN AUTO-DISCOVERY (v1.6)
             // If this is the first time the user installs LocalPilot, 
             // try to find what models they actually have in Ollama 
             // instead of failing with 404 for 'llama3'.
@@ -94,19 +94,19 @@ namespace LocalPilot
             await LocalPilotCommands.InitializeAsync(this);
             LocalPilotCommandRouter.Instance.Initialize(this);
 
-            // Auto-Index Project Context in background (v1.3)
+            // Auto-Index Project Context in background (v1.6)
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    // v2.0 Enterprise Intelligence: Wait for VS Solution to fully stabilize
+                    // v1.6 Enterprise Intelligence: Wait for VS Solution to fully stabilize
                     await Task.Delay(10000, cancellationToken).ConfigureAwait(false); 
                     
                     var ollama = new OllamaService(settings.OllamaBaseUrl);
                     LocalPilotLogger.Log("[Autopilot] Indexing project context in background...");
                     await ProjectContextService.Instance.IndexSolutionAsync(ollama, cancellationToken);
 
-                    // v3.0 Nexus Intelligence: Build the Full-Stack Dependency Graph
+                    // v1.6 Nexus Intelligence: Build the Full-Stack Dependency Graph
                     string root = "";
                     await JoinableTaskFactory.RunAsync(async () => {
                          var sol = await Community.VisualStudio.Toolkit.VS.Solutions.GetCurrentSolutionAsync();
