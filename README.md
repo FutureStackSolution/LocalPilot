@@ -192,12 +192,14 @@ Since **LocalPilot** runs Large Language Models (LLMs) **entirely on your local 
 ### 🚀 v1.6 - The Polyglot Reliability Update (latest)
 **"Smarter context, language-aware rename, and a hardened model pipeline."**
 
-- **🧠 Dedicated Embedding Model Setting**: The RAG / semantic search pipeline now uses a separate, independently configurable **Embedding Model** (default: `nomic-embed-text`). Previously, the chat model was reused for embeddings — if a user set an embed-only model as their chat model, the agent would crash with an opaque `HTTP 400`. Embedding and chat models are now fully decoupled.
-- **🛡️ Embedding-Model Guard**: `OllamaService` now detects embed-only models (`nomic`, `bge-*`, `e5-*`, etc.) before sending them to `/api/chat` and surfaces a clear, actionable error message in the chat panel instead of a cryptic network exception.
-- **🌐 Polyglot Rename (C++ / Python / TS / Go)**: The agent previously instructed itself to use `rename_symbol` for **all** renames, but `rename_symbol` is Roslyn-only (C# exclusive). For C++, Python, TypeScript, and Go files, the agent now correctly routes through `grep_search` → `replace_text` for a reliable, project-wide text rename.
-- **⚡ Context Window Fix (4096 → 16384+)**: The dynamic context sizer used a `char / 3` token heuristic and ignored the tools-schema JSON that Ollama injects at inference time. For a typical agent session with an active editor snippet and 12 tool definitions, this caused the model to receive a truncated prompt (no tool instructions visible), producing plain-text responses with no tool calls. Fixed by using `char / 2`, adding a 1500-token tools-overhead constant, and raising the minimum window from 4096 → 8192.
-- **📦 Prompt Cache Invalidation**: The `PromptLoader` now tracks file modification timestamps and automatically evicts stale prompt templates after a VSIX update, ensuring the latest system and action prompts are always in effect without restarting Visual Studio.
-- **📋 Enhanced Logging**: Context allocation log now includes the estimated input token count alongside the allocated window size for easier diagnostics.
+- **🛠️ First-Run Auto-Discovery ([#25](https://github.com/FutureStackSolution/LocalPilot/issues/25))**: Automatically detects available Ollama models upon first installation and configures the extension defaults (e.g., Gemma, Llama), resolving the common `404 Not Found` error for new users.
+- **🛡️ Chat Connection Heartbeat**: The chat window now proactively validates the Ollama service and model selection, providing clear troubleshooting steps if the backend is unreachable or misconfigured.
+- **🧠 Dedicated Embedding Model Setting**: The RAG / semantic search pipeline now uses a separate, independently configurable **Embedding Model** (default: `nomic-embed-text`). Embedding and chat models are now fully decoupled.
+- **🛡️ Embedding-Model Guard**: `OllamaService` now detects embed-only models (`nomic`, `bge-*`, `e5-*`, etc.) before sending them to `/api/chat` and surfaces a clear, actionable error message in the chat panel.
+- **🌐 Polyglot Rename (C++ / Python / TS / Go)**: Improved project-wide renaming reliability for non-C# languages using a robust grep-and-replace strategy.
+- **⚡ Context Window Fix (4096 → 16384+)**: Optimized dynamic context sizing to prevent tool-instruction truncation during complex agent sessions.
+- **📦 Prompt Cache Invalidation**: Automatic eviction of stale prompt templates after updates, ensuring the latest system instructions are always active.
+- **📋 Enhanced Logging**: Context allocation log now includes estimated input token counts for easier diagnostics.
 
 ### 🚀 v1.5 - The Performance & Precision Update
 **"Blazing fast intelligence with zero hallucination overhead."**
@@ -212,7 +214,7 @@ Since **LocalPilot** runs Large Language Models (LLMs) **entirely on your local 
 - **⚖️ Dynamic Context Allocation**: Quick Actions are now capped at 8k tokens and use compact project maps to ensure maximum inference speed on local laptop hardware while maintaining project-wide awareness.
 - **🐛 Stability & Build Hardening**: Resolved critical type-mismatch errors in the Agentic loop and optimized the thread-safety of the cross-language dependency graph for enterprise-scale solutions.
 
-### 🔨 v1.3 - The Autopilot & Security Update 
+### 🔨 v1.3 - The Autopilot & Security Update
 **"A smarter, safer, and more integrated AI pair programming experience."**
 
 - **🏎️ Autonomous Agent Mode (Gated Beta)**: LocalPilot now transforms from a simple chat assistant into a proactive agent. By combining high-reasoning models with local tools, the agent can now perform multi-step tasks like "Refactor this class and update all call sites" autonomously.

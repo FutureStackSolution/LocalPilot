@@ -7,6 +7,7 @@ using Microsoft.VisualStudio.Shell;
 using System;
 using System.Runtime.InteropServices;
 using System.Threading;
+using System.Linq;
 using Task = System.Threading.Tasks.Task;
 
 namespace LocalPilot
@@ -45,26 +46,67 @@ namespace LocalPilot
             IProgress<ServiceProgressData> progress)
         {
             // Load persisted settings
+            bool isFirstRun = !SettingsPersistence.Exists;
             var settings = SettingsPersistence.Load();
             LocalPilotSettings.UpdateInstance(settings);
+
+            // 🚀 FIRST-RUN AUTO-DISCOVERY (v1.6)
+            // If this is the first time the user installs LocalPilot, 
+            // try to find what models they actually have in Ollama 
+            // instead of failing with 404 for 'llama3'.
+            if (isFirstRun)
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        var ollama = new OllamaService(settings.OllamaBaseUrl);
+                        var available = await ollama.GetAvailableModelsAsync();
+                        if (available.Count > 0)
+                        {
+                            // Pick first non-embedding model for chat
+                            string chatModel = available.FirstOrDefault(m => 
+                                !m.Contains("embed") && !m.Contains("nomic") && !m.Contains("bge-") && !m.Contains("e5-")) 
+                                ?? available[0];
+
+                            // Pick first embedding model for embeddings (fallback to chat model)
+                            string embedModel = available.FirstOrDefault(m => 
+                                m.Contains("embed") || m.Contains("nomic")) 
+                                ?? chatModel;
+
+                            settings.ChatModel = chatModel;
+                            settings.CompletionModel = chatModel;
+                            settings.ExplainModel = chatModel;
+                            settings.RefactorModel = chatModel;
+                            settings.DocModel = chatModel;
+                            settings.ReviewModel = chatModel;
+                            settings.EmbeddingModel = embedModel;
+
+                            SettingsPersistence.Save(settings);
+                            LocalPilotLogger.Log($"[AutoConfig] First-run detected available models. Set default to: {chatModel}", LogCategory.Ollama);
+                        }
+                    }
+                    catch { /* Quietly skip if Ollama is not running during first-run */ }
+                });
+            }
 
             // Register all commands
             await LocalPilotCommands.InitializeAsync(this);
             LocalPilotCommandRouter.Instance.Initialize(this);
 
-            // Auto-Index Project Context in background (v1.3)
+            // Auto-Index Project Context in background (v1.6)
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    // v2.0 Enterprise Intelligence: Wait for VS Solution to fully stabilize
+                    // v1.6 Enterprise Intelligence: Wait for VS Solution to fully stabilize
                     await Task.Delay(10000, cancellationToken).ConfigureAwait(false); 
                     
                     var ollama = new OllamaService(settings.OllamaBaseUrl);
                     LocalPilotLogger.Log("[Autopilot] Indexing project context in background...");
                     await ProjectContextService.Instance.IndexSolutionAsync(ollama, cancellationToken);
 
-                    // v3.0 Nexus Intelligence: Build the Full-Stack Dependency Graph
+                    // v1.6 Nexus Intelligence: Build the Full-Stack Dependency Graph
                     string root = "";
                     await JoinableTaskFactory.RunAsync(async () => {
                          var sol = await Community.VisualStudio.Toolkit.VS.Solutions.GetCurrentSolutionAsync();

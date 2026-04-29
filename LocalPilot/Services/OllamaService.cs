@@ -199,8 +199,8 @@ namespace LocalPilot.Services
                  model.IndexOf("bge-",  StringComparison.OrdinalIgnoreCase) >= 0 ||
                  model.IndexOf("e5-",   StringComparison.OrdinalIgnoreCase) >= 0))
             {
-                LocalPilotLogger.LogError($"[Ollama] Misconfiguration: '{model}' is an embedding model and cannot be used for chat. Go to LocalPilot Settings and set a chat-capable model (e.g. llama3.1:8b).", null, LogCategory.Ollama);
-                yield return ChatStreamResult.Text($"\n⚠️ **LocalPilot Configuration Error:** The selected Chat Model (`{model}`) is an embedding-only model and does not support chat or tool calls.\n\nPlease open **Tools → Options → LocalPilot** and change the **Chat Model** to a chat-capable model (e.g. `llama3.1:8b`).");
+                LocalPilotLogger.LogError($"[Ollama] Misconfiguration: '{model}' is an embedding model and cannot be used for chat. Go to LocalPilot Settings and set a chat-capable model (e.g. llama3).", null, LogCategory.Ollama);
+                yield return ChatStreamResult.Text($"\n⚠️ **LocalPilot Configuration Error:** The selected Chat Model (`{model}`) is an embedding-only model and does not support chat or tool calls.\n\nPlease open **Tools → Options → LocalPilot** and change the **Chat Model** to a chat-capable model (e.g. `llama3` or `gemma2`).");
                 yield break;
             }
 
