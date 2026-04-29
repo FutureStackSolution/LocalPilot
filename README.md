@@ -113,7 +113,7 @@ Navigate to **Tools > Options > LocalPilot > Settings**.
 2. **Model Assignments**: Assign preferred models for **Chat** and **Inline Completions**.
 
 > [!TIP]
-> For the best experience in **v1.6**, we recommend:
+> For the best experience in **v1.7**, we recommend:
 > - **Chat/Logic**: `qwen2.5-coder:7b` or `llama3.1:8b` (Excellent reasoning & tool use).
 > - **Inline Completions**: `starcoder2:3b` or `phi3:mini` (Lowest latency).
 > - **Embedding / RAG**: `nomic-embed-text` (Set separately in the new Embedding Model field).
@@ -183,17 +183,21 @@ Since **LocalPilot** runs Large Language Models (LLMs) **entirely on your local 
 *   **NVIDIA CUDA**: Ensure latest drivers are installed for GPU acceleration.
 
 > [!IMPORTANT]
-> LocalPilot is designed for efficiency, but because it performs all AI processing locally, it requires capable hardware. If suggestions feel slow, consider using a smaller, quantized model (e.g., `phi3:mini` or `starcoder2:3b`) in the settings.
+> LocalPilot is designed for efficiency, but because it performs all AI processing locally, it requires capable hardware. If suggestions feel slow, consider using a smaller, quantized model (e.g., `qwen-coder` or `codellama` or `phi3`) in the settings.
 
 ---
 
 ## 📜 Release History
 
-### 🚀 v1.6 - The Polyglot Reliability Update (latest)
-**"Smarter context, language-aware rename, and a hardened model pipeline."**
+### 🚀 v1.7 - The Connectivity & Reliability Update (latest)
+**"Smarter defaults, proactive error handling, and seamless first-run setup."**
 
 - **🛠️ First-Run Auto-Discovery ([#25](https://github.com/FutureStackSolution/LocalPilot/issues/25))**: Automatically detects available Ollama models upon first installation and configures the extension defaults (e.g., Gemma, Llama), resolving the common `404 Not Found` error for new users.
 - **🛡️ Chat Connection Heartbeat**: The chat window now proactively validates the Ollama service and model selection, providing clear troubleshooting steps if the backend is unreachable or misconfigured.
+
+### 🚀 v1.6 - The Polyglot Reliability Update
+**"Smarter context, language-aware rename, and a hardened model pipeline."**
+
 - **🧠 Dedicated Embedding Model Setting**: The RAG / semantic search pipeline now uses a separate, independently configurable **Embedding Model** (default: `nomic-embed-text`). Embedding and chat models are now fully decoupled.
 - **🛡️ Embedding-Model Guard**: `OllamaService` now detects embed-only models (`nomic`, `bge-*`, `e5-*`, etc.) before sending them to `/api/chat` and surfaces a clear, actionable error message in the chat panel.
 - **🌐 Polyglot Rename (C++ / Python / TS / Go)**: Improved project-wide renaming reliability for non-C# languages using a robust grep-and-replace strategy.
