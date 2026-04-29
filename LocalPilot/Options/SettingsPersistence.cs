@@ -15,9 +15,12 @@ namespace LocalPilot.Options
                          "LocalPilot");
         private static readonly string SettingsFile =
             Path.Combine(SettingsDir, "settings.json");
+            
+        public static bool Exists => File.Exists(SettingsFile);
 
         public static void Save(LocalPilotSettings s)
         {
+
             try
             {
                 Directory.CreateDirectory(SettingsDir);
@@ -40,6 +43,7 @@ namespace LocalPilot.Options
                 var json = File.ReadAllText(SettingsFile);
                 return JsonConvert.DeserializeObject<LocalPilotSettings>(json)
                        ?? new LocalPilotSettings();
+                
             }
             catch (Exception ex)
             {

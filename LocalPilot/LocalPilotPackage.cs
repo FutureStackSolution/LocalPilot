@@ -7,6 +7,7 @@ using Microsoft.VisualStudio.Shell;
 using System;
 using System.Runtime.InteropServices;
 using System.Threading;
+using System.Linq;
 using Task = System.Threading.Tasks.Task;
 
 namespace LocalPilot
@@ -45,8 +46,49 @@ namespace LocalPilot
             IProgress<ServiceProgressData> progress)
         {
             // Load persisted settings
+            bool isFirstRun = !SettingsPersistence.Exists;
             var settings = SettingsPersistence.Load();
             LocalPilotSettings.UpdateInstance(settings);
+
+            // 🚀 FIRST-RUN AUTO-DISCOVERY (v3.1)
+            // If this is the first time the user installs LocalPilot, 
+            // try to find what models they actually have in Ollama 
+            // instead of failing with 404 for 'llama3'.
+            if (isFirstRun)
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        var ollama = new OllamaService(settings.OllamaBaseUrl);
+                        var available = await ollama.GetAvailableModelsAsync();
+                        if (available.Count > 0)
+                        {
+                            // Pick first non-embedding model for chat
+                            string chatModel = available.FirstOrDefault(m => 
+                                !m.Contains("embed") && !m.Contains("nomic") && !m.Contains("bge-") && !m.Contains("e5-")) 
+                                ?? available[0];
+
+                            // Pick first embedding model for embeddings (fallback to chat model)
+                            string embedModel = available.FirstOrDefault(m => 
+                                m.Contains("embed") || m.Contains("nomic")) 
+                                ?? chatModel;
+
+                            settings.ChatModel = chatModel;
+                            settings.CompletionModel = chatModel;
+                            settings.ExplainModel = chatModel;
+                            settings.RefactorModel = chatModel;
+                            settings.DocModel = chatModel;
+                            settings.ReviewModel = chatModel;
+                            settings.EmbeddingModel = embedModel;
+
+                            SettingsPersistence.Save(settings);
+                            LocalPilotLogger.Log($"[AutoConfig] First-run detected available models. Set default to: {chatModel}", LogCategory.Ollama);
+                        }
+                    }
+                    catch { /* Quietly skip if Ollama is not running during first-run */ }
+                });
+            }
 
             // Register all commands
             await LocalPilotCommands.InitializeAsync(this);

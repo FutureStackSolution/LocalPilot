@@ -457,6 +457,28 @@ namespace LocalPilot.Chat
                 AppendUserBubble(task);
             }
 
+            // 🛡️ VALIDATION: Ensure model is selected and Ollama is reachable
+            var settings = LocalPilotSettings.Instance;
+            string modelToUse = modelOverride ?? settings.ChatModel;
+
+            if (string.IsNullOrWhiteSpace(modelToUse))
+            {
+                string actionName = modelOverride != null ? "This action" : "Chat";
+                AppendAIBubble($"⚠️ **No Model Selected.**\n\n{actionName} requires a configured model. Please go to **Tools → Options → LocalPilot** and select a model.");
+                return;
+            }
+
+            // Quick connectivity check if this is the first message
+            if (_history.Count <= 1)
+            {
+                bool isOllamaRunning = await _ollama.IsAvailableAsync();
+                if (!isOllamaRunning)
+                {
+                    AppendAIBubble($"❌ **Cannot reach Ollama.**\n\nEnsure Ollama is running at `{settings.OllamaBaseUrl}`. You can download it from [ollama.com](https://ollama.com).");
+                    return;
+                }
+            }
+
             // 🚀 STATE RESET: Ensure no stale modifications from previous turns leak into this one
             _lastStagedChanges = null;
             SetStreaming(true, modelOverride);

@@ -22,13 +22,13 @@ namespace LocalPilot.Settings
         public string OllamaBaseUrl    { get; set; } = "http://localhost:11434";
 
         // ── Models ─────────────────────────────────────────────────────────────
-        public string CompletionModel  { get; set; } = "llama3:8b";
-        public string ChatModel        { get; set; } = "llama3:8b";
-        public string EmbeddingModel   { get; set; } = "nomic-embed-text:latest";
-        public string ExplainModel     { get; set; } = "llama3:8b";
-        public string RefactorModel    { get; set; } = "llama3:8b";
-        public string DocModel         { get; set; } = "llama3:8b";
-        public string ReviewModel      { get; set; } = "llama3:8b";
+        public string CompletionModel  { get; set; } = "llama3";
+        public string ChatModel        { get; set; } = "llama3";
+        public string EmbeddingModel   { get; set; } = "nomic-embed-text";
+        public string ExplainModel     { get; set; } = "llama3";
+        public string RefactorModel    { get; set; } = "llama3";
+        public string DocModel         { get; set; } = "llama3";
+        public string ReviewModel      { get; set; } = "llama3";
 
         /// <summary>
         /// Returns true if the configured ChatModel looks like a dedicated embedding model.
