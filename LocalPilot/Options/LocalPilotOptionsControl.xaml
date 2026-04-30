@@ -420,10 +420,14 @@
                         <!-- Project Intelligence -->
                         <TextBlock Text="📂  Project Intelligence" Style="{DynamicResource LpSectionHeader}"/>
                         <CheckBox x:Name="ChkEnableProjectMap" Content="Enable Project Map (Background indexing of headers)" Style="{DynamicResource LpCheckStyle}"/>
-
-
-
-                        <!-- Prompt Templates -->
+                        
+                        <StackPanel Margin="0,10,0,10">
+                            <TextBlock Text="Background Indexing Concurrency (Higher = Faster, Lower = More Stable)" Style="{DynamicResource LpLabelStyle}"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
+                                <Slider x:Name="SldConcurrency" Minimum="1" Maximum="10" Value="2" Width="200" TickFrequency="1" IsSnapToTickEnabled="True" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                <TextBlock x:Name="TxtConcurrency" Text="{Binding ElementName=SldConcurrency, Path=Value}" Style="{DynamicResource LpLabelStyle}" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </StackPanel>                        <!-- Prompt Templates -->
                         <TextBlock Text="📝  Instruction Templates" Style="{DynamicResource LpSectionHeader}"/>
                         <TextBlock Text="LocalPilot uses modular Markdown templates for all its instructions. You can edit these files to customize how the agent thinks, explains, and refactors." 
                                    Style="{DynamicResource LpMutedLabel}" TextWrapping="Wrap" Margin="0,0,0,14"/>

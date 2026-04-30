@@ -66,6 +66,7 @@ namespace LocalPilot.Settings
 
         // ── Workspace Snapshot ────────────────────────────────────────────────
         public bool   EnableProjectMap   { get; set; } = true;
+        public int    BackgroundIndexingConcurrency { get; set; } = 2;
 
         // ── UI Preferences ────────────────────────────────────────────────────
 
