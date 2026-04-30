@@ -88,6 +88,7 @@ namespace LocalPilot.Options
             ChkEnableLogging.IsChecked = s.EnableLogging;
 
             ChkEnableProjectMap.IsChecked = s.EnableProjectMap;
+            SldConcurrency.Value = s.BackgroundIndexingConcurrency;
 
             TxtChatHistory.Text       = s.ChatHistoryMaxItems.ToString();
 
@@ -143,6 +144,7 @@ namespace LocalPilot.Options
             {
                 s.Mode             = (PerformanceMode)CmbPerformanceMode.SelectedIndex;
                 s.EnableProjectMap = ChkEnableProjectMap.IsChecked == true;
+                s.BackgroundIndexingConcurrency = (int)SldConcurrency.Value;
                 if (int.TryParse(TxtChatHistory.Text, out int ch)) s.ChatHistoryMaxItems = ch;
             }
 
@@ -251,16 +253,7 @@ namespace LocalPilot.Options
             });
         }
 
-        private void BtnReset_Click(object sender, RoutedEventArgs e)
-        {
-            var r = MessageBox.Show("Reset all settings to defaults?", "LocalPilot",
-                                    MessageBoxButton.YesNo, MessageBoxImage.Question);
-            if (r == MessageBoxResult.Yes)
-            {
-                LocalPilotSettings.UpdateInstance(new LocalPilotSettings());
-                LoadSettings(LocalPilotSettings.Instance);
-            }
-        }
+
 
         private void BtnDismissToast_Click(object sender, RoutedEventArgs e)
         {

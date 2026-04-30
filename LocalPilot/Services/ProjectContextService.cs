@@ -123,20 +123,36 @@ namespace LocalPilot.Services
 
         private async Task ParallelUpdateAsync(List<string> files, OllamaService ollama, CancellationToken ct)
         {
-            // 🚀 CONTROLLED PARALLELISM: Process files in small batches to ensure YieldToken is checked frequently
-            var tasks = new List<Task>();
-            foreach (var file in files)
+            // 🚀 CONTROLLED PARALLELISM: Process files using user-configured concurrency to prevent overwhelming the local Ollama server
+            int concurrency = Math.Max(1, LocalPilotSettings.Instance.BackgroundIndexingConcurrency);
+            using (var semaphore = new SemaphoreSlim(concurrency))
             {
-                ct.ThrowIfCancellationRequested(); // Check for Agent activity
-                tasks.Add(ProcessFileAsync(file, GetRelativePath(file), ollama, ct));
-                
-                if (tasks.Count >= 5) // Process 5 files at a time
+                var tasks = new List<Task>();
+                foreach (var file in files)
                 {
-                    await Task.WhenAll(tasks);
-                    tasks.Clear();
+                    if (ollama.CircuitBreakerTripped)
+                    {
+                        LocalPilotLogger.Log("[RAG] Aborting indexing due to Circuit Breaker.", LogCategory.Agent);
+                        break;
+                    }
+
+                    ct.ThrowIfCancellationRequested(); // Check for Agent activity
+                    await semaphore.WaitAsync(ct);
+                    
+                    tasks.Add(Task.Run(async () => 
+                    {
+                        try
+                        {
+                            await ProcessFileAsync(file, GetRelativePath(file), ollama, ct);
+                        }
+                        finally
+                        {
+                            semaphore.Release();
+                        }
+                    }, ct));
                 }
+                await Task.WhenAll(tasks);
             }
-            if (tasks.Count > 0) await Task.WhenAll(tasks);
         }
 
         private void SetupIncrementalWatcher(OllamaService ollama)
@@ -206,11 +222,14 @@ namespace LocalPilot.Services
                     await _parallelLock.WaitAsync(ct);
                     try
                     {
-                        var vector = await ollama.GetEmbeddingsAsync(LocalPilotSettings.Instance.EmbeddingModel, chunkText, ct);
-                        if (vector != null)
+                        float[] vector = null;
+                        if (!string.IsNullOrWhiteSpace(LocalPilotSettings.Instance.EmbeddingModel))
                         {
-                            newChunks.Add(new CodeChunk { FilePath = relativePath, Content = chunkText, Vector = vector, LastModified = fileInfo.LastWriteTime });
+                            vector = await ollama.GetEmbeddingsAsync(LocalPilotSettings.Instance.EmbeddingModel, chunkText, ct);
                         }
+                        
+                        // Add chunk even if vector is null (enables keyword search fallback)
+                        newChunks.Add(new CodeChunk { FilePath = relativePath, Content = chunkText, Vector = vector, LastModified = fileInfo.LastWriteTime });
                     }
                     finally { _parallelLock.Release(); }
                 }
@@ -225,14 +244,37 @@ namespace LocalPilot.Services
 
         public async Task<string> SearchContextAsync(OllamaService ollama, string query, int topN = 5)
         {
-            if (string.IsNullOrWhiteSpace(query)) return string.Empty;
-            var queryVector = await ollama.GetEmbeddingsAsync(LocalPilotSettings.Instance.EmbeddingModel, query);
-            if (queryVector == null || _index.Count == 0) return string.Empty;
+            if (string.IsNullOrWhiteSpace(query) || _index.Count == 0) return string.Empty;
+
+            float[] queryVector = null;
+            if (!string.IsNullOrWhiteSpace(LocalPilotSettings.Instance.EmbeddingModel) && !ollama.CircuitBreakerTripped)
+            {
+                queryVector = await ollama.GetEmbeddingsAsync(LocalPilotSettings.Instance.EmbeddingModel, query);
+            }
 
             var results = _index
-                .Select(c => new { Chunk = c, Score = CosineSimilarity(queryVector, c.Vector) + (query.IndexOf(Path.GetFileName(c.FilePath), StringComparison.OrdinalIgnoreCase) >= 0 ? 0.3 : 0) })
-                .Where(r => r.Score > 0.4)
-                .OrderByDescending(r => r.Score).Take(topN).ToList();
+                .Select(c => 
+                {
+                    double score = 0;
+                    // Boost if filename matches
+                    if (query.IndexOf(Path.GetFileNameWithoutExtension(c.FilePath), StringComparison.OrdinalIgnoreCase) >= 0)
+                        score += 0.3;
+
+                    if (queryVector != null && c.Vector != null)
+                    {
+                        // Primary: Semantic Vector Search
+                        score += CosineSimilarity(queryVector, c.Vector);
+                    }
+                    else
+                    {
+                        // Fallback: Lexical Keyword Search
+                        score += CalculateKeywordScore(query, c.Content);
+                    }
+                    return new { Chunk = c, Score = score };
+                })
+                .Where(r => r.Score > 0.1) // Lower threshold to allow keyword matches
+                .OrderByDescending(r => r.Score)
+                .Take(topN).ToList();
 
             if (!results.Any()) return string.Empty;
 
@@ -251,16 +293,25 @@ namespace LocalPilot.Services
         private bool IsRelevantFile(string path)
         {
             var ext = Path.GetExtension(path).ToLower();
-            string[] allowed = { ".cs", ".ts", ".tsx", ".json", ".md", ".css" };
-            if (path.Contains("\\.localpilot\\") || path.Contains("\\obj\\") || path.Contains("\\bin\\") || path.Contains("\\node_modules\\")) return false;
+            string[] allowed = { 
+                ".cs", ".vb", ".cshtml", ".vbhtml", // .NET
+                ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", // JS/TS
+                ".html", ".css", ".scss", ".sass", ".less", // Web/Style
+                ".json", ".md", ".yaml", ".yml", // Config/Docs
+                ".vue", ".svelte", ".astro" // Frameworks
+            };
+            if (path.Contains("\\.localpilot\\") || path.Contains("\\obj\\") || path.Contains("\\bin\\") || path.Contains("\\node_modules\\") || path.Contains("\\dist\\")) return false;
             return allowed.Contains(ext);
         }
 
         private List<string> ChunkContent(string path, string content)
         {
-            var lines = content.Split('\n');
             var chunks = new List<string>();
-            for (int i = 0; i < lines.Length; i += 40) chunks.Add(string.Join("\n", lines.Skip(i).Take(40)));
+            int chunkSize = 2500; // Roughly 500-600 tokens, optimized for embedding models
+            for (int i = 0; i < content.Length; i += chunkSize)
+            {
+                chunks.Add(content.Substring(i, Math.Min(chunkSize, content.Length - i)));
+            }
             return chunks;
         }
 
@@ -270,6 +321,37 @@ namespace LocalPilot.Services
             double dot = 0, m1 = 0, m2 = 0;
             for (int i = 0; i < v1.Length; i++) { dot += (double)v1[i] * v2[i]; m1 += (double)v1[i] * v1[i]; m2 += (double)v2[i] * v2[i]; }
             return dot / (Math.Sqrt(m1) * Math.Sqrt(m2));
+        }
+
+        private double CalculateKeywordScore(string query, string content)
+        {
+            if (string.IsNullOrWhiteSpace(content)) return 0;
+            
+            var queryWords = query.ToLower().Split(new[] { ' ', '?', '.', ',', ':', ';', '_', '-' }, StringSplitOptions.RemoveEmptyEntries)
+                                  .Where(w => w.Length > 2).ToList(); 
+            
+            if (queryWords.Count == 0) return 0;
+
+            string contentLower = content.ToLower();
+            double score = 0;
+            
+            foreach (var word in queryWords)
+            {
+                int index = 0;
+                int count = 0;
+                while ((index = contentLower.IndexOf(word, index)) != -1)
+                {
+                    count++;
+                    index += word.Length;
+                }
+                
+                if (count > 0)
+                {
+                    // Logarithmic term frequency scaling
+                    score += (1.0 + Math.Log(count)) * 0.15; 
+                }
+            }
+            return score;
         }
 
         private async Task SaveIndexAsync(string root) { try { string dir = Path.Combine(root, ".localpilot"); if (!Directory.Exists(dir)) Directory.CreateDirectory(dir); File.WriteAllText(Path.Combine(dir, "index.json"), Newtonsoft.Json.JsonConvert.SerializeObject(_index)); _lastDiskSaveTime = DateTime.Now; } catch { } }

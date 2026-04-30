@@ -375,8 +375,10 @@ namespace LocalPilot.Chat
             // Modern introductory text is now partly in XAML, but we can add a greet
             AppendAIBubble("Hi, I am ready to help with your code. Select text and use the actions above, or ask a question below.");
 
-            // 🚀 PERFORMANCE GUIDE: Recommend optimal local settings
-            AppendAIBanner("Laptop Optimization: For best performance, use models with q4_K_M or q5_K_M quantization.", "Dismiss", () => { });
+            if (string.IsNullOrEmpty(LocalPilotSettings.Instance.EmbeddingModel))
+            {
+                AppendAIBanner("Configure an Embedding Model (e.g. nomic-embed-text) in settings to unlock full codebase awareness and faster RAG search.", "Dismiss", () => { }, "PRO TIP");
+            }
         }
 
         // ── Send message ──────────────────────────────────────────────────────
@@ -2057,7 +2059,7 @@ namespace LocalPilot.Chat
 
             return await _permissionTcs.Task;
         }
-        private void AppendAIBanner(string text, string buttonText, Action onButtonClick)
+        private void AppendAIBanner(string text, string buttonText, Action onButtonClick, string title = "SMART FIX SUGGESTION")
         {
             // 🛡️ DYNAMIC SUPPRESSION: Don't interrupt the user if the agent is already busy
             if (_isStreaming) return;
@@ -2095,7 +2097,7 @@ namespace LocalPilot.Chat
             var contentStack = new StackPanel { VerticalAlignment = VerticalAlignment.Top };
             contentStack.Children.Add(new TextBlock
             {
-                Text = "SMART FIX SUGGESTION",
+                Text = title,
                 FontSize = 10,
                 FontWeight = FontWeights.Bold,
                 Foreground = (Brush)this.Resources["LpMutedFgBrush"],
