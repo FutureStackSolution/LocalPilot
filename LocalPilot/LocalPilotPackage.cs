@@ -54,8 +54,28 @@ namespace LocalPilot
             // If this is the first time the user installs LocalPilot, 
             // try to find what models they actually have in Ollama 
             // instead of failing with 404 for 'llama3'.
-            if (isFirstRun)
+            if (isFirstRun || string.IsNullOrEmpty(settings.ChatModel))
             {
+                _ = JoinableTaskFactory.RunAsync(async () =>
+                {
+                    await JoinableTaskFactory.SwitchToMainThreadAsync();
+                    Microsoft.VisualStudio.Shell.Interop.IVsUIShell uiShell = (Microsoft.VisualStudio.Shell.Interop.IVsUIShell)await GetServiceAsync(typeof(Microsoft.VisualStudio.Shell.Interop.SVsUIShell));
+                    Guid clsid = Guid.Empty;
+                    int result;
+                    uiShell.ShowMessageBox(
+                        0,
+                        ref clsid,
+                        "LocalPilot Configuration Required",
+                        "Welcome to LocalPilot! Since no models are configured, please ensure Ollama is running, then go to Tools -> Options -> LocalPilot to set your AI models.",
+                        string.Empty,
+                        0,
+                        Microsoft.VisualStudio.Shell.Interop.OLEMSGBUTTON.OLEMSGBUTTON_OK,
+                        Microsoft.VisualStudio.Shell.Interop.OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_FIRST,
+                        Microsoft.VisualStudio.Shell.Interop.OLEMSGICON.OLEMSGICON_INFO,
+                        0,
+                        out result);
+                });
+
                 _ = Task.Run(async () =>
                 {
                     try
