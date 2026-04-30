@@ -113,10 +113,10 @@ Navigate to **Tools > Options > LocalPilot > Settings**.
 2. **Model Assignments**: Assign preferred models for **Chat** and **Inline Completions**.
 
 > [!TIP]
-> For the best experience in **v1.7**, we recommend:
+> For the best experience in **v1.8**, we recommend:
 > - **Chat/Logic**: `qwen2.5-coder:7b` or `llama3.1:8b` (Excellent reasoning & tool use).
 > - **Inline Completions**: `starcoder2:3b` or `phi3:mini` (Lowest latency).
-> - **Embedding / RAG**: `nomic-embed-text` (Set separately in the new Embedding Model field).
+> - **Embedding / RAG**: `nomic-embed-text` or `mxbai-embed-large` **(CRITICAL: You MUST configure an embedding model here to unlock powerful AI-driven semantic codebase search. If left blank, LocalPilot falls back to basic keyword search.)**
 
 ---
 
@@ -189,7 +189,15 @@ Since **LocalPilot** runs Large Language Models (LLMs) **entirely on your local 
 
 ## 📜 Release History
 
-### 🚀 v1.7 - The Connectivity & Reliability Update (latest)
+### 🚀 v1.8 - The Resilience & Architecture Update (latest)
+**"Rock-solid background indexing, intelligent fallbacks, and user-configurable stability."**
+
+- **🧠 Decoupled & Resilient Embedding Engine**: Major architectural overhaul separating Chat and Background Indexing. LocalPilot now gracefully handles Ollama server drops with a robust Circuit Breaker and Exponential Backoff, preventing background tasks from overwhelming your local hardware.
+- **⚡ Dynamic Chunk Sizing**: Switched from rigid line-count chunking to dynamic character-count chunking (optimized for ~500 tokens) to vastly improve the quality and density of codebase vectors.
+- **🛠️ Configurable Background Concurrency**: Introduced a new user-facing setting (slider) to throttle or accelerate background indexing based on your specific machine's capabilities.
+- **🛡️ Keyword Search Fallback**: If you choose not to configure an Embedding model (or if your server trips the circuit breaker), LocalPilot will now instantly and gracefully fallback to a lightning-fast, CPU-bound Log-Normalized Keyword Search (BM25 style) to maintain project awareness!
+
+### 🚀 v1.7 - The Connectivity & Reliability Update
 **"Smarter defaults, proactive error handling, and seamless first-run setup."**
 
 - **🛠️ First-Run Auto-Discovery ([#25](https://github.com/FutureStackSolution/LocalPilot/issues/25))**: Automatically detects available Ollama models upon first installation and configures the extension defaults (e.g., Gemma, Llama), resolving the common `404 Not Found` error for new users.

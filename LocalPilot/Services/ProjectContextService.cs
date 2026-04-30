@@ -293,8 +293,14 @@ namespace LocalPilot.Services
         private bool IsRelevantFile(string path)
         {
             var ext = Path.GetExtension(path).ToLower();
-            string[] allowed = { ".cs", ".ts", ".tsx", ".json", ".md", ".css" };
-            if (path.Contains("\\.localpilot\\") || path.Contains("\\obj\\") || path.Contains("\\bin\\") || path.Contains("\\node_modules\\")) return false;
+            string[] allowed = { 
+                ".cs", ".vb", ".cshtml", ".vbhtml", // .NET
+                ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", // JS/TS
+                ".html", ".css", ".scss", ".sass", ".less", // Web/Style
+                ".json", ".md", ".yaml", ".yml", // Config/Docs
+                ".vue", ".svelte", ".astro" // Frameworks
+            };
+            if (path.Contains("\\.localpilot\\") || path.Contains("\\obj\\") || path.Contains("\\bin\\") || path.Contains("\\node_modules\\") || path.Contains("\\dist\\")) return false;
             return allowed.Contains(ext);
         }
 
