@@ -1,132 +1,38 @@
-<?xml version="1.0" encoding="utf-8"?>
-<Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <VisualStudioVersion Condition="'$(VisualStudioVersion)' == ''">18.0</VisualStudioVersion>
-    <MinimumVisualStudioVersion>17.0</MinimumVisualStudioVersion>
-    <VSToolsPath Condition="'$(VSToolsPath)' == ''">$(MSBuildExtensionsPath32)\Microsoft\VisualStudio\v$(VisualStudioVersion)</VSToolsPath>
-  </PropertyGroup>
-  <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
-  <PropertyGroup>
-    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
-    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
-    <SchemaVersion>2.0</SchemaVersion>
-    <ProjectTypeGuids>{82b43b9b-a64c-4715-b499-d71e9ca2bd60};{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}</ProjectTypeGuids>
-    <ProjectGuid>{ACCA91A1-AEC7-4D56-A7EB-7A300406CE9E}</ProjectGuid>
-    <RuntimeIdentifier>win</RuntimeIdentifier>
-    <OutputType>Library</OutputType>
-    <AppDesignerFolder>Properties</AppDesignerFolder>
+    <TargetFramework>net48</TargetFramework>
+    <UseWpf>true</UseWpf>
+    <LangVersion>latest</LangVersion>
     <RootNamespace>LocalPilot</RootNamespace>
     <AssemblyName>LocalPilot</AssemblyName>
-    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
-    <LangVersion>latest</LangVersion>
+    
+    <!-- VSIX settings -->
+    <VSSDKBuildToolsAutoSetup>true</VSSDKBuildToolsAutoSetup>
+    <VsixDeployOnDebug>true</VsixDeployOnDebug>
     <GeneratePkgDefFile>true</GeneratePkgDefFile>
+    
+    <!-- Retained from previous csproj for behavior parity -->
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <NoWarn>$(NoWarn);MSB3277;VSSDK007;VSTHRD003</NoWarn>
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
     <GenerateBindingRedirectsOutputType>true</GenerateBindingRedirectsOutputType>
-    <NoWarn>$(NoWarn);MSB3277</NoWarn>
-    <UseCodebase>true</UseCodebase>
     <IncludeAssemblyInVSIXContainer>true</IncludeAssemblyInVSIXContainer>
-    <IncludeDebugSymbolsInVSIXContainer>false</IncludeDebugSymbolsInVSIXContainer>
-    <IncludeDebugSymbolsInLocalVSIXDeployment>false</IncludeDebugSymbolsInLocalVSIXDeployment>
     <CopyBuildOutputToOutputDirectory>true</CopyBuildOutputToOutputDirectory>
     <CopyOutputSymbolsToOutputDirectory>true</CopyOutputSymbolsToOutputDirectory>
-    <DeployExtension Condition="'$(Configuration)' == 'Debug'">true</DeployExtension>
-    <CreateVsixContainer>true</CreateVsixContainer>
-    <VSIXDebuggerBaseVersion Condition="'$(VSIXDebuggerBaseVersion)' == ''">18.0</VSIXDebuggerBaseVersion>
-    <StartAction>Program</StartAction>
-    <StartProgram Condition="'$(DevEnvDir)' != ''">$(DevEnvDir)devenv.exe</StartProgram>
-    <StartArguments>/rootsuffix Exp</StartArguments>
   </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
-    <DebugSymbols>true</DebugSymbols>
-    <DebugType>full</DebugType>
-    <Optimize>false</Optimize>
-    <OutputPath>bin\Debug\</OutputPath>
-    <DefineConstants>DEBUG;TRACE</DefineConstants>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
-  </PropertyGroup>
-  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
-    <DebugType>pdbonly</DebugType>
-    <Optimize>true</Optimize>
-    <OutputPath>bin\Release\</OutputPath>
-    <DefineConstants>TRACE</DefineConstants>
-    <ErrorReport>prompt</ErrorReport>
-    <WarningLevel>4</WarningLevel>
-  </PropertyGroup>
-  <!-- ── Source Files ──────────────────────────────────────────────────────── -->
+
   <ItemGroup>
-    <Compile Include="Properties\AssemblyInfo.cs" />
-    <Compile Include="LocalPilotPackage.cs" />
-    <!-- Services -->
-    <Compile Include="Services\OllamaService.cs" />
-    <Compile Include="Services\NexusService.cs" />
-    <Compile Include="Services\LocalPilotLogger.cs" />
-    <Compile Include="Services\ProjectContextService.cs" />
-    <Compile Include="Services\AgentOrchestrator.cs" />
-    <Compile Include="Services\LocalPilotCommandRouter.cs" />
-    <Compile Include="Services\ProjectMapService.cs" />
-    <Compile Include="Services\ToolRegistry.cs" />
-    <Compile Include="Services\SymbolIndexService.cs" />
-    <Compile Include="Services\PromptLoader.cs" />
-    <Compile Include="Services\CapabilityCatalog.cs" />
-    <Compile Include="Services\ISemanticProvider.cs" />
-    <Compile Include="Services\RoslynSemanticProvider.cs" />
-    <Compile Include="Services\LspSemanticProvider.cs" />
-    <Compile Include="Services\LocalParserProvider.cs" />
-    <Compile Include="Services\HistoryCompactor.cs" />
-    <Compile Include="Services\PerformanceOptimizer.cs" />
-    <Compile Include="Services\PerformanceTracer.cs" />
-    <Compile Include="Services\SmartFixService.cs" />
-    <Compile Include="Services\UniversalSemanticProvider.cs" />
-    <Compile Include="Services\GlobalPriorityGuard.cs" />
-    <!-- Models -->
-    <Compile Include="Models\AgentModels.cs" />
-    <Compile Include="Models\NexusModels.cs" />
-    <!-- Settings -->
-    <Compile Include="Settings\LocalPilotSettings.cs" />
-    <!-- Options -->
-    <Compile Include="Options\LocalPilotOptionsPage.cs" />
-    <Compile Include="Options\LocalPilotAdvancedOptionsPage.cs" />
-    <Compile Include="Options\LocalPilotOptionsControl.xaml.cs">
-      <DependentUpon>LocalPilotOptionsControl.xaml</DependentUpon>
-    </Compile>
-    <Compile Include="Options\SettingsPersistence.cs" />
-    <!-- Completion -->
-    <Compile Include="Completion\CompletionPromptBuilder.cs" />
-    <Compile Include="Completion\InlineCompletionController.cs" />
-    <Compile Include="Completion\GhostTextAdornment.cs" />
-    <Compile Include="Completion\GhostTextAdornmentLayer.cs" />
-    <!-- Chat -->
-    <Compile Include="Chat\LocalPilotChatWindow.cs" />
-    <Compile Include="Chat\LocalPilotChatControl.xaml.cs">
-      <DependentUpon>LocalPilotChatControl.xaml</DependentUpon>
-    </Compile>
-    <Compile Include="Chat\ViewModels\AgentTurnViewModel.cs" />
-    <Compile Include="Chat\ViewModels\AgentTurnCoordinator.cs" />
-    <Compile Include="Chat\ViewModels\AgentTurnLayoutBuilder.cs" />
-    <Compile Include="Chat\ViewModels\AgentUiRenderer.cs" />
-    <Compile Include="Chat\ViewModels\ChatSessionViewModel.cs" />
-    <!-- Commands -->
-    <Compile Include="Commands\LocalPilotCommands.cs" />
+    <ProjectCapability Include="CreateVsixContainer" />
   </ItemGroup>
-  <!-- ── XAML Views ─────────────────────────────────────────────────────────── -->
-  <ItemGroup>
-    <Page Include="Options\LocalPilotOptionsControl.xaml">
-      <Generator>MSBuild:Compile</Generator>
-      <SubType>Designer</SubType>
-    </Page>
-    <Page Include="Chat\LocalPilotChatControl.xaml">
-      <Generator>MSBuild:Compile</Generator>
-      <SubType>Designer</SubType>
-    </Page>
-  </ItemGroup>
+
   <!-- ── VSCT Command Table ────────────────────────────────────────────────── -->
   <ItemGroup>
     <VSCTCompile Include="LocalPilotPackage.vsct">
       <ResourceName>Menus.ctmenu</ResourceName>
     </VSCTCompile>
   </ItemGroup>
-  <!-- ── Manifest ──────────────────────────────────────────────────────────── -->
+
+  <!-- ── Manifest & Assets ─────────────────────────────────────────────────── -->
   <ItemGroup>
     <None Include="source.extension.vsixmanifest">
       <SubType>Designer</SubType>
@@ -144,6 +50,7 @@
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
+
   <!-- 🛡️ ATTENTION: System Exclusion for Absolute Autonomy -->
   <ItemGroup>
     <None Remove=".localpilot\**" />
@@ -151,32 +58,17 @@
     <EmbeddedResource Remove=".localpilot\**" />
     <Content Remove=".localpilot\**" />
   </ItemGroup>
-  <!-- ────────────────────────────────────────────────── -->
-  <!-- ── Framework References ──────────────────────────────────────────────── -->
-  <ItemGroup>
-    <Reference Include="System" />
-    <Reference Include="System.Core" />
-    <Reference Include="System.Net.Http" />
-    <Reference Include="WindowsBase" />
-    <Reference Include="PresentationCore" />
-    <Reference Include="PresentationFramework" />
-    <Reference Include="System.Xaml" />
-    <Reference Include="System.ComponentModel.Composition" />
-  </ItemGroup>
+
   <!-- ── NuGet Packages ────────────────────────────────────────────────────── -->
   <ItemGroup>
-    <PackageReference Include="Community.VisualStudio.Toolkit.17">
-      <Version>17.0.549</Version>
-    </PackageReference>
-    <PackageReference Include="Microsoft.VisualStudio.SDK" Version="17.0.31902.203" />
-    <PackageReference Include="Microsoft.VSSDK.BuildTools" Version="17.1.4054" />
-    <PackageReference Include="Newtonsoft.Json" Version="13.0.1" />
+    <PackageReference Include="Community.VisualStudio.Toolkit.17" Version="17.0.549" />
+    <PackageReference Include="Microsoft.VisualStudio.SDK" Version="17.14.40265" ExcludeAssets="runtime" />
+    <PackageReference Include="Microsoft.VSSDK.BuildTools" Version="18.5.38461" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="9.0.0" />
     <PackageReference Include="System.Runtime.CompilerServices.Unsafe" Version="6.1.0" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="4.8.0" />
     <PackageReference Include="Microsoft.VisualStudio.LanguageServices" Version="4.8.0" />
   </ItemGroup>
-  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
-  <Import Project="$(UserProfile)\.nuget\packages\microsoft.vssdk.buildtools\17.1.4054\tools\vssdk\Microsoft.VsSDK.targets" Condition="Exists('$(UserProfile)\.nuget\packages\microsoft.vssdk.buildtools\17.1.4054\tools\vssdk\Microsoft.VsSDK.targets')" />
 </Project>
