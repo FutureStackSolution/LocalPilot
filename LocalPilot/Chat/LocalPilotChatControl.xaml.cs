@@ -374,6 +374,11 @@ namespace LocalPilot.Chat
 
             // Modern introductory text is now partly in XAML, but we can add a greet
             AppendAIBubble("Hi, I am ready to help with your code. Select text and use the actions above, or ask a question below.");
+
+            if (string.IsNullOrEmpty(LocalPilotSettings.Instance.EmbeddingModel))
+            {
+                AppendAIBanner("Pro Tip: Configure an Embedding Model (e.g. nomic-embed-text) in settings to unlock full codebase awareness and faster RAG search.", "Dismiss", () => { });
+            }
         }
 
         // ── Send message ──────────────────────────────────────────────────────
