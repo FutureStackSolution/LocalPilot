@@ -460,7 +460,6 @@
                 </Grid>
             </Border>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                <Button Content="Reset Defaults" Style="{DynamicResource LpSecondaryBtn}" x:Name="BtnReset" Click="BtnReset_Click" Margin="0,0,10,0"/>
                 <Button Content="💾  Save Settings" Style="{DynamicResource LpPrimaryBtn}" x:Name="BtnSave" Click="BtnSave_Click" Width="140"/>
             </StackPanel>
         </StackPanel>

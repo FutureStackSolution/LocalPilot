@@ -374,9 +374,6 @@ namespace LocalPilot.Chat
 
             // Modern introductory text is now partly in XAML, but we can add a greet
             AppendAIBubble("Hi, I am ready to help with your code. Select text and use the actions above, or ask a question below.");
-
-            // 🚀 PERFORMANCE GUIDE: Recommend optimal local settings
-            AppendAIBanner("Laptop Optimization: For best performance, use models with q4_K_M or q5_K_M quantization.", "Dismiss", () => { });
         }
 
         // ── Send message ──────────────────────────────────────────────────────

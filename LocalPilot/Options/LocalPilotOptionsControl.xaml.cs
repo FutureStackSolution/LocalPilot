@@ -253,16 +253,7 @@ namespace LocalPilot.Options
             });
         }
 
-        private void BtnReset_Click(object sender, RoutedEventArgs e)
-        {
-            var r = MessageBox.Show("Reset all settings to defaults?", "LocalPilot",
-                                    MessageBoxButton.YesNo, MessageBoxImage.Question);
-            if (r == MessageBoxResult.Yes)
-            {
-                LocalPilotSettings.UpdateInstance(new LocalPilotSettings());
-                LoadSettings(LocalPilotSettings.Instance);
-            }
-        }
+
 
         private void BtnDismissToast_Click(object sender, RoutedEventArgs e)
         {
