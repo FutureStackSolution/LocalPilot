@@ -61,7 +61,9 @@ The agent has access to several native tools via the `ToolRegistry`:
 The UI is built using **WPF** and adheres to the "Ghost UI" design mandate: minimalist, responsive, and natively theme-aware.
 
 *   **ChatControl**: The primary container. Manages streaming narrative and activity logs.
-*   **UI Virtualization**: Uses a virtualized `ItemsControl` for the **Activity Log**, ensuring **60fps scrolling** even with hundreds of tool logs.
+*   **Full UI Virtualization**: The entire message container and activity log utilize `VirtualizingStackPanel` with recycling. This enables **O(1) responsiveness** regardless of conversation length.
+*   **Batched Token Pipeline**: Fragments are buffered in a background thread and flushed to the UI at **30 FPS** via a `DispatcherTimer`, eliminating thread-marshal overhead.
+*   **Incremental Markdown**: A structural additive parser (O(1) per frame) replaces the legacy clear-and-rebuild pattern, ensuring smooth text flow during streaming.
 *   **AgentTurnLayout**: Separates the **Narrative** (LLM text) from the **Activity** (Tool execution timeline).
 *   **Human-in-the-Loop (HIL)**: A security layer requiring user approval for "risky" tools.
 *   **Staged Review**: Custom diff view for multi-file changes before final acceptance.
@@ -73,10 +75,12 @@ The UI is built using **WPF** and adheres to the "Ghost UI" design mandate: mini
 1.  **VRAM Management**: Models are automatically unloaded from VRAM after 5-10 minutes of inactivity using `keep_alive` tuning.
 2.  **I/O Efficiency**: **Incremental Syncing** via `FileSystemWatcher` ensures that only changed files are re-indexed for Nexus and RAG.
 3.  **Parallelization**: Solution-wide scans utilize all available CPU cores via throttled `Parallel.ForEach` to avoid system lag.
-4.  **Context Budgeting**: Agent prompts are kept lean by summarizing the Nexus graph and pruning large tool results.
-5.  **Performance Shield**: For read-only actions (Explain, Document, Review), native tools are disabled and system prompts are stripped of "Worker" protocols to ensure near-instant responses.
-6.  **Priority Guard**: All background services (RAG, Nexus) yield CPU/GPU resources immediately when an agent turn starts and for 30s after completion.
-7.  **Quantization Recommendation**: Optimized for **q4_K_M** or **q5_K_M** GGUF models on local laptop hardware.
+4.  **UI Lifecycle Management**: Background tasks (like performance scans) use **CancellationTokenSource** tied to panel visibility, preventing resource leaks.
+5.  **Graphics Optimization**: Brushes are **frozen** and **cached** on first creation; animations are offloaded to the hardware compositor via explicit `RenderTransform` definitions.
+6.  **Layout Debouncing**: Scroll operations are throttled to **~25 FPS** to prevent layout thrashing during rapid agentic turns.
+7.  **Inference Limits**: User-configurable **NumCtx** (Context Window) and **NumPredict** (Max Tokens) allow for hardware-specific VRAM/RAM optimization.
+8.  **Quantization Recommendation**: Optimized for **q4_K_M** or **q5_K_M** GGUF models on local laptop hardware.
+9.  **Priority Guard**: All background services (RAG, Nexus) yield CPU/GPU resources immediately when an agent turn starts and for 30s after completion.
 
 ---
 
