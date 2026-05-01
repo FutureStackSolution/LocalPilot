@@ -580,7 +580,7 @@
                 </StackPanel>
 
                 <!-- Right: icon buttons -->
-                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
 
                     <Button x:Name="BtnClear"
                             Style="{StaticResource IconButtonStyle}"
@@ -597,28 +597,35 @@
         <ScrollViewer Grid.Row="1" x:Name="ChatScroll"
                       VerticalScrollBarVisibility="Auto"
                       HorizontalScrollBarVisibility="Disabled"
-                      Background="{DynamicResource LpWindowBgBrush}">
-            <StackPanel Margin="0,6,0,6">
-
-                <StackPanel x:Name="WelcomePanel">
+                      Background="{DynamicResource LpWindowBgBrush}"
+                      ScrollViewer.CanContentScroll="True">
+            
+            <ItemsControl x:Name="MessagesContainer" 
+                          VerticalAlignment="Top"
+                          VirtualizingStackPanel.IsVirtualizing="True"
+                          VirtualizingStackPanel.VirtualizationMode="Recycling">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <VirtualizingStackPanel Margin="0,6,0,6"/>
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                
+                <ItemsControl.Items>
                     <!-- Welcome prompt — Copilot style: subtle, centred, muted -->
-                    <TextBlock Text="What's on your mind?"
-                               FontSize="12"
-                               Foreground="{DynamicResource LpMutedFgBrush}"
-                               Margin="24,12,24,8"
-                               TextWrapping="Wrap"/>
-                    <TextBlock Text="Tip: use slash actions like /explain, /fix, /review, or /test."
-                               FontSize="10"
-                               Foreground="{DynamicResource LpMutedFgBrush}"
-                               Margin="24,0,24,10"
-                               TextWrapping="Wrap"/>
-
-                </StackPanel>
-
-
-                <!-- All messages rendered here -->
-                <StackPanel x:Name="MessagesContainer" VerticalAlignment="Top"/>
-            </StackPanel>
+                    <StackPanel x:Name="WelcomePanel">
+                        <TextBlock Text="What's on your mind?"
+                                   FontSize="12"
+                                   Foreground="{DynamicResource LpMutedFgBrush}"
+                                   Margin="24,12,24,8"
+                                   TextWrapping="Wrap"/>
+                        <TextBlock Text="Tip: use slash actions like /explain, /fix, /review, or /test."
+                                   FontSize="10"
+                                   Foreground="{DynamicResource LpMutedFgBrush}"
+                                   Margin="24,0,24,10"
+                                   TextWrapping="Wrap"/>
+                    </StackPanel>
+                </ItemsControl.Items>
+            </ItemsControl>
         </ScrollViewer>
 
         <!-- ═══════════════════════  DIAGNOSTIC CONSOLE  ═══════════════════════ -->
@@ -633,6 +640,9 @@
                         Background="{DynamicResource LpMenuBgBrush}" CornerRadius="6" 
                         BorderBrush="{DynamicResource LpMenuBorderBrush}" BorderThickness="1"
                         RenderTransformOrigin="0.5,0.5">
+                    <Border.RenderTransform>
+                        <TranslateTransform Y="0"/>
+                    </Border.RenderTransform>
                     <Border.Style>
                         <Style TargetType="Border">
                             <Setter Property="Opacity" Value="1"/>
@@ -649,9 +659,6 @@
                             </Style.Triggers>
                         </Style>
                     </Border.Style>
-                    <Border.RenderTransform>
-                        <TranslateTransform Y="0"/>
-                    </Border.RenderTransform>
 
                     <Grid ClipToBounds="True">
                         <StackPanel Orientation="Horizontal" Margin="4,0,0,0">

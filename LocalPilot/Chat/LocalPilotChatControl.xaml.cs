@@ -59,11 +59,25 @@ namespace LocalPilot.Chat
         private ScrollViewer _currentActivityScroller;
         private FrameworkElement _currentNarrativeLabel;
         private FrameworkElement _currentActivityLabel;
+        private Color _lastThemeColor = Colors.Transparent;
+        private CancellationTokenSource _scanCts;
+        private long _lastScrollToEndTime = 0;
 
-        private Brush ThemeWindowBg => (Brush)this.Resources["LpWindowBgBrush"];
-        private Brush ThemeWindowFg => (Brush)this.Resources["LpWindowFgBrush"];
-        private Brush ThemeSurface  => (Brush)this.Resources["LpMenuBgBrush"];
-        private Brush ThemeBorder   => (Brush)this.Resources["LpMenuBorderBrush"];
+        // 🚀 STREAMING BUFFER: Batches fragments to prevent thread-marshall flooding
+        private readonly StringBuilder _streamingBuffer = new StringBuilder();
+        private readonly object _streamingLock = new object();
+        private System.Windows.Threading.DispatcherTimer _streamingTimer;
+
+        // Cached Theme Brushes (Updated in UpdateBrushes)
+        private Brush _themeWindowBg = Brushes.White;
+        private Brush _themeWindowFg = Brushes.Black;
+        private Brush _themeSurface  = Brushes.White;
+        private Brush _themeBorder   = Brushes.Gray;
+
+        private Brush ThemeWindowBg => _themeWindowBg;
+        private Brush ThemeWindowFg => _themeWindowFg;
+        private Brush ThemeSurface  => _themeSurface;
+        private Brush ThemeBorder   => _themeBorder;
 
         // Design tokens for rendering logic
         private static readonly FontFamily UIFont      = new FontFamily("Segoe UI");
@@ -112,6 +126,11 @@ namespace LocalPilot.Chat
             // Initialize history immediately to prevent race conditions during async loading
             if (_history.Count == 0) ShowWelcomeMessage();
             
+            // Initialize Streaming Timer (30 FPS)
+            _streamingTimer = new System.Windows.Threading.DispatcherTimer(System.Windows.Threading.DispatcherPriority.Background);
+            _streamingTimer.Interval = TimeSpan.FromMilliseconds(32);
+            _streamingTimer.Tick += OnStreamingTimerTick;
+
             Loaded += OnLoaded;
             Unloaded += OnUnloaded;
         }
@@ -153,6 +172,7 @@ namespace LocalPilot.Chat
 
             VSColorTheme.ThemeChanged += OnThemeChanged;
 
+            _scanCts = new CancellationTokenSource();
 
             // 🚀 Professional Background Grounding
             if (LocalPilotSettings.Instance.EnableProjectMap)
@@ -162,22 +182,28 @@ namespace LocalPilot.Chat
 
             // 🚀 PERFORMANCE OPTIMIZER: Initial scan of the active document
             _ = Task.Run(async () => {
-                await Task.Delay(5000); // Wait for warm-up
-                await ScanCurrentFileForPerformanceAsync();
+                try 
+                {
+                    await Task.Delay(5000, _scanCts.Token); // Wait for warm-up
+                    await ScanCurrentFileForPerformanceAsync(_scanCts.Token);
+                }
+                catch (OperationCanceledException) { }
             });
         }
 
-        private async Task ScanCurrentFileForPerformanceAsync()
+        private async Task ScanCurrentFileForPerformanceAsync(CancellationToken ct = default)
         {
-            if (_isStreaming) return;
+            if (_isStreaming || ct.IsCancellationRequested) return;
 
             try
             {
                 var activeDoc = await VS.Documents.GetActiveDocumentViewAsync();
-                if (activeDoc?.FilePath == null) return;
+                if (ct.IsCancellationRequested || activeDoc?.FilePath == null) return;
 
                 string content = activeDoc.TextBuffer.CurrentSnapshot.GetText();
-                var issues = await PerformanceOptimizer.Instance.AnalyzeFileAsync(activeDoc.FilePath, content);
+                var issues = await PerformanceOptimizer.Instance.AnalyzeFileAsync(activeDoc.FilePath, content, ct);
+
+                if (ct.IsCancellationRequested) return;
 
                 if (issues.Any())
                 {
@@ -219,8 +245,19 @@ namespace LocalPilot.Chat
         private void OnUnloaded(object sender, RoutedEventArgs e)
         {
             VSColorTheme.ThemeChanged -= OnThemeChanged;
-            // No longer canceling _cts here to allow background AI streaming to finish 
-            // even if the user switches tabs or focuses the editor.
+            _scanCts?.Cancel();
+            _scanCts?.Dispose();
+            _scanCts = null;
+        }
+
+        private void DebouncedScrollToEnd()
+        {
+            long now = DateTime.Now.Ticks / 10000;
+            if (now - _lastScrollToEndTime > 40) // ~25 FPS scroll limit to avoid layout thrashing
+            {
+                ChatScroll.ScrollToEnd();
+                _lastScrollToEndTime = now;
+            }
         }
 
         private void OnThemeChanged(ThemeChangedEventArgs e) => UpdateBrushes();
@@ -231,35 +268,39 @@ namespace LocalPilot.Chat
             {
                 // Base theme brushes from Visual Studio
                 var toolWindowBg = Application.Current.FindResource(VsBrushes.ToolWindowBackgroundKey) as SolidColorBrush;
+                if (toolWindowBg == null) return;
+                
+                // 🚀 PERFORMANCE GUARD: Skip if the theme color hasn't actually changed
+                if (toolWindowBg.Color == _lastThemeColor) return;
+                _lastThemeColor = toolWindowBg.Color;
+
                 var toolWindowFg = Application.Current.FindResource(VsBrushes.ToolWindowTextKey) as Brush ?? Brushes.Black;
-                var borderBrush  = Application.Current.FindResource(VsBrushes.ToolWindowBorderKey) as Brush ?? Brushes.Gray;
                 var grayText     = Application.Current.FindResource(VsBrushes.GrayTextKey) as Brush ?? Brushes.DarkGray;
 
-                // Fallback when VS theme resources are unavailable
-                var baseBgColor = toolWindowBg?.Color ?? Colors.White;
+                var baseBgColor = toolWindowBg.Color;
                 bool isDark = IsDark(baseBgColor);
 
                 // Derived surfaces for better separation across Dark/Light/Blue themes
                 var menuBgColor = AdjustColor(baseBgColor, isDark ? 8 : -8);
                 var userBubbleColor = AdjustColor(baseBgColor, isDark ? 12 : -12);
 
-                this.Resources["LpWindowBgBrush"] = new SolidColorBrush(baseBgColor);
+                this.Resources["LpWindowBgBrush"] = CreateFrozenBrush(baseBgColor);
                 this.Resources["LpWindowFgBrush"] = toolWindowFg;
                 this.Resources["LpMenuBgBrush"] = (Brush)Application.Current.FindResource(VsBrushes.ToolWindowBackgroundKey);
                 this.Resources["LpMenuBorderBrush"] = (Brush)Application.Current.FindResource(VsBrushes.ToolWindowBorderKey);
                 this.Resources["LpMutedFgBrush"] = grayText;
                 if (!isDark)
-                    this.Resources["LpMutedFgBrush"] = new SolidColorBrush(Color.FromRgb(0x40, 0x40, 0x40));
+                    this.Resources["LpMutedFgBrush"] = CreateFrozenBrush(Color.FromRgb(0x40, 0x40, 0x40));
 
                 // Solid surfaces only (no alpha) — avoids layered transparency bugs in VS-hosted WPF
-                this.Resources["LpCodeHeaderBgBrush"] = new SolidColorBrush(AdjustColor(menuBgColor, isDark ? -10 : 10));
-                this.Resources["LpCodeContentBgBrush"] = new SolidColorBrush(AdjustColor(baseBgColor, isDark ? -4 : 4));
-                this.Resources["LpBannerBgBrush"] = new SolidColorBrush(AdjustColor(menuBgColor, isDark ? -6 : 6));
+                this.Resources["LpCodeHeaderBgBrush"] = CreateFrozenBrush(AdjustColor(menuBgColor, isDark ? -10 : 10));
+                this.Resources["LpCodeContentBgBrush"] = CreateFrozenBrush(AdjustColor(baseBgColor, isDark ? -4 : 4));
+                this.Resources["LpBannerBgBrush"] = CreateFrozenBrush(AdjustColor(menuBgColor, isDark ? -6 : 6));
 
                 // 🎨 Accent & Highlight area - Aggressive Discovery with Vibrance Guard
                 var accentBrush = Application.Current.FindResource(VsBrushes.HighlightKey) as Brush
                                   ?? Application.Current.FindResource(VsBrushes.ControlLinkTextKey) as Brush
-                                  ?? new SolidColorBrush(Color.FromRgb(0x2D, 0x8C, 0xFF));
+                                  ?? CreateFrozenBrush(Color.FromRgb(0x2D, 0x8C, 0xFF));
                 
                 var accentColor = (accentBrush as SolidColorBrush)?.Color ?? Color.FromRgb(0x2D, 0x8C, 0xFF);
 
@@ -267,38 +308,41 @@ namespace LocalPilot.Chat
                 if (!isDark && (accentColor.R > 200 && accentColor.G > 200 && accentColor.B > 200))
                 {
                     accentColor = Color.FromRgb(0x00, 0x5A, 0x9E); // Deep Professional Blue
-                    accentBrush = new SolidColorBrush(accentColor);
+                    accentBrush = CreateFrozenBrush(accentColor);
                 }
 
                 this.Resources["LpAccentBrush"]    = accentBrush;
-                // Solid hover tint (VsBrushes does not expose stable command-bar hover keys across SDK versions).
-                this.Resources["LpAccentHoverBrush"] = new SolidColorBrush(AdjustColor(accentColor, isDark ? 28 : -28));
+                this.Resources["LpAccentHoverBrush"] = CreateFrozenBrush(AdjustColor(accentColor, isDark ? 28 : -28));
 
                 this.Resources["LpSelectionBrush"] = this.TryFindResource(VsBrushes.HighlightKey) as Brush ?? accentBrush;
                 
                 // 🛡️ TRULY THEME-AWARE CONTRAST ENGINE
-                // Ensures icons and keywords are ALWAYS visible by calculating contrast against the target background.
                 bool isBgLight = (baseBgColor.R + baseBgColor.G + baseBgColor.B) / 3.0 > 128;
                 bool isAccentLight = (accentColor.R + accentColor.G + accentColor.B) / 3.0 > 180;
                 
-                // If accent brand color is too pale for light theme, darken it for primary UI elements
                 if (isBgLight && isAccentLight)
                 {
                     accentColor = Color.FromRgb(0x00, 0x5A, 0x9E); // Corporate Blue
-                    this.Resources["LpAccentBrush"] = new SolidColorBrush(accentColor);
+                    this.Resources["LpAccentBrush"] = CreateFrozenBrush(accentColor);
                 }
 
                 // Standard high-contrast brushes
                 this.Resources["LpSendIconBrush"]  = (isBgLight && isAccentLight) ? Brushes.Black : Brushes.White;
-                this.Resources["LpKeywordFgBrush"] = isBgLight ? new SolidColorBrush(Color.FromRgb(0x00, 0x4B, 0x8F)) : new SolidColorBrush(Color.FromRgb(0x4F, 0xAA, 0xFF));
-                this.Resources["LpStopBrush"]       = new SolidColorBrush(Color.FromRgb(0xC4, 0x2B, 0x1C)); // Action Red
+                this.Resources["LpKeywordFgBrush"] = isBgLight ? CreateFrozenBrush(Color.FromRgb(0x00, 0x4B, 0x8F)) : CreateFrozenBrush(Color.FromRgb(0x4F, 0xAA, 0xFF));
+                this.Resources["LpStopBrush"]       = CreateFrozenBrush(Color.FromRgb(0xC4, 0x2B, 0x1C)); // Action Red
 
-                this.Resources["LpHoverBgBrush"] = new SolidColorBrush(AdjustColor(menuBgColor, isBgLight ? -14 : 14));
-                this.Resources["LpUserBubbleBgBrush"] = new SolidColorBrush(userBubbleColor);
-                this.Resources["LpSuccessBrush"]    = new SolidColorBrush(Color.FromRgb(0x4E, 0xC9, 0xB0));
+                this.Resources["LpHoverBgBrush"] = CreateFrozenBrush(AdjustColor(menuBgColor, isBgLight ? -14 : 14));
+                this.Resources["LpUserBubbleBgBrush"] = CreateFrozenBrush(userBubbleColor);
+                this.Resources["LpSuccessBrush"]    = CreateFrozenBrush(Color.FromRgb(0x4E, 0xC9, 0xB0));
+
+                // 🚀 CACHE SYNC: Update the backing fields for fast access
+                _themeWindowBg = (Brush)this.Resources["LpWindowBgBrush"];
+                _themeWindowFg = (Brush)this.Resources["LpWindowFgBrush"];
+                _themeSurface  = (Brush)this.Resources["LpMenuBgBrush"];
+                _themeBorder   = (Brush)this.Resources["LpMenuBorderBrush"];
 
                 UpdateSyntaxBrushes();
-                ChatScroll.Background = (Brush)this.Resources["LpWindowBgBrush"];
+                ChatScroll.Background = _themeWindowBg;
             }
             catch { }
         }
@@ -330,7 +374,15 @@ namespace LocalPilot.Chat
 
         private void SetBrush(string key, Color color)
         {
-            this.Resources[key] = new SolidColorBrush(color);
+            if (this.Resources[key] is SolidColorBrush existing && existing.Color == color) return;
+            this.Resources[key] = CreateFrozenBrush(color);
+        }
+
+        private SolidColorBrush CreateFrozenBrush(Color color)
+        {
+            var brush = new SolidColorBrush(color);
+            brush.Freeze();
+            return brush;
         }
 
         private static bool IsDark(Color c)
@@ -537,12 +589,12 @@ namespace LocalPilot.Chat
             _currentNarrativeLabel = layout.NarrativeLabel;
             _currentActivityLabel = layout.ActivityLabel;
 
-            MessagesContainer.Children.Add(_agentTurnContainer);
+            MessagesContainer.Items.Add(_agentTurnContainer);
             
             // Ensure status bar reflects the new turn
             AgentStatusBar.Visibility = Visibility.Visible;
             
-            ChatScroll.ScrollToEnd();
+            DebouncedScrollToEnd();
         }
 
         private void OnAgentToolCallPending(ToolCallRequest request)
@@ -580,8 +632,9 @@ namespace LocalPilot.Chat
             if (_currentActivityScroller != null)
             {
                 if (_currentActivityScroller.Visibility != Visibility.Visible) _currentActivityScroller.Visibility = Visibility.Visible;
-                _currentActivityScroller.ScrollToEnd();
+                _currentActivityScroller.ScrollToEnd(); // Fine for inner scroller, but we debounce main
             }
+            DebouncedScrollToEnd();
         }
 
 
@@ -594,12 +647,26 @@ namespace LocalPilot.Chat
 
         private void OnAgentMessageFragment(string fragment)
         {
-            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+            // 🚀 ULTRA-LIGHT DISPATCH: Just push to buffer. No thread marshalling here.
+            lock (_streamingLock)
             {
-                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                _streamingBuffer.Append(fragment);
+            }
+        }
 
+        private void OnStreamingTimerTick(object sender, EventArgs e)
+        {
+            string newText = null;
+            lock (_streamingLock)
+            {
+                if (_streamingBuffer.Length == 0) return;
+                newText = _streamingBuffer.ToString();
+                _streamingBuffer.Clear();
+            }
 
-                _currentChunkSb.Append(fragment);
+            if (newText != null)
+            {
+                _currentChunkSb.Append(newText);
 
                 // Show the RESPONSE header once we actually have text from the model
                 if (_currentNarrativeLabel != null && _currentNarrativeLabel.Visibility != Visibility.Visible)
@@ -612,15 +679,11 @@ namespace LocalPilot.Chat
                     AppendNarrativeBlock();
                 }
 
-                if (_currentNarrativeContainer == null) return; // 🛡️ Safety: Skip fragment if container lost
-
-                // 🚀 UI OPTIMIZATION: Throttled Incremental Update
-                if ((DateTime.Now - _lastUiUpdateTime).TotalMilliseconds > 32) // ~30 FPS
+                if (_currentNarrativeContainer != null)
                 {
                     RenderMarkdownIncremental(_currentNarrativeContainer, _currentChunkSb.ToString());
-                    _lastUiUpdateTime = DateTime.Now;
                 }
-            });
+            }
         }
 
         private Dictionary<string, (string original, string improved)> _lastStagedChanges;
@@ -669,7 +732,7 @@ namespace LocalPilot.Chat
                 ItemsReviewFiles.ItemsSource = items;
                 TxtReviewSummary.Text = $"{stagedChanges.Count} {(stagedChanges.Count == 1 ? "File" : "Files")} With Changes";
                 ReviewPanel.Visibility = Visibility.Visible;
-                ChatScroll.ScrollToEnd();
+                DebouncedScrollToEnd();
             });
         }
 
@@ -793,7 +856,7 @@ namespace LocalPilot.Chat
                 _currentNarrativeContainer = null;
                 _currentChunkSb.Clear();
                 
-                ChatScroll.ScrollToEnd();
+                DebouncedScrollToEnd();
             });
         }
 
@@ -909,7 +972,7 @@ namespace LocalPilot.Chat
                     _agentCurrentContainer = null;
                     SetStreaming(false);
                 }
-                ChatScroll.ScrollToEnd();
+                DebouncedScrollToEnd();
             });
         }
         private void QuickAction_Click(object sender, RoutedEventArgs e)
@@ -1096,8 +1159,8 @@ namespace LocalPilot.Chat
             bubble.Child = body;
             row.Children.Add(bubble);
 
-            MessagesContainer.Children.Add(row);
-            ChatScroll.ScrollToEnd();
+            MessagesContainer.Items.Add(row);
+            DebouncedScrollToEnd();
             
             // Enter animation
             var slide = new System.Windows.Media.Animation.DoubleAnimation(10, 0, new Duration(TimeSpan.FromSeconds(0.4))) { EasingFunction = new System.Windows.Media.Animation.CubicEase { EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut } };
@@ -1174,23 +1237,23 @@ namespace LocalPilot.Chat
             if (string.IsNullOrEmpty(text))
             {
                 msgContainer.Children.Add(contentArea);
-                MessagesContainer.Children.Add(msgContainer);
+                MessagesContainer.Items.Add(msgContainer);
                 _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
                 {
                     await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                    ChatScroll.ScrollToEnd();
+                    DebouncedScrollToEnd();
                 });
                 return contentArea;
             }
 
             RenderFullMarkdown(contentArea, text);
             msgContainer.Children.Add(contentArea);
-            MessagesContainer.Children.Add(msgContainer);
+            MessagesContainer.Items.Add(msgContainer);
 
             _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
             {
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                ChatScroll.ScrollToEnd();
+                DebouncedScrollToEnd();
             });
 
             return contentArea;
@@ -1334,7 +1397,7 @@ namespace LocalPilot.Chat
         /// </summary>
         private void RenderMarkdownIncremental(StackPanel container, string md)
         {
-            if (string.IsNullOrEmpty(md) || md == _lastRenderedMarkdown) return;
+            if (container == null || string.IsNullOrEmpty(md) || md == _lastRenderedMarkdown) return;
 
             // 1. Calculate the 'Delta' (what's new since last render)
             string delta = md.Length > _lastRenderedMarkdown.Length 
@@ -1342,58 +1405,60 @@ namespace LocalPilot.Chat
                            : md;
 
             // 2. Identify the current block context
-            // Heuristic: Are we inside a ``` block or <thought> tag?
             bool inCode = md.LastIndexOf("```") > md.LastIndexOf("```", Math.Max(0, md.LastIndexOf("```") - 1)) && !md.EndsWith("```");
             bool inThought = md.LastIndexOf("<thought") > md.LastIndexOf("</thought>");
-
-            // 🛡️ STREAMING SUPPRESSION: If we are inside what looks like a tool call, stop incremental rendering
-            // so technical JSON doesn't flicker in the narrative area.
-            if (inCode)
-            {
-                int codeStart = md.LastIndexOf("```");
-                string codePrefix = md.Substring(codeStart);
-                if (codePrefix.Contains("json") || codePrefix.Contains("{"))
-                {
-                    // Heuristic: check if this block starts like a tool call
-                    string blockSoFar = codePrefix.Substring(Math.Min(codePrefix.Length, 3)).Trim();
-                    if (blockSoFar.StartsWith("{") || blockSoFar.StartsWith("json"))
-                    {
-                         _lastRenderedMarkdown = md; // Mark as 'handled' to prevent fallback render
-                         return;
-                    }
-                }
-            }
-
             string currentType = inCode ? "code" : (inThought ? "thought" : "text");
 
-            if (currentType != _activeBlockType || container.Children.Count == 0)
+            // 3. 🚀 MODE TRANSITION DETECTOR
+            // If the type changed, or we just started, or if the delta contains a marker that might change structure
+            if (currentType != _activeBlockType || container.Children.Count == 0 || delta.Contains("```") || delta.Contains("<thought") || delta.Contains("</thought>"))
             {
-                // Edge case: Type changed (e.g. finished code, started text)
-                // Force a full re-sync for this turn to ensure block hygiene
-                RenderFullMarkdown(container, md);
-                _activeBlockType = currentType;
-                _lastRenderedMarkdown = md;
-                return;
-            }
-
-            // 3. Append to existing element
-            if (_lastActiveBlockElement is RichTextBox rtb && currentType == "text")
-            {
-                AppendToRichTextBox(rtb, delta);
-            }
-            else if (_lastActiveBlockElement is Border border && border.Tag is RichTextBox blockRtb)
-            {
-                // Handles both code blocks and thought cards
-                AppendToRichTextBox(blockRtb, delta);
-            }
-            else if (_lastActiveBlockElement is Border codeBorder && codeBorder.Tag is TextBlock codeText)
-            {
-                codeText.Text += delta;
+                // We have a structural change. Instead of rebuilding everything, we 
+                // look at the delta to see if we should start a NEW block.
+                
+                // If the delta looks like it's starting a code block, create it now.
+                if (delta.TrimStart().StartsWith("```") && _activeBlockType == "text")
+                {
+                    // Start a code block
+                    var codeGrid = CreateCodeBlockContainer(delta, out var codeText);
+                    container.Children.Add(codeGrid);
+                    _lastActiveBlockElement = codeGrid;
+                    _activeBlockType = "code";
+                }
+                else if (delta.TrimStart().StartsWith("<thought") && _activeBlockType == "text")
+                {
+                    // Start a thought card
+                    var thoughtCard = BuildThoughtCard(""); // Initial empty
+                    container.Children.Add(thoughtCard);
+                    _lastActiveBlockElement = thoughtCard;
+                    _activeBlockType = "thought";
+                }
+                else if ((delta.Contains("```") || delta.Contains("</thought>")) && _activeBlockType != "text")
+                {
+                    // Block ended. Fallback to full render for the tail to ensure perfect closing.
+                    // This is O(N) but only happens once per block transition, not every frame.
+                    RenderFullMarkdown(container, md);
+                    _activeBlockType = "text"; 
+                }
+                else if (container.Children.Count == 0 || _lastActiveBlockElement == null)
+                {
+                    // First element or lost context
+                    var rtb = CreateRichTextBox();
+                    container.Children.Add(rtb);
+                    _lastActiveBlockElement = rtb;
+                    _activeBlockType = "text";
+                    AppendToRichTextBox(rtb, delta);
+                }
+                else
+                {
+                    // Append to existing, whatever it is
+                    AppendToActiveElement(delta);
+                }
             }
             else
             {
-                // Fallback for safety if elements got out of sync
-                RenderFullMarkdown(container, md);
+                // 🚀 PURE INCREMENTAL PATH: No structural change, just append text
+                AppendToActiveElement(delta);
             }
 
             _lastRenderedMarkdown = md;
@@ -1401,9 +1466,68 @@ namespace LocalPilot.Chat
             // Smoothed scrolling
             if ((DateTime.Now.Ticks / 10000 - _lastScrollTime) > 100)
             {
-                ChatScroll.ScrollToEnd();
+                DebouncedScrollToEnd();
                 _lastScrollTime = DateTime.Now.Ticks / 10000;
             }
+        }
+
+        private void AppendToActiveElement(string delta)
+        {
+            if (_lastActiveBlockElement is RichTextBox rtb)
+            {
+                AppendToRichTextBox(rtb, delta);
+            }
+            else if (_lastActiveBlockElement is Grid codeGrid)
+            {
+                // Find the TextBlock or RTB inside the code grid
+                var border = codeGrid.Children.OfType<Border>().LastOrDefault();
+                if (border?.Child is RichTextBox codeRtb) AppendToRichTextBox(codeRtb, delta);
+            }
+            else if (_lastActiveBlockElement is StackPanel thoughtPanel && thoughtPanel.Tag is RichTextBox thoughtRtb)
+            {
+                AppendToRichTextBox(thoughtRtb, delta);
+            }
+        }
+
+        private Grid CreateCodeBlockContainer(string startMarker, out RichTextBox rtb)
+        {
+            string lang = "CODE";
+            if (startMarker.Length > 3)
+            {
+                string suffix = startMarker.Substring(3).Trim();
+                if (!string.IsNullOrEmpty(suffix)) lang = suffix.Split('\n')[0].ToUpper();
+            }
+
+            var codeGrid = new Grid { Margin = new Thickness(0, 2, 0, 6) };
+            codeGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            codeGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+            var headerBar = new Border
+            {
+                Background = (Brush)this.Resources["LpCodeHeaderBgBrush"],
+                BorderBrush = (Brush)this.Resources["LpMenuBorderBrush"],
+                BorderThickness = new Thickness(1, 1, 1, 0),
+                CornerRadius = new CornerRadius(6, 6, 0, 0),
+                Padding = new Thickness(12, 4, 8, 4)
+            };
+            headerBar.Child = new TextBlock { Text = lang, FontSize = 9, FontWeight = FontWeights.Bold, Foreground = (Brush)this.Resources["LpMutedFgBrush"] };
+            Grid.SetRow(headerBar, 0);
+            codeGrid.Children.Add(headerBar);
+
+            var contentBorder = new Border
+            {
+                Background = (Brush)this.Resources["LpCodeContentBgBrush"],
+                BorderBrush = (Brush)this.Resources["LpMenuBorderBrush"],
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(0, 0, 6, 6),
+                Padding = new Thickness(12)
+            };
+            rtb = CreateRichTextBox();
+            contentBorder.Child = rtb;
+            Grid.SetRow(contentBorder, 1);
+            codeGrid.Children.Add(contentBorder);
+
+            return codeGrid;
         }
 
         private void AppendToRichTextBox(RichTextBox rtb, string text)
@@ -1822,9 +1946,13 @@ namespace LocalPilot.Chat
             // Each message adds one 'Border' to MessagesContainer.
             // Keeping too many UI elements causes high RAM usage and lag.
             const int maxUiElements = 50; 
-            while (MessagesContainer.Children.Count > maxUiElements)
+            while (MessagesContainer.Items.Count > maxUiElements)
             {
-                MessagesContainer.Children.RemoveAt(0);
+                // Skip index 0 if it's the WelcomePanel
+                int indexToRemove = (MessagesContainer.Items.Count > 0 && MessagesContainer.Items[0] == WelcomePanel) ? 1 : 0;
+                if (indexToRemove >= MessagesContainer.Items.Count) break;
+
+                MessagesContainer.Items.RemoveAt(indexToRemove);
             }
         }
 
@@ -1844,6 +1972,7 @@ namespace LocalPilot.Chat
 
                 if (streaming)
                 {
+                    _streamingTimer.Start();
                     AgentStatusBar.Visibility = streamingState.ShowStatusBar ? Visibility.Visible : Visibility.Collapsed;
                     _sessionViewModel.AgentTurn.StatusText = streamingState.StatusText;
                     _sessionViewModel.AgentTurn.DetailText = streamingState.DetailText;
@@ -1871,7 +2000,13 @@ namespace LocalPilot.Chat
                 BtnClear.IsEnabled = !streaming;
                 BtnQuickActions.IsEnabled = !streaming;
 
-                if (!streaming) TxtInput.Focus();
+                if (!streaming) 
+                {
+                    _streamingTimer.Stop();
+                    // One final flush to ensure nothing is left in the buffer
+                    OnStreamingTimerTick(null, null);
+                    TxtInput.Focus();
+                }
             }
 
             ThreadHelper.JoinableTaskFactory.Run(async () =>
@@ -1885,7 +2020,9 @@ namespace LocalPilot.Chat
         private void BtnClear_Click(object sender, RoutedEventArgs e)
         {
             _cts?.Cancel();
-            MessagesContainer.Children.Clear();
+            MessagesContainer.Items.Clear();
+            MessagesContainer.Items.Add(WelcomePanel); // Restore the static welcome UI
+            WelcomePanel.Visibility = Visibility.Visible;
             _history.Clear();
             ShowWelcomeMessage();
             AppendAIBubble("Conversation cleared. Project context will still be used if indexed.");
@@ -2055,7 +2192,7 @@ namespace LocalPilot.Chat
             TxtConfirmDetail.Text = $"Agent is requesting permission to perform a action:\n\n{actionDescription}\n\nDo you want to allow this?";
             
             ConfirmationPanel.Visibility = Visibility.Visible;
-            ChatScroll.ScrollToEnd();
+            DebouncedScrollToEnd();
 
             return await _permissionTcs.Task;
         }
@@ -2124,7 +2261,7 @@ namespace LocalPilot.Chat
                 Margin = new Thickness(0, 0, 8, 0),
                 Padding = new Thickness(10, 4, 10, 4)
             };
-            btnIgnore.Click += (s, e) => { MessagesContainer.Children.Remove(banner); };
+            btnIgnore.Click += (s, e) => { MessagesContainer.Items.Remove(banner); };
             buttonStack.Children.Add(btnIgnore);
 
             var btnFix = new Button
@@ -2134,7 +2271,7 @@ namespace LocalPilot.Chat
                 Padding = new Thickness(12, 6, 12, 6)
             };
             btnFix.Click += (s, e) => {
-                MessagesContainer.Children.Remove(banner);
+                MessagesContainer.Items.Remove(banner);
                 onButtonClick();
             };
             buttonStack.Children.Add(btnFix);
@@ -2143,8 +2280,8 @@ namespace LocalPilot.Chat
             grid.Children.Add(buttonStack);
 
             banner.Child = grid;
-            MessagesContainer.Children.Add(banner);
-            ChatScroll.ScrollToEnd();
+            MessagesContainer.Items.Add(banner);
+            DebouncedScrollToEnd();
         }
     }
 }
