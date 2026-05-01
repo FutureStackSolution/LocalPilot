@@ -656,6 +656,8 @@ namespace LocalPilot.Chat
 
         private void OnStreamingTimerTick(object sender, EventArgs e)
         {
+            if (!_isStreaming && _streamingBuffer.Length == 0) return;
+
             string newText = null;
             lock (_streamingLock)
             {
@@ -815,6 +817,11 @@ namespace LocalPilot.Chat
 
         private void OnAgentMessageCompleted(string fullMessage)
         {
+            lock (_streamingLock)
+            {
+                _streamingBuffer.Clear(); // 🛡️ STOP RACE CONDITION: Discard remaining fragments as we now have the full message.
+            }
+
             _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
             {
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
@@ -850,7 +857,7 @@ namespace LocalPilot.Chat
                 }
                 
                 _lastUiUpdateTime = DateTime.Now;
-                _lastRenderedMarkdown = fullMessage;
+                _lastRenderedMarkdown = ""; // Reset for next potential turn
 
                 // Reset narrative state for potential next turn in the same task
                 _currentNarrativeContainer = null;
@@ -2187,9 +2194,16 @@ namespace LocalPilot.Chat
                 return null;
             }
 
-            string targetFile = GetSafeArg("TargetFile") ?? GetSafeArg("path") ?? "workspace";
-            string actionDescription = $"{toolCall.Name} on {targetFile}";
-            TxtConfirmDetail.Text = $"Agent is requesting permission to perform a action:\n\n{actionDescription}\n\nDo you want to allow this?";
+            string targetFileArg = GetSafeArg("TargetFile") ?? GetSafeArg("path") ?? "workspace";
+            string resolvedPath = _toolRegistry.ResolvePath(targetFileArg);
+            bool isOverwrite = File.Exists(resolvedPath);
+            string targetDisplayName = System.IO.Path.GetFileName(resolvedPath) ?? targetFileArg;
+            
+            string actionDescription = isOverwrite 
+                ? $"OVERWRITE existing file '{targetDisplayName}'" 
+                : $"{toolCall.Name} on {targetDisplayName}";
+
+            TxtConfirmDetail.Text = $"Agent is requesting permission to perform an action:\n\n{actionDescription}\n\nDo you want to allow this?";
             
             ConfirmationPanel.Visibility = Visibility.Visible;
             DebouncedScrollToEnd();

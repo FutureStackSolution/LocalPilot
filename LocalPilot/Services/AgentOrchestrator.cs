@@ -717,6 +717,10 @@ namespace LocalPilot.Services
             // 3. Remove thinking process / thought tags if they are empty or short (noise reduction)
             cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, @"(?s)<thought>\s*</thought>", string.Empty);
 
+            // 4. Remove common model artifacts (stray characters at end of output)
+            cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, @"\s*\(\$$", string.Empty);
+            cleaned = System.Text.RegularExpressions.Regex.Replace(cleaned, @"\s*\$$", string.Empty);
+
             return cleaned.Trim();
         }
 
