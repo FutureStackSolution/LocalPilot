@@ -37,27 +37,7 @@ namespace LocalPilot.Services
             return _all.FirstOrDefault(c => c.CommandId == commandId);
         }
 
-        public static bool TryResolveActionFromSlash(string slashToken, out string action)
-        {
-            action = null;
-            if (string.IsNullOrWhiteSpace(slashToken)) return false;
 
-            string normalized = slashToken.Trim().ToLowerInvariant();
-            if (!normalized.StartsWith("/")) normalized = "/" + normalized;
-
-            if (normalized == "/doc")
-            {
-                action = "document";
-                return true;
-            }
-
-            var capability = _all.FirstOrDefault(c =>
-                c.SlashCommand.Equals(normalized, StringComparison.OrdinalIgnoreCase));
-
-            if (capability == null) return false;
-            action = capability.Action;
-            return true;
-        }
 
         public static IReadOnlyList<LocalPilotCapability> Enabled(LocalPilotSettings settings)
         {

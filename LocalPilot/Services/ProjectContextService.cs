@@ -52,7 +52,7 @@ namespace LocalPilot.Services
         private static readonly ProjectContextService _instance = new ProjectContextService();
         public static ProjectContextService Instance => _instance;
 
-        private readonly List<CodeChunk> _index = new List<CodeChunk>();
+        private readonly ConcurrentDictionary<string, List<CodeChunk>> _index = new ConcurrentDictionary<string, List<CodeChunk>>(StringComparer.OrdinalIgnoreCase);
         private readonly SemaphoreSlim _indexLock = new SemaphoreSlim(1, 1);
         private readonly SemaphoreSlim _parallelLock = new SemaphoreSlim(5, 5); 
         private DateTime _lastIndexTime = DateTime.MinValue;
@@ -85,7 +85,7 @@ namespace LocalPilot.Services
                     _lastIndexTime = DateTime.MinValue;
                 }
 
-                if (_index.Count == 0) await LoadIndexAsync(_solutionRoot);
+                if (_index.IsEmpty) await LoadIndexAsync(_solutionRoot);
 
                 LocalPilotLogger.Log("[RAG] Starting parallel differential sync...", LogCategory.Agent);
                 
@@ -96,8 +96,12 @@ namespace LocalPilot.Services
                 // 2. Filter for changed files
                 var filesToUpdate = allFiles.Where(f => {
                     var info = new FileInfo(f);
-                    var existing = _index.FirstOrDefault(c => c.FilePath == GetRelativePath(f));
-                    return existing == null || info.LastWriteTime > existing.LastModified;
+                    var relPath = GetRelativePath(f);
+                    if (_index.TryGetValue(relPath, out var chunks) && chunks.Any())
+                    {
+                        return info.LastWriteTime > chunks[0].LastModified;
+                    }
+                    return true;
                 }).ToList();
 
                 if (filesToUpdate.Any())
@@ -116,7 +120,8 @@ namespace LocalPilot.Services
                 }
 
                 SetupIncrementalWatcher(ollama);
-                LocalPilotLogger.Log($"[RAG] Sync complete. {_index.Count} chunks ready.");
+                int chunkCount = _index.Values.Sum(v => v.Count);
+                LocalPilotLogger.Log($"[RAG] Sync complete. {chunkCount} chunks ready.");
             }
             finally { _indexLock.Release(); }
         }
@@ -201,7 +206,14 @@ namespace LocalPilot.Services
             });
         }
 
-        private string GetRelativePath(string fullPath) => fullPath.Replace(_solutionRoot, "").TrimStart(Path.DirectorySeparatorChar);
+        private string GetRelativePath(string fullPath)
+        {
+            if (!string.IsNullOrEmpty(_solutionRoot) && fullPath.StartsWith(_solutionRoot, StringComparison.OrdinalIgnoreCase))
+            {
+                return fullPath.Substring(_solutionRoot.Length).TrimStart(Path.DirectorySeparatorChar);
+            }
+            return fullPath.TrimStart(Path.DirectorySeparatorChar);
+        }
 
         private async Task ProcessFileAsync(string fullPath, string relativePath, OllamaService ollama, CancellationToken ct)
         {
@@ -236,7 +248,11 @@ namespace LocalPilot.Services
 
                 if (newChunks.Any())
                 {
-                    lock (_index) { _index.RemoveAll(c => c.FilePath == relativePath); _index.AddRange(newChunks); }
+                    _index[relativePath] = newChunks;
+                }
+                else
+                {
+                    _index.TryRemove(relativePath, out _);
                 }
             }
             catch { }
@@ -244,7 +260,7 @@ namespace LocalPilot.Services
 
         public async Task<string> SearchContextAsync(OllamaService ollama, string query, int topN = 5)
         {
-            if (string.IsNullOrWhiteSpace(query) || _index.Count == 0) return string.Empty;
+            if (string.IsNullOrWhiteSpace(query) || _index.IsEmpty) return string.Empty;
 
             float[] queryVector = null;
             if (!string.IsNullOrWhiteSpace(LocalPilotSettings.Instance.EmbeddingModel) && !ollama.CircuitBreakerTripped)
@@ -252,7 +268,7 @@ namespace LocalPilot.Services
                 queryVector = await ollama.GetEmbeddingsAsync(LocalPilotSettings.Instance.EmbeddingModel, query);
             }
 
-            var results = _index
+            var results = _index.Values.SelectMany(x => x)
                 .Select(c => 
                 {
                     double score = 0;
@@ -295,9 +311,11 @@ namespace LocalPilot.Services
             var ext = Path.GetExtension(path).ToLower();
             string[] allowed = { 
                 ".cs", ".vb", ".cshtml", ".vbhtml", // .NET
+                ".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx", // C/C++
+                ".java", ".kt", ".gradle", ".jsp", // Java/Android
                 ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", // JS/TS
                 ".html", ".css", ".scss", ".sass", ".less", // Web/Style
-                ".json", ".md", ".yaml", ".yml", // Config/Docs
+                ".json", ".md", ".yaml", ".yml", ".xml", // Config/Docs
                 ".vue", ".svelte", ".astro" // Frameworks
             };
             if (path.Contains("\\.localpilot\\") || path.Contains("\\obj\\") || path.Contains("\\bin\\") || path.Contains("\\node_modules\\") || path.Contains("\\dist\\")) return false;
@@ -354,7 +372,68 @@ namespace LocalPilot.Services
             return score;
         }
 
-        private async Task SaveIndexAsync(string root) { try { string dir = Path.Combine(root, ".localpilot"); if (!Directory.Exists(dir)) Directory.CreateDirectory(dir); File.WriteAllText(Path.Combine(dir, "index.json"), Newtonsoft.Json.JsonConvert.SerializeObject(_index)); _lastDiskSaveTime = DateTime.Now; } catch { } }
-        private async Task LoadIndexAsync(string root) { try { string path = Path.Combine(root, ".localpilot", "index.json"); if (File.Exists(path)) { var loaded = Newtonsoft.Json.JsonConvert.DeserializeObject<List<CodeChunk>>(File.ReadAllText(path)); if (loaded != null) { _index.AddRange(loaded); _lastIndexTime = File.GetLastWriteTime(path); _lastDiskSaveTime = _lastIndexTime; } } } catch { } }
+        private async Task SaveIndexAsync(string root)
+        {
+            try
+            {
+                string dir = Path.Combine(root, ".localpilot");
+                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                string path = Path.Combine(dir, "index.json");
+
+                using (var sw = new StreamWriter(path))
+                using (var jw = new Newtonsoft.Json.JsonTextWriter(sw))
+                {
+                    var serializer = new Newtonsoft.Json.JsonSerializer();
+                    serializer.Serialize(jw, _index);
+                }
+                _lastDiskSaveTime = DateTime.Now;
+            }
+            catch { }
+        }
+
+        private async Task LoadIndexAsync(string root)
+        {
+            try
+            {
+                string path = Path.Combine(root, ".localpilot", "index.json");
+                if (File.Exists(path))
+                {
+                    using (var sr = new StreamReader(path))
+                    using (var jr = new Newtonsoft.Json.JsonTextReader(sr))
+                    {
+                        var serializer = new Newtonsoft.Json.JsonSerializer();
+                        jr.Read();
+                        if (jr.TokenType == Newtonsoft.Json.JsonToken.StartArray)
+                        {
+                            // Backwards compatibility for old format
+                            var loadedList = serializer.Deserialize<List<CodeChunk>>(jr);
+                            if (loadedList != null)
+                            {
+                                _index.Clear();
+                                foreach (var group in loadedList.GroupBy(c => c.FilePath))
+                                {
+                                    _index[group.Key] = group.ToList();
+                                }
+                            }
+                        }
+                        else if (jr.TokenType == Newtonsoft.Json.JsonToken.StartObject)
+                        {
+                            var loaded = serializer.Deserialize<Dictionary<string, List<CodeChunk>>>(jr);
+                            if (loaded != null)
+                            {
+                                _index.Clear();
+                                foreach (var kvp in loaded)
+                                {
+                                    _index[kvp.Key] = kvp.Value;
+                                }
+                            }
+                        }
+                        _lastIndexTime = File.GetLastWriteTime(path);
+                        _lastDiskSaveTime = _lastIndexTime;
+                    }
+                }
+            }
+            catch { }
+        }
     }
 }

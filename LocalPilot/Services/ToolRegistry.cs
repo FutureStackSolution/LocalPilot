@@ -231,8 +231,8 @@ namespace LocalPilot.Services
         public WriteFileTool(ToolRegistry registry) => _registry = registry;
 
         public string Name => "write_file";
-        public string Description => "Writes content to a file. Overwrites if exists. Creates directories if needed. Also ensures the file is part of the Visual Studio project.";
-        public string ParameterSchema => "{ \"path\": \"string\", \"content\": \"string\" }";
+        public string Description => "Writes content to a file. By default, fails if file exists unless 'overwrite' is true. Creates directories if needed. Also ensures the file is part of the Visual Studio project.";
+        public string ParameterSchema => "{ \"path\": \"string\", \"content\": \"string\", \"overwrite\": \"boolean\" }";
 
         public async Task<ToolResponse> ExecuteAsync(Dictionary<string, object> args, CancellationToken ct)
         {
@@ -242,15 +242,28 @@ namespace LocalPilot.Services
             if (!args.TryGetValue("content", out var contentObj) || contentObj == null)
                 return new ToolResponse { IsError = true, Output = "Missing 'content' argument." };
 
+            bool overwrite = false;
+            if (args.TryGetValue("overwrite", out var overwriteObj) && overwriteObj != null)
+            {
+                if (overwriteObj is bool b) overwrite = b;
+                else if (bool.TryParse(overwriteObj.ToString(), out bool pb)) overwrite = pb;
+            }
+
             var path = _registry.ResolvePath(pathObj.ToString());
             var content = contentObj.ToString();
 
             try
             {
+                bool exists = File.Exists(path);
+                if (exists && !overwrite)
+                {
+                    return new ToolResponse { IsError = true, Output = $"Error: File already exists at '{path}'. If you intend to overwrite it, set 'overwrite': true in your tool call." };
+                }
+
                 var dir = Path.GetDirectoryName(path);
                 if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
 
-                bool isNew = !File.Exists(path);
+                bool isNew = !exists;
 
                 // Enterprise Sync: If open in editor, write through buffer to allow UNDO and see changes immediately
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
@@ -279,7 +292,7 @@ namespace LocalPilot.Services
                     }
                 }
 
-                return new ToolResponse { Output = isNew ? "File created and added to project successfully." : "File updated successfully." };
+                return new ToolResponse { Output = isNew ? "File created and added to project successfully." : "File updated successfully (overwritten)." };
             }
             catch (Exception ex)
             {

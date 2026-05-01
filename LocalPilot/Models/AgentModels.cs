@@ -52,14 +52,7 @@ namespace LocalPilot.Models
         Idle
     }
 
-    /// <summary>
-    /// Represents a structured plan emitted by the agent before execution.
-    /// </summary>
-    public class AgentPlan
-    {
-        public string Preamble { get; set; }   // e.g. "Sure, let's go through the steps."
-        public List<string> Steps { get; set; } = new List<string>();
-    }
+
     /// <summary>
     /// Represents a found symbol location.
     /// </summary>

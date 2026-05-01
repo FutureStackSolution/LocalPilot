@@ -27,13 +27,13 @@ namespace LocalPilot.Services
         private static readonly Lazy<PerformanceOptimizer> _instance = new Lazy<PerformanceOptimizer>(() => new PerformanceOptimizer());
         public static PerformanceOptimizer Instance => _instance.Value;
 
-        public async Task<List<PerformanceIssue>> AnalyzeFileAsync(string filePath, string sourceCode)
+        public async Task<List<PerformanceIssue>> AnalyzeFileAsync(string filePath, string sourceCode, System.Threading.CancellationToken ct = default)
         {
             var issues = new List<PerformanceIssue>();
             try
             {
                 var tree = CSharpSyntaxTree.ParseText(sourceCode);
-                var root = await tree.GetRootAsync();
+                var root = await tree.GetRootAsync(ct);
                 
                 var walker = new PerformanceSyntaxWalker();
                 walker.Visit(root);

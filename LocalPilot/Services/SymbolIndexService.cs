@@ -13,7 +13,7 @@ namespace LocalPilot.Services
     /// Implements the 3-Tier Semantic Priority Chain:
     /// 1. Roslyn (Native .NET)
     /// 2. LSP (Language Servers)
-    /// 3. Local Parser (Structural Heuristics)
+    /// 3. Universal Semantic Provider (Polyglot Heuristics)
     /// </summary>
     public class SymbolIndexService
     {

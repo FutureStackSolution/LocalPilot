@@ -91,6 +91,8 @@ namespace LocalPilot.Options
             SldConcurrency.Value = s.BackgroundIndexingConcurrency;
 
             TxtChatHistory.Text       = s.ChatHistoryMaxItems.ToString();
+            TxtNumCtx.Text            = s.ContextWindowSize.ToString();
+            TxtNumPredict.Text        = s.MaxOutputTokens.ToString();
 
             // Populate model combos with current value; 
             // full list populated after async fetch
@@ -146,6 +148,8 @@ namespace LocalPilot.Options
                 s.EnableProjectMap = ChkEnableProjectMap.IsChecked == true;
                 s.BackgroundIndexingConcurrency = (int)SldConcurrency.Value;
                 if (int.TryParse(TxtChatHistory.Text, out int ch)) s.ChatHistoryMaxItems = ch;
+                if (int.TryParse(TxtNumCtx.Text,     out int nc) && nc >= 512)  s.ContextWindowSize = nc;
+                if (int.TryParse(TxtNumPredict.Text,  out int np) && np >= 128)  s.MaxOutputTokens   = np;
             }
 
             // Persist to disk

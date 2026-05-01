@@ -45,7 +45,7 @@ namespace LocalPilot.Settings
         public bool   EnableInlineCompletion { get; set; } = true;
         public int    CompletionDelayMs      { get; set; } = 600;   // debounce
         public int    MaxCompletionTokens    { get; set; } = 256;
-        
+
         public bool   ShowCompletionGhost    { get; set; } = true;  // ghost-text
 
 
@@ -53,6 +53,12 @@ namespace LocalPilot.Settings
         public int    ChatHistoryMaxItems { get; set; } = 50;
         public float  Temperature         { get; set; } = 0.7f;
         public int    MaxChatTokens       { get; set; } = 4096;
+
+        // ── Inference Limits ──────────────────────────────────────────────────
+        /// <summary>Ollama num_ctx: KV-cache size in tokens. Lower = less RAM + faster prefill. 4096 is optimal for CPU-only.</summary>
+        public int    ContextWindowSize   { get; set; } = 4096;
+        /// <summary>Ollama num_predict: Max tokens the model will generate per turn. 1024 is plenty for chat + completions.</summary>
+        public int    MaxOutputTokens     { get; set; } = 1024;
 
         // ── Agent ─────────────────────────────────────────────────────────────
         public bool   AutonomousModeEnabled    { get; set; } = true;
@@ -66,7 +72,7 @@ namespace LocalPilot.Settings
 
         // ── Workspace Snapshot ────────────────────────────────────────────────
         public bool   EnableProjectMap   { get; set; } = true;
-        public int    BackgroundIndexingConcurrency { get; set; } = 2;
+        public int    BackgroundIndexingConcurrency { get; set; } = 2; // Raised from 2: safe on multi-core CPUs since embedding requests are I/O-bound (HTTP round-trips)
 
         // ── UI Preferences ────────────────────────────────────────────────────
 
