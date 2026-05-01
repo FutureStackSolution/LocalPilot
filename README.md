@@ -192,10 +192,13 @@ Since **LocalPilot** runs Large Language Models (LLMs) **entirely on your local 
 ### 🚀 v1.8 - The Resilience & Architecture Update (latest)
 **"Rock-solid background indexing, intelligent fallbacks, and user-configurable stability."**
 
-- **🧠 Decoupled & Resilient Embedding Engine**: Major architectural overhaul separating Chat and Background Indexing. LocalPilot now gracefully handles Ollama server drops with a robust Circuit Breaker and Exponential Backoff, preventing background tasks from overwhelming your local hardware.
-- **⚡ Dynamic Chunk Sizing**: Switched from rigid line-count chunking to dynamic character-count chunking (optimized for ~500 tokens) to vastly improve the quality and density of codebase vectors.
+- **🧹 Architectural Streamlining**: Conducted a comprehensive codebase audit to remove orphaned services and dead code, including the legacy `LocalParserProvider` in favor of the high-performance `UniversalSemanticProvider`.
+- **🏗️ Consolidated Semantic Pipeline**: Refined the 3-Tier Semantic Priority Chain (`Roslyn` → `LSP` → `Universal`) to ensure zero-overlap and faster symbol discovery during complex refactoring turns.
+- **📦 Model & Registry Pruning**: Streamlined the `AgentModels` and `CapabilityCatalog` to reduce memory footprint and improve logic maintainability for the core agentic workflow.
+- **🧠 Decoupled & Resilient Embedding Engine**: Major architectural overhaul separating Chat and Background Indexing. LocalPilot now gracefully handles Ollama server drops with a robust Circuit Breaker and Exponential Backoff.
+- **⚡ Dynamic Chunk Sizing**: Switched to dynamic character-count chunking (optimized for ~500 tokens) to vastly improve the quality and density of codebase vectors.
 - **🛠️ Configurable Background Concurrency**: Introduced a new user-facing setting (slider) to throttle or accelerate background indexing based on your specific machine's capabilities.
-- **🛡️ Keyword Search Fallback**: If you choose not to configure an Embedding model (or if your server trips the circuit breaker), LocalPilot will now instantly and gracefully fallback to a lightning-fast, CPU-bound Log-Normalized Keyword Search (BM25 style) to maintain project awareness!
+- **🛡️ Keyword Search Fallback**: If you choose not to configure an Embedding model (or if your server trips the circuit breaker), LocalPilot will now instantly and gracefully fallback to a lightning-fast Keyword Search (BM25 style).
 
 ### 🚀 v1.7 - The Connectivity & Reliability Update
 **"Smarter defaults, proactive error handling, and seamless first-run setup."**

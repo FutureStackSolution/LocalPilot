@@ -19,8 +19,8 @@ graph TD
     TR -- File/Shell Access --> AM
     OS -- LLM Inference --> AM
     
-    SENT[SentinelDebugger] -- Error Detection --> AM
-    PERF[PerformanceSentinel] -- Bottleneck Analysis --> AM
+    SFIX[SmartFixService] -- Error Detection --> AM
+    PERF[PerformanceOptimizer] -- Bottleneck Analysis --> AM
     
     NEXUS[NexusService] -- Full-Stack Bridge --> AM
 ```
@@ -38,8 +38,8 @@ graph TD
 | **NexusService** | Full-Stack Bridge. Maps dependencies. | **Incremental Graph Updates**, Parallel Initial Scan, C# to TS/TSX Bridge. |
 | **RoslynSemanticProvider**| Semantic Intelligence. Uses MSBuild/Roslyn. | Neighborhood Context, Project-wide Rename, Semantic Diagnostics. |
 | **ToolRegistry** | Capability Layer. Safe interfaces for the agent. | File I/O, Grep, Terminal, Unit Testing, Symbol Renaming. |
-| **SentinelDebugger** | Self-Heal Watchdog. Monitors build errors. | Real-time "Fix with AI" proposals for compilation errors. |
-| **PerformanceSentinel** | Proactive Optimization. Analyzes bottlenecks. | Detects O(n²) loops, blocking async, redundant allocations. |
+| **SmartFixService** | Self-Heal Watchdog. Monitors build errors. | Real-time "Fix with AI" proposals for compilation errors. |
+| **PerformanceOptimizer** | Proactive Optimization. Analyzes bottlenecks. | Detects O(n²) loops, blocking async, redundant allocations. |
 
 ---
 
