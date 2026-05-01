@@ -343,6 +343,7 @@ namespace LocalPilot.Chat
 
                 UpdateSyntaxBrushes();
                 ChatScroll.Background = _themeWindowBg;
+                
             }
             catch { }
         }
