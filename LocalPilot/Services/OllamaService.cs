@@ -483,10 +483,10 @@ namespace LocalPilot.Services
         public double RepeatPenalty { get; set; } = 1.1;
 
         [JsonProperty("num_ctx")]
-        public int NumCtx { get; set; } = 8192;
+        public int NumCtx { get; set; } = LocalPilot.Settings.LocalPilotSettings.Instance.ContextWindowSize;
 
         [JsonProperty("num_predict")]
-        public int NumPredict { get; set; } = 4096;
+        public int NumPredict { get; set; } = LocalPilot.Settings.LocalPilotSettings.Instance.MaxOutputTokens;
 
         [JsonProperty("stop")]
         public List<string> Stop { get; set; } = new List<string>();

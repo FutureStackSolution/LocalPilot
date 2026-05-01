@@ -411,6 +411,27 @@
                         <TextBlock Text="LocalPilot now automatically manages context windows, temperature, and response lengths based on your selected Intelligence Mode and the specific task complexity. Manual overrides have been deprecated for maximum autonomy." 
                                    Style="{DynamicResource LpMutedLabel}" TextWrapping="Wrap" Margin="0,0,0,20"/>
 
+                        <!-- Inference Limits -->
+                        <TextBlock Text="⚡  Inference Limits" Style="{DynamicResource LpSectionHeader}"/>
+                        <TextBlock Text="Tune these for your hardware. Lower values = faster first-token and less RAM. Raise them only if responses feel truncated." 
+                                   Style="{DynamicResource LpMutedLabel}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+                        <Grid Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                <TextBlock Text="Context Window (num_ctx tokens)" Style="{DynamicResource LpLabelStyle}"/>
+                                <TextBox x:Name="TxtNumCtx" Style="{DynamicResource LpInputStyle}" ToolTip="KV-cache size. 4096 = fast + low RAM. 8192 = larger context but slower prefill. Recommended: 4096 for CPU-only machines."/>
+                                <TextBlock Text="Recommended: 4096 for CPU-only · 8192 for GPU" Style="{DynamicResource LpMutedLabel}" FontSize="11" Margin="0,2,0,0"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Margin="8,0,0,0">
+                                <TextBlock Text="Max Output Tokens (num_predict)" Style="{DynamicResource LpLabelStyle}"/>
+                                <TextBox x:Name="TxtNumPredict" Style="{DynamicResource LpInputStyle}" ToolTip="Max tokens the model will generate per response. 1024 is enough for most tasks. Raise to 2048+ for long file generation."/>
+                                <TextBlock Text="Recommended: 1024 for chat · 2048 for long generation" Style="{DynamicResource LpMutedLabel}" FontSize="11" Margin="0,2,0,0"/>
+                            </StackPanel>
+                        </Grid>
+
 
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
                             <TextBlock Text="Max Chat History Messages: " Style="{DynamicResource LpLabelStyle}" VerticalAlignment="Center"/>
