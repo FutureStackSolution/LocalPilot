@@ -542,6 +542,40 @@ namespace LocalPilot.Services
             return sb.ToString();
         }
 
+        // ── 🚀 World-Class: GPU VRAM Watchdog ────────────────────────────────
+        /// <summary>
+        /// Queries Ollama's memory state to detect if GPU VRAM is under pressure.
+        /// Helps prevent system-wide freezes caused by model swapping.
+        /// </summary>
+        public async Task<VramStatus> GetVramStatusAsync(CancellationToken ct = default)
+        {
+            try
+            {
+                var response = await _httpClient.GetAsync($"{_baseUrl}/api/ps", ct).ConfigureAwait(false);
+                if (!response.IsSuccessStatusCode) return new VramStatus { IsHealthy = true };
+
+                var json = await response.Content.ReadAsStringAsync();
+                var obj = JObject.Parse(json);
+                var models = obj["models"] as JArray;
+                
+                if (models == null || models.Count == 0) return new VramStatus { IsHealthy = true, TotalVramUsedMb = 0 };
+
+                long totalUsed = 0;
+                foreach (var m in models) {
+                    totalUsed += (long)(m["size_vram"] ?? 0);
+                }
+
+                double usedGb = totalUsed / (1024.0 * 1024 * 1024);
+                return new VramStatus 
+                { 
+                    IsHealthy = usedGb < 12.0, // Assuming a standard 12GB-16GB card threshold
+                    TotalVramUsedMb = (int)(totalUsed / (1024 * 1024)),
+                    ActiveModelsCount = models.Count
+                };
+            }
+            catch { return new VramStatus { IsHealthy = true }; }
+        }
+
     }
 
     // ── Supporting types ───────────────────────────────────────────────────────
@@ -655,5 +689,12 @@ namespace LocalPilot.Services
 
         [JsonProperty("content")]
         public string Content { get; set; }
+    }
+
+    public class VramStatus
+    {
+        public bool IsHealthy { get; set; }
+        public int TotalVramUsedMb { get; set; }
+        public int ActiveModelsCount { get; set; }
     }
 }

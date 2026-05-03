@@ -9,6 +9,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Diagnostics;
+using System.Text;
 
 namespace LocalPilot.Services
 {
@@ -63,7 +64,7 @@ namespace LocalPilot.Services
         /// Initiates an autonomous task for the agent.
         /// Uses Ollama's native tool calling API for structured, reliable tool invocation.
         /// </summary>
-        public async Task RunTaskAsync(string taskDescription, List<ChatMessage> messages, CancellationToken ct, string modelOverride = null)
+        public async Task RunTaskAsync(string taskDescription, List<ChatMessage> messages, CancellationToken ct, string modelOverride = null, string contextOverride = null)
         {
             if (_ollama.CircuitBreakerTripped)
             {
@@ -186,7 +187,11 @@ namespace LocalPilot.Services
                 // Fetch initial grounding context from the project (Skip for simple Quick Actions)
                 if (!isQuickAction)
                 {
-                    string groundingContext = await _projectContext.SearchContextAsync(_ollama, taskDescription, topN: 5);
+                    string groundingContext = contextOverride;
+                    if (string.IsNullOrEmpty(groundingContext)) {
+                        groundingContext = await _projectContext.SearchContextAsync(_ollama, taskDescription, topN: 5);
+                    }
+                    
                     if (!string.IsNullOrEmpty(groundingContext))
                     {
                         messages.Add(new ChatMessage { Role = "system", Content = $"## GROUNDING CONTEXT (VECTORS)\n{groundingContext}" });
@@ -223,14 +228,37 @@ namespace LocalPilot.Services
                             messages.Add(new ChatMessage { Role = "system", Content = neighborhood });
                         }
 
-                        // Inject active editor snippet (capped)
+                        // Inject active editor snippet (Surgical: 50 lines around cursor)
                         string snippetContent = activeDocContent;
                         if (snippetContent != null)
                         {
-                            if (snippetContent.Length > 3000) snippetContent = snippetContent.Substring(0, 3000) + "... [truncated]";
+                            try {
+                                var selection = activeDoc.TextView?.Selection;
+                                int cursorLine = 0;
+                                if (selection != null && selection.ActivePoint != null) {
+                                    cursorLine = selection.ActivePoint.Position.GetContainingLine().LineNumber;
+                                }
+
+                                var lines = snippetContent.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
+                                int start = Math.Max(0, cursorLine - 25);
+                                int end = Math.Min(lines.Length - 1, cursorLine + 25);
+                                
+                                var sbSnippet = new StringBuilder();
+                                if (start > 0) sbSnippet.AppendLine("// ... [Top of file truncated] ...");
+                                for (int i = start; i <= end; i++) {
+                                    sbSnippet.AppendLine(lines[i]);
+                                }
+                                if (end < lines.Length - 1) sbSnippet.AppendLine("// ... [Bottom of file truncated] ...");
+
+                                snippetContent = sbSnippet.ToString();
+                            } catch {
+                                // Fallback to start of file if cursor detection fails
+                                if (snippetContent.Length > 3000) snippetContent = snippetContent.Substring(0, 3000) + "... [truncated]";
+                            }
+
                             messages.Add(new ChatMessage { 
                                 Role = "system", 
-                                Content = $"## ACTIVE EDITOR SNIPPET\nPath: {activeDocPath}\nCode:\n```\n{snippetContent}\n```" 
+                                Content = $"## ACTIVE EDITOR SNIPPET (Near Cursor)\nPath: {activeDocPath}\nCode:\n```\n{snippetContent}\n```" 
                             });
                         }
                     }

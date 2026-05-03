@@ -41,6 +41,7 @@ namespace LocalPilot.Chat
         private readonly AgentTurnCoordinator _agentTurnCoordinator;
         private readonly AgentUiRenderer _agentUiRenderer;
         private readonly AgentTurnLayoutBuilder _agentTurnLayoutBuilder;
+        private readonly ProjectContextService _projectContext;
         
         // 🚀 NON-BLOCKING QUEUE: Support for "Type-Ahead" messages
         private readonly Queue<string> _requestQueue = new Queue<string>();
@@ -90,6 +91,7 @@ namespace LocalPilot.Chat
             _agentTurnCoordinator = new AgentTurnCoordinator();
             _agentUiRenderer = new AgentUiRenderer();
             _agentTurnLayoutBuilder = new AgentTurnLayoutBuilder();
+            _projectContext = ProjectContextService.Instance;
             DataContext = _sessionViewModel;
             _ollama = new OllamaService(LocalPilotSettings.Instance.OllamaBaseUrl);
             
@@ -127,9 +129,36 @@ namespace LocalPilot.Chat
             _streamingTimer = new System.Windows.Threading.DispatcherTimer(System.Windows.Threading.DispatcherPriority.Background);
             _streamingTimer.Interval = TimeSpan.FromMilliseconds(32);
             _streamingTimer.Tick += OnStreamingTimerTick;
+            TxtInput.TextChanged += TxtInput_TextChanged;
 
             Loaded += OnLoaded;
             Unloaded += OnUnloaded;
+        }
+
+        private CancellationTokenSource _shadowSearchCts;
+        private string _lastShadowResults;
+
+        private void TxtInput_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            _shadowSearchCts?.Cancel();
+            _shadowSearchCts = new CancellationTokenSource();
+            var ct = _shadowSearchCts.Token;
+
+            string text = TxtInput.Text;
+            if (text.Length < 10) return;
+
+            _ = Task.Run(async () =>
+            {
+                try {
+                    await Task.Delay(500, ct); 
+                    if (ct.IsCancellationRequested) return;
+
+                    string context = await _projectContext.SearchContextAsync(_ollama, text, topN: 3);
+                    if (!string.IsNullOrEmpty(context)) {
+                        _lastShadowResults = context;
+                    }
+                } catch { }
+            });
         }
 
         private string _pendingErrorFile;
@@ -583,7 +612,11 @@ namespace LocalPilot.Chat
                 _cts?.Dispose();
                 _cts = new CancellationTokenSource();
                 
-                await _agentOrchestrator.RunTaskAsync(task, _history, _cts.Token, modelOverride);
+                // Use shadow results if available to skip the real-time search latency
+                string groundingContext = _lastShadowResults;
+                _lastShadowResults = null; 
+
+                await _agentOrchestrator.RunTaskAsync(task, _history, _cts.Token, modelOverride, groundingContext);
             }
             catch (OperationCanceledException)
             {

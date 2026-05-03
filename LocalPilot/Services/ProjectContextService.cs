@@ -13,6 +13,8 @@ using Newtonsoft.Json;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using System.Text;
+using System.Text.RegularExpressions;
 
 namespace LocalPilot.Services
 {
@@ -148,7 +150,7 @@ namespace LocalPilot.Services
                         {
                             string path = reader.GetString(0);
                             DateTime lastMod = reader.GetDateTime(1);
-                            string hash = reader.IsDBNull(2) ? "" : reader.GetString(2);
+                            string hash = await reader.IsDBNullAsync(2) ? "" : reader.GetString(2);
                             dict[path.ToLowerInvariant()] = (lastMod, hash);
                         }
                     }
@@ -260,7 +262,7 @@ namespace LocalPilot.Services
                             {
                                 cmd.Transaction = transaction;
                                 cmd.CommandText = "INSERT INTO SearchIndex (Content, Path) VALUES (@Content, @Path)";
-                                cmd.Parameters.AddWithValue("@Content", chunk.text);
+                                cmd.Parameters.AddWithValue("@Content", chunk.Text);
                                 cmd.Parameters.AddWithValue("@Path", relativePath);
                                 await cmd.ExecuteNonQueryAsync(ct);
                             }
@@ -271,8 +273,8 @@ namespace LocalPilot.Services
                                 cmd.Transaction = transaction;
                                 cmd.CommandText = "INSERT INTO Chunks (Path, Content, Vector) VALUES (@Path, @Content, @Vector)";
                                 cmd.Parameters.AddWithValue("@Path", relativePath);
-                                cmd.Parameters.AddWithValue("@Content", chunk.text);
-                                cmd.Parameters.AddWithValue("@Vector", chunk.vector != null ? GetRawBytes(chunk.vector) : null);
+                                cmd.Parameters.AddWithValue("@Content", chunk.Text);
+                                cmd.Parameters.AddWithValue("@Vector", chunk.Vector != null ? GetRawBytes(chunk.Vector) : null);
                                 await cmd.ExecuteNonQueryAsync(ct);
                             }
                         }
