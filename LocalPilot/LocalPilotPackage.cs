@@ -117,6 +117,9 @@ namespace LocalPilot
             await LocalPilotCommands.InitializeAsync(this);
             LocalPilotCommandRouter.Instance.Initialize(this);
 
+            // 🚀 World-Class: Auto-Fix on Build Failure
+            BuildMonitorService.Instance.Initialize();
+
             // Auto-Index Project Context in background (v1.8)
             _ = Task.Run(async () =>
             {

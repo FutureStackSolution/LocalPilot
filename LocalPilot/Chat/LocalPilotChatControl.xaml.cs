@@ -104,9 +104,7 @@ namespace LocalPilot.Chat
                     await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                     if (_isStreaming) return;
                     
-                    AppendAIBanner($"Smart Fix detected build error {suggestion.ErrorCode}. Would you like me to analyze and fix it?", "Fix with Autopilot", () => {
-                        _ = RunAgentTaskAsync($"Fix build error {suggestion.ErrorCode}: {suggestion.ErrorMessage} in {suggestion.FilePath}");
-                    });
+                    NotifyBuildError(suggestion.ErrorMessage, suggestion.FilePath, suggestion.Line, 0);
                 });
             };
             
@@ -134,11 +132,33 @@ namespace LocalPilot.Chat
             Unloaded += OnUnloaded;
         }
 
+        private string _pendingErrorFile;
+        private int _pendingErrorLine;
 
+        public void NotifyBuildError(string message, string file, int line, int column)
+        {
+            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+            {
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                TxtBuildErrorMsg.Text = message;
+                _pendingErrorFile = file;
+                _pendingErrorLine = line;
+                BuildErrorBanner.Visibility = Visibility.Visible;
+                DebouncedScrollToEnd();
+            });
+        }
 
+        private void BtnDismissBuildError_Click(object sender, RoutedEventArgs e)
+        {
+            BuildErrorBanner.Visibility = Visibility.Collapsed;
+        }
 
-
-
+        private void BtnFixBuildError_Click(object sender, RoutedEventArgs e)
+        {
+            string errorMsg = TxtBuildErrorMsg.Text;
+            BuildErrorBanner.Visibility = Visibility.Collapsed;
+            _ = RunAgentTaskAsync($"/fix Build Error: {errorMsg} in {_pendingErrorFile} at line {_pendingErrorLine}");
+        }
 
         private void BtnRate_Click(object sender, RoutedEventArgs e)
         {

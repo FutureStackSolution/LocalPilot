@@ -147,9 +147,27 @@ namespace LocalPilot.Services
                     sb.AppendLine("## WORKSPACE EXECUTIVE SUMMARY (YAML)");
                     sb.AppendLine($"# Generated: {DateTime.Now:O}");
                     sb.AppendLine($"# Root: {rootPath}");
+                    
+                    // 🚀 WORLD-CLASS: Architectural Stats (Bird's Eye View)
+                    var allFiles = SafeEnumerateFiles(new DirectoryInfo(rootPath)).ToList();
+                    var stats = new {
+                        Controllers = allFiles.Count(f => f.Name.EndsWith("Controller.cs")),
+                        Models = allFiles.Count(f => f.FullName.Contains("\\Models\\") || f.FullName.Contains("\\Dtos\\")),
+                        Components = allFiles.Count(f => f.Extension == ".tsx" || f.Extension == ".vue" || f.Extension == ".svelte"),
+                        Services = allFiles.Count(f => f.Name.EndsWith("Service.cs")),
+                        TotalFiles = allFiles.Count
+                    };
+                    
+                    sb.AppendLine("Architecture:");
+                    sb.AppendLine($"  Type: {DetermineProjectType(allFiles)}");
+                    sb.AppendLine($"  Scale: {stats.TotalFiles} relevant source files");
+                    sb.AppendLine($"  Components: {stats.Components}");
+                    sb.AppendLine($"  Controllers: {stats.Controllers}");
+                    sb.AppendLine($"  Models: {stats.Models}");
+                    sb.AppendLine($"  Services: {stats.Services}");
                     sb.AppendLine("---");
 
-                    var files = SafeEnumerateFiles(new DirectoryInfo(rootPath)).ToList();
+                    var files = allFiles;
 
                     foreach (var file in files)
                     {
@@ -428,6 +446,19 @@ namespace LocalPilot.Services
                 if (content[i] == '\n') line++;
             }
             return line;
+        }
+
+        private string DetermineProjectType(List<FileInfo> files)
+        {
+            bool hasCs = files.Any(f => f.Extension == ".cs");
+            bool hasWeb = files.Any(f => f.Extension == ".tsx" || f.Extension == ".vue" || f.Extension == ".svelte" || f.Extension == ".html");
+            bool hasSql = files.Any(f => f.Extension == ".sql");
+
+            if (hasCs && hasWeb) return "Full-Stack (C#/.NET + Web)";
+            if (hasCs) return "Backend (C#/.NET)";
+            if (hasWeb) return "Frontend (Web/JS Framework)";
+            if (hasSql) return "Database Project";
+            return "General Codebase";
         }
 
         private string GetRelativePath(string rootPath, string fullPath)

@@ -299,17 +299,54 @@ namespace LocalPilot.Services
             {
                 try
                 {
-                    var tree = CSharpSyntaxTree.ParseText(content);
+                    // 🚀 WORLD-CLASS: Roslyn-powered C# Chunking
+                    var tree = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(content);
                     var root = tree.GetRoot();
-                    var nodes = root.DescendantNodes().Where(n => n is MethodDeclarationSyntax || n is ClassDeclarationSyntax || n is PropertyDeclarationSyntax);
+                    var nodes = root.DescendantNodes().Where(n => 
+                        n is Microsoft.CodeAnalysis.CSharp.Syntax.MethodDeclarationSyntax ||
+                        n is Microsoft.CodeAnalysis.CSharp.Syntax.ClassDeclarationSyntax ||
+                        n is Microsoft.CodeAnalysis.CSharp.Syntax.InterfaceDeclarationSyntax);
+
                     foreach (var node in nodes)
                     {
-                        var text = node.ToFullString().Trim();
-                        if (text.Length > 100) chunks.Add(text);
+                        string chunk = node.ToFullString();
+                        if (chunk.Length > 100) chunks.Add(chunk);
                     }
                 }
-                catch { }
+                catch { /* Fallback */ }
             }
+            else if (ext == ".js" || ext == ".ts" || ext == ".tsx" || ext == ".py" || ext == ".go" || ext == ".rs")
+            {
+                // 🚀 WORLD-CLASS: Regex-based Semantic Fallback for Web/Systems languages
+                var patterns = new[] {
+                    @"^(?:export\s+)?(?:class|interface|struct|type|trait|enum)\s+\w+",
+                    @"^(?:export\s+)?(?:async\s+)?(?:function|func|def)\s+\w+",
+                    @"^(?:const|let|var)\s+\w+\s*=\s*(?:async\s*)?\([^)]*\)\s*=>",
+                    @"^\s*\[Http[a-zA-Z]+(?:\("".*""\))?\]",
+                };
+                
+                var lines = content.Split('\n');
+                var currentChunk = new StringBuilder();
+                
+                foreach (var line in lines)
+                {
+                    bool isHeader = patterns.Any(p => Regex.IsMatch(line.Trim(), p));
+                    if (isHeader && currentChunk.Length > 200)
+                    {
+                        chunks.Add(currentChunk.ToString());
+                        currentChunk.Clear();
+                    }
+                    currentChunk.AppendLine(line);
+                    
+                    if (currentChunk.Length > 2000)
+                    {
+                        chunks.Add(currentChunk.ToString());
+                        currentChunk.Clear();
+                    }
+                }
+                if (currentChunk.Length > 50) chunks.Add(currentChunk.ToString());
+            }
+
             if (!chunks.Any())
             {
                 const int chunkSize = 2000;
