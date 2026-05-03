@@ -1,5 +1,6 @@
 using System;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace LocalPilot.Services
 {
@@ -45,8 +46,11 @@ namespace LocalPilot.Services
                 try { _yieldCts.Cancel(); } catch { }
                 var oldCts = _yieldCts;
                 _yieldCts = new CancellationTokenSource();
-                // Dispose old CTS after replacing the reference
-                try { oldCts.Dispose(); } catch { }
+                
+                // 🚀 EXPERT: Dispose old CTS in the background to avoid blocking and potential race
+                _ = Task.Run(async () => {
+                    try { await Task.Delay(100); oldCts.Dispose(); } catch { }
+                });
             }
         }
 

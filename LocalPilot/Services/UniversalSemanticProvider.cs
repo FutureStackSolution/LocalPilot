@@ -154,14 +154,21 @@ namespace LocalPilot.Services
 
                 var sb = new StringBuilder();
                 int count = 0;
-                for (int i = 1; i <= items.Count; i++)
+                int totalItems = items.Count;
+                for (int i = 1; i <= totalItems; i++)
                 {
-                    var item = items.Item(i);
-                    // For polyglot, we show both errors and warnings if available
-                    string level = ((int)item.ErrorLevel == 1) ? "ERROR" : "WARNING";
-                    sb.AppendLine($"[{level}] {item.Description} (at {Path.GetFileName(item.FileName)}:{item.Line})");
-                    count++;
-                    if (count >= 10) break;
+                    try
+                    {
+                        var item = items.Item(i);
+                        if (item == null) continue;
+
+                        // For polyglot, we show both errors and warnings if available
+                        string level = ((int)item.ErrorLevel == 1) ? "ERROR" : "WARNING";
+                        sb.AppendLine($"[{level}] {item.Description} (at {Path.GetFileName(item.FileName)}:{item.Line})");
+                        count++;
+                        if (count >= 10) break;
+                    }
+                    catch { continue; }
                 }
                 return count > 0 ? sb.ToString() : null;
             }

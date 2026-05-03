@@ -20,7 +20,7 @@ namespace LocalPilot.Services
             _ollama = ollama;
         }
 
-        public async Task<List<ChatMessage>> CompactIfNeededAsync(List<ChatMessage> history, string model, int threshold = 20)
+        public async Task<List<ChatMessage>> CompactIfNeededAsync(List<ChatMessage> history, string model, int threshold = 15)
         {
             // Only compact if history is getting deep
             if (history.Count < threshold) return history;

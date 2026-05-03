@@ -51,14 +51,22 @@ namespace LocalPilot.Services
                 if (items.Count == 0) return null;
 
                 var sb = new System.Text.StringBuilder();
-                for (int i = 1; i <= Math.Min(10, items.Count); i++)
+                int totalItems = items.Count;
+                int limit = Math.Min(10, totalItems);
+                for (int i = 1; i <= limit; i++)
                 {
-                    var item = items.Item(i);
-                    // Match file extension to confirm it's an LSP-handled file
-                    if (!CanHandle(Path.GetExtension(item.FileName))) continue;
+                    try
+                    {
+                        var item = items.Item(i);
+                        if (item == null) continue;
 
-                    string level = ((int)item.ErrorLevel == 1) ? "ERROR" : "WARNING";
-                    sb.AppendLine($"[LSP {level}] {item.Description} (at {Path.GetFileName(item.FileName)}:{item.Line})");
+                        // Match file extension to confirm it's an LSP-handled file
+                        if (!CanHandle(Path.GetExtension(item.FileName))) continue;
+
+                        string level = ((int)item.ErrorLevel == 1) ? "ERROR" : "WARNING";
+                        sb.AppendLine($"[LSP {level}] {item.Description} (at {Path.GetFileName(item.FileName)}:{item.Line})");
+                    }
+                    catch { continue; }
                 }
                 return sb.ToString();
             }

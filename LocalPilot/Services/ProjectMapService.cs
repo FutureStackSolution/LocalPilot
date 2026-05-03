@@ -148,8 +148,16 @@ namespace LocalPilot.Services
                     var allFiles = SafeEnumerateFiles(new DirectoryInfo(rootPath)).ToList();
                     
                     LocalPilotLogger.Log($"[ProjectMap] Scanning {allFiles.Count} files in parallel...");
+                    // 🚀 LAPTOP-FRIENDLY CONCURRENCY: Limit to 8 concurrent scans to avoid disk/CPU thrashing
+                    // 🚀 PERFORMANCE OPTIMIZATION: Pre-calculate a lookup table to avoid O(N^2) complexity in the loop
+                    var symbolLookup = _symbolIndex.Values.SelectMany(v => v)
+                        .Where(l => !string.IsNullOrEmpty(l.FilePath))
+                        .ToLookup(l => l.FilePath, l => l.Name);
+
+                    var semaphore = new SemaphoreSlim(8);
                     var scanTasks = allFiles.Select(async file =>
                     {
+                        await semaphore.WaitAsync();
                         try
                         {
                             string head = await ReadFilePrefixAsync(file.FullName, maxBytesPerFile, openDocContents);
@@ -159,15 +167,12 @@ namespace LocalPilot.Services
                                 var sbEntry = new StringBuilder();
                                 sbEntry.AppendLine($"- File: {relativePath}");
                                 
-                                // Grab symbols (now indexed during ReadFilePrefixAsync in parallel)
-                                var fileSymbols = _symbolIndex.Values.SelectMany(v => v)
-                                    .Where(l => l.FilePath == file.FullName)
-                                    .Take(15)
-                                    .ToList();
+                                // O(1) Lookup instead of O(N) Scan
+                                var fileSymbols = symbolLookup[file.FullName].Take(15).ToList();
                                 
                                 if (fileSymbols.Any())
                                 {
-                                    sbEntry.AppendLine($"  Symbols: [{string.Join(", ", fileSymbols.Select(s => s.Name))}]");
+                                    sbEntry.AppendLine($"  Symbols: [{string.Join(", ", fileSymbols)}]");
                                 }
 
                                 string sanitized = head.Replace("\r", "").Replace("\n", " ").Replace("  ", " ");
@@ -178,6 +183,7 @@ namespace LocalPilot.Services
                             }
                         }
                         catch { }
+                        finally { semaphore.Release(); }
                     });
 
                     await Task.WhenAll(scanTasks);
@@ -243,7 +249,7 @@ namespace LocalPilot.Services
             var queue = new Queue<DirectoryInfo>();
             queue.Enqueue(dir);
 
-            while (queue.Count > 0 && files.Count < 400)
+            while (queue.Count > 0 && files.Count < 1000)
             {
                 var currentDir = queue.Dequeue();
                 try
@@ -257,13 +263,13 @@ namespace LocalPilot.Services
                             if (AllowedExtensions.Contains(file.Extension))
                             {
                                 files.Add(file);
-                                if (files.Count >= 400) break;
+                                if (files.Count >= 1000) break;
                             }
                         }
                         catch { }
                     }
 
-                    if (files.Count >= 400) break;
+                    if (files.Count >= 1000) break;
 
                     foreach (var subDir in currentDir.GetDirectories())
                     {

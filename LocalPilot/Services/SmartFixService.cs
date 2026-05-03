@@ -106,17 +106,24 @@ namespace LocalPilot.Services
                 if (_dte == null) return;
 
                 var items = _dte.ToolWindows.ErrorList.ErrorItems;
-                if (items == null || items.Count == 0) return;
+                if (items == null) return;
 
                 ErrorItem primaryError = null;
-                for (int i = 1; i <= items.Count; i++)
+                int count = items.Count;
+                for (int i = 1; i <= count; i++)
                 {
-                    var item = items.Item(i);
-                    if (item.ErrorLevel == vsBuildErrorLevel.vsBuildErrorLevelHigh)
+                    try
                     {
-                        primaryError = item;
-                        break;
+                        var item = items.Item(i);
+                        if (item == null) continue;
+
+                        if (item.ErrorLevel == vsBuildErrorLevel.vsBuildErrorLevelHigh)
+                        {
+                            primaryError = item;
+                            break;
+                        }
                     }
+                    catch { /* Item might have been removed during iteration */ }
                 }
                 
                 if (primaryError == null) return;

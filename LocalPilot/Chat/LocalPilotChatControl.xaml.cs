@@ -140,7 +140,11 @@ namespace LocalPilot.Chat
 
         private void TxtInput_TextChanged(object sender, TextChangedEventArgs e)
         {
-            _shadowSearchCts?.Cancel();
+            if (_shadowSearchCts != null)
+            {
+                try { _shadowSearchCts.Cancel(); _shadowSearchCts.Dispose(); } catch { }
+            }
+            
             _shadowSearchCts = new CancellationTokenSource();
             var ct = _shadowSearchCts.Token;
 
@@ -153,7 +157,7 @@ namespace LocalPilot.Chat
                     await Task.Delay(500, ct); 
                     if (ct.IsCancellationRequested) return;
 
-                    string context = await _projectContext.SearchContextAsync(_ollama, text, topN: 3);
+                    string context = await _projectContext.SearchContextAsync(_ollama, text, topN: 3, ct: ct);
                     if (!string.IsNullOrEmpty(context)) {
                         _lastShadowResults = context;
                     }
