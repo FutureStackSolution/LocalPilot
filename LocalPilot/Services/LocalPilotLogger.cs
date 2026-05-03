@@ -40,7 +40,10 @@ namespace LocalPilot.Services
         private static readonly string _logDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LocalPilot", "logs");
         private static readonly string _logFile = Path.Combine(_logDir, "localpilot.log");
         private static readonly object _fileLock = new object();
+        private static readonly System.Collections.Concurrent.ConcurrentQueue<(string message, bool isWatchdog)> _logQueue = new System.Collections.Concurrent.ConcurrentQueue<(string message, bool isWatchdog)>();
         private static bool _initializing = false;
+        private static bool _loopStarted = false;
+        private static readonly object _loopLock = new object();
 
         public static string GetLogPath() => _logFile;
 
@@ -59,31 +62,10 @@ namespace LocalPilot.Services
             // 1. Notify Subscribers (UI)
             OnLog?.Invoke(message, category, severity);
 
-            // 2. Log to Output Window (Non-blocking)
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    if (_pane == null && !_initializing)
-                    {
-                        // Initialization still needs to happen once, we can try to do it safely
-                        await InitializePanesAsync();
-                    }
-
-                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-
-                    // Route to General vs Watchdog
-                    if (category == LogCategory.Build || category == LogCategory.Context || severity == LogSeverity.Debug)
-                    {
-                         _watchdogPane?.OutputStringThreadSafe($"{timestamped}{Environment.NewLine}");
-                    }
-                    else
-                    {
-                        _pane?.OutputStringThreadSafe($"{timestamped}{Environment.NewLine}");
-                    }
-                }
-                catch { }
-            });
+            // 2. Queue for Output Window (High Performance Batching)
+            bool isWatchdog = category == LogCategory.Build || category == LogCategory.Context || severity == LogSeverity.Debug;
+            _logQueue.Enqueue((timestamped, isWatchdog));
+            EnsureLogLoopRunning();
 
             // 3. Log to File
             _ = Task.Run(() =>
@@ -107,6 +89,50 @@ namespace LocalPilot.Services
                     catch { }
                 }
             });
+        }
+
+        private static void EnsureLogLoopRunning()
+        {
+            if (_loopStarted) return;
+            lock (_loopLock)
+            {
+                if (_loopStarted) return;
+                _loopStarted = true;
+                _ = Task.Run(async () => await ProcessLogQueueAsync());
+            }
+        }
+
+        private static async Task ProcessLogQueueAsync()
+        {
+            while (true)
+            {
+                try
+                {
+                    await Task.Delay(300); // 🚀 Batch logs every 300ms to save UI thread
+                    
+                    if (_logQueue.IsEmpty) continue;
+
+                    var mainBatch = new System.Text.StringBuilder();
+                    var watchdogBatch = new System.Text.StringBuilder();
+
+                    while (_logQueue.TryDequeue(out var entry))
+                    {
+                        if (entry.isWatchdog) watchdogBatch.AppendLine(entry.message);
+                        else mainBatch.AppendLine(entry.message);
+                    }
+
+                    if (mainBatch.Length > 0 || watchdogBatch.Length > 0)
+                    {
+                        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                        
+                        if (_pane == null && !_initializing) await InitializePanesAsync();
+
+                        if (mainBatch.Length > 0) _pane?.OutputStringThreadSafe(mainBatch.ToString());
+                        if (watchdogBatch.Length > 0) _watchdogPane?.OutputStringThreadSafe(watchdogBatch.ToString());
+                    }
+                }
+                catch { /* Prevent loop death */ }
+            }
         }
 
         private static async Task InitializePanesAsync()

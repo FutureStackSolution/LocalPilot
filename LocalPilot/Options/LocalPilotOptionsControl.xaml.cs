@@ -16,6 +16,7 @@ namespace LocalPilot.Options
     {
         private readonly OllamaService _ollama = new OllamaService();
         private CancellationTokenSource _cts = new CancellationTokenSource();
+        private bool _isSaving = false;
 
         public LocalPilotOptionsControl()
         {
@@ -117,43 +118,52 @@ namespace LocalPilot.Options
         // ── Save settings from controls ───────────────────────────────────────
         public void SaveSettings()
         {
-            var s = LocalPilotSettings.Instance;
-
-            // Only save fields from the active tab to prevent multi-page overwrites
-            if (MainTabControl.SelectedIndex == 0) // General
+            ThreadHelper.JoinableTaskFactory.Run(async () =>
             {
-                s.OllamaBaseUrl = TxtBaseUrl.Text.Trim();
-                s.EnableInlineCompletion = ChkEnableInline.IsChecked == true;
-                s.ShowCompletionGhost    = ChkShowGhost.IsChecked    == true;
-                s.EnableExplain          = ChkExplain.IsChecked      == true;
-                s.EnableRefactor         = ChkRefactor.IsChecked     == true;
-                s.EnableDocGen           = ChkDocGen.IsChecked       == true;
-                s.EnableReview           = ChkReview.IsChecked       == true;
-                s.EnableFix              = ChkFix.IsChecked          == true;
-                s.EnableUnitTest         = ChkUnitTest.IsChecked     == true;
-                s.ShowStatusBar          = ChkStatusBar.IsChecked    == true;
-                s.EnableLogging          = ChkEnableLogging.IsChecked == true;
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
 
-                s.CompletionModel = (CmbCompletionModel.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? CmbCompletionModel.Text;
-                s.ChatModel       = (CmbChatModel.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? CmbChatModel.Text;
-                s.EmbeddingModel  = (CmbEmbeddingModel.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? CmbEmbeddingModel.Text;
-                s.ExplainModel    = (CmbExplainModel.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? CmbExplainModel.Text;
-                s.RefactorModel   = (CmbRefactorModel.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? CmbRefactorModel.Text;
-                s.DocModel        = (CmbDocModel.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? CmbDocModel.Text;
-                s.ReviewModel     = (CmbReviewModel.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? CmbReviewModel.Text;
-            }
-            else if (MainTabControl.SelectedIndex == 1) // Advanced
-            {
-                s.Mode             = (PerformanceMode)CmbPerformanceMode.SelectedIndex;
-                s.EnableProjectMap = ChkEnableProjectMap.IsChecked == true;
-                s.BackgroundIndexingConcurrency = (int)SldConcurrency.Value;
-                if (int.TryParse(TxtChatHistory.Text, out int ch)) s.ChatHistoryMaxItems = ch;
-                if (int.TryParse(TxtNumCtx.Text,     out int nc) && nc >= 512)  s.ContextWindowSize = nc;
-                if (int.TryParse(TxtNumPredict.Text,  out int np) && np >= 128)  s.MaxOutputTokens   = np;
-            }
+                if (MainTabControl == null) return;
 
-            // Persist to disk
-            SettingsPersistence.Save(s);
+                var s = LocalPilotSettings.Instance;
+
+                // Only save fields from the active tab to prevent multi-page overwrites
+                if (MainTabControl.SelectedIndex == 0) // General
+                {
+                    if (TxtBaseUrl != null) s.OllamaBaseUrl = TxtBaseUrl.Text.Trim();
+                    
+                    s.EnableInlineCompletion = ChkEnableInline?.IsChecked == true;
+                    s.ShowCompletionGhost    = ChkShowGhost?.IsChecked    == true;
+                    s.EnableExplain          = ChkExplain?.IsChecked      == true;
+                    s.EnableRefactor         = ChkRefactor?.IsChecked     == true;
+                    s.EnableDocGen           = ChkDocGen?.IsChecked       == true;
+                    s.EnableReview           = ChkReview?.IsChecked       == true;
+                    s.EnableFix              = ChkFix?.IsChecked          == true;
+                    s.EnableUnitTest         = ChkUnitTest?.IsChecked     == true;
+                    s.ShowStatusBar          = ChkStatusBar?.IsChecked    == true;
+                    s.EnableLogging          = ChkEnableLogging?.IsChecked == true;
+
+                    if (CmbCompletionModel != null) s.CompletionModel = (CmbCompletionModel.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? CmbCompletionModel.Text;
+                    if (CmbChatModel != null)       s.ChatModel       = (CmbChatModel.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? CmbChatModel.Text;
+                    if (CmbEmbeddingModel != null)  s.EmbeddingModel  = (CmbEmbeddingModel.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? CmbEmbeddingModel.Text;
+                    if (CmbExplainModel != null)    s.ExplainModel    = (CmbExplainModel.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? CmbExplainModel.Text;
+                    if (CmbRefactorModel != null)   s.RefactorModel   = (CmbRefactorModel.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? CmbRefactorModel.Text;
+                    if (CmbDocModel != null)        s.DocModel        = (CmbDocModel.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? CmbDocModel.Text;
+                    if (CmbReviewModel != null)     s.ReviewModel     = (CmbReviewModel.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? CmbReviewModel.Text;
+                }
+                else if (MainTabControl.SelectedIndex == 1) // Advanced
+                {
+                    if (CmbPerformanceMode != null) s.Mode = (PerformanceMode)CmbPerformanceMode.SelectedIndex;
+                    if (ChkEnableProjectMap != null) s.EnableProjectMap = ChkEnableProjectMap.IsChecked == true;
+                    if (SldConcurrency != null) s.BackgroundIndexingConcurrency = (int)SldConcurrency.Value;
+                    
+                    if (TxtChatHistory != null && int.TryParse(TxtChatHistory.Text, out int ch)) s.ChatHistoryMaxItems = ch;
+                    if (TxtNumCtx != null && int.TryParse(TxtNumCtx.Text, out int nc) && nc >= 512) s.ContextWindowSize = nc;
+                    if (TxtNumPredict != null && int.TryParse(TxtNumPredict.Text, out int np) && np >= 128) s.MaxOutputTokens = np;
+                }
+
+                // Persist to disk
+                SettingsPersistence.Save(s);
+            });
         }
 
         // ── Event Handlers ────────────────────────────────────────────────────
@@ -239,6 +249,11 @@ namespace LocalPilot.Options
 
         private void BtnSave_Click(object sender, RoutedEventArgs e)
         {
+            if (_isSaving) return;
+            _isSaving = true;
+            BtnSave.IsEnabled = false;
+
+            var token = _cts.Token;
             _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
             {
                 try
@@ -246,13 +261,21 @@ namespace LocalPilot.Options
                     SaveSettings();
                     await ShowToastAsync(success: true,
                         title: "Settings saved",
-                        subtitle: "All changes have been persisted.");
+                        subtitle: "All changes have been persisted.",
+                        token: token);
                 }
                 catch (Exception ex)
                 {
                     await ShowToastAsync(success: false,
                         title: "Save failed",
-                        subtitle: ex.Message);
+                        subtitle: ex.Message,
+                        token: token);
+                }
+                finally
+                {
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    _isSaving = false;
+                    BtnSave.IsEnabled = true;
                 }
             });
         }
@@ -315,8 +338,12 @@ namespace LocalPilot.Options
         /// Shows the inline toast banner with a fade-in → hold → fade-out animation,
         /// then collapses it. Non-blocking — awaits only a Task.Delay.
         /// </summary>
-        private async Task ShowToastAsync(bool success, string title, string subtitle)
+        private async Task ShowToastAsync(bool success, string title, string subtitle, CancellationToken token = default)
         {
+            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+
+            if (SaveToast == null || ToastTitle == null || ToastSubtitle == null) return;
+
             // Configure appearance
             ToastTitle.Text    = title;
             ToastSubtitle.Text = subtitle;
@@ -350,10 +377,15 @@ namespace LocalPilot.Options
             var sb = SaveToast.Resources["ToastStoryboard"] as System.Windows.Media.Animation.Storyboard;
             sb?.Begin(SaveToast);
 
-            // Wait for the total animation duration (2.75 s) then hide
-            await Task.Delay(2800);
+            try 
+            {
+                // Wait for the total animation duration (2.75 s) then hide
+                await Task.Delay(2800, token);
+            }
+            catch (TaskCanceledException) { return; }
 
-            if (SaveToast.Opacity <= 0.05)          // only collapse if not re-triggered
+            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+            if (SaveToast != null && SaveToast.Opacity <= 0.05)          // only collapse if not re-triggered
                 SaveToast.Visibility = Visibility.Collapsed;
         }
 

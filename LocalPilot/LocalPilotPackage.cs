@@ -117,6 +117,9 @@ namespace LocalPilot
             await LocalPilotCommands.InitializeAsync(this);
             LocalPilotCommandRouter.Instance.Initialize(this);
 
+            // 🚀 World-Class: Auto-Fix on Build Failure
+            BuildMonitorService.Instance.Initialize();
+
             // Auto-Index Project Context in background (v1.8)
             _ = Task.Run(async () =>
             {
@@ -126,6 +129,10 @@ namespace LocalPilot
                     await Task.Delay(10000, cancellationToken).ConfigureAwait(false); 
                     
                     var ollama = new OllamaService(settings.OllamaBaseUrl);
+                    
+                    // 🚀 World-Class: Background Warmup (Pre-load the model)
+                    _ = ollama.WarmupAsync(settings.ChatModel, cancellationToken);
+                    
                     LocalPilotLogger.Log("[Autopilot] Indexing project context in background...");
                     await ProjectContextService.Instance.IndexSolutionAsync(ollama, cancellationToken);
 

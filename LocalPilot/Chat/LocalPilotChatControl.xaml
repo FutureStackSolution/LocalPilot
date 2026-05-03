@@ -606,6 +606,8 @@
                  ScrollViewer.CanContentScroll="True"
                  VirtualizingStackPanel.IsVirtualizing="True"
                  VirtualizingStackPanel.VirtualizationMode="Recycling"
+                 VirtualizingStackPanel.CacheLength="2,3"
+                 VirtualizingStackPanel.CacheLengthUnit="Item"
                  HorizontalContentAlignment="Stretch">
             <ListBox.Template>
                 <ControlTemplate TargetType="ListBox">
@@ -746,6 +748,28 @@
                             <Button x:Name="BtnApprove" Content="Approve" Click="BtnApprove_Click" Style="{StaticResource LpPrimaryActionButtonStyle}"/>
                         </StackPanel>
                     </StackPanel>
+                </Border>
+
+                <!-- 🚀 Build Error Auto-Fix Banner -->
+                <Border x:Name="BuildErrorBanner" Visibility="Collapsed" Margin="0,0,0,12" Padding="12" 
+                        Background="#FFF8F0F0" CornerRadius="8" 
+                        BorderBrush="#FFFF4444" BorderThickness="1.5">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="&#xE783;" FontFamily="Segoe MDL2 Assets" FontSize="16" Foreground="#FFFF4444" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                            <TextBlock Text="Build Failed" FontWeight="Bold" Foreground="#FF333333" FontSize="12"/>
+                            <TextBlock x:Name="TxtBuildErrorMsg" Text="Error message goes here..." Foreground="#FF666666" FontSize="11" TextTrimming="CharacterEllipsis" MaxHeight="32"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button Content="Dismiss" Click="BtnDismissBuildError_Click" Style="{StaticResource LpButtonStyle}" FontSize="10" Margin="0,0,4,0"/>
+                            <Button Content="Fix with AI" Click="BtnFixBuildError_Click" Style="{StaticResource LpPrimaryActionButtonStyle}" FontSize="11" Padding="8,4"/>
+                        </StackPanel>
+                    </Grid>
                 </Border>
 
                 <!-- 🏁 Review Panel (Antigravity Style) -->

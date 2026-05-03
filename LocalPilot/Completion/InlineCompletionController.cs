@@ -179,23 +179,35 @@ namespace LocalPilot.Completion
                     _sharedOllama.UpdateBaseUrl(LocalPilotSettings.Instance.OllamaBaseUrl);
 
                     var sb = new StringBuilder(256);
+                    DateTime lastUiUpdate = DateTime.MinValue;
+
                     await foreach (var chunk in _sharedOllama.StreamCompletionAsync(
                         LocalPilotSettings.Instance.CompletionModel, prompt, opts, token).ConfigureAwait(false))
                     {
-                        sb.Append(chunk);
                         if (token.IsCancellationRequested) break;
+                        sb.Append(chunk);
+
+                        // 🚀 THROTTLED RENDER: Update ghost text every 50ms to prevent UI thread flooding
+                        if ((DateTime.Now - lastUiUpdate).TotalMilliseconds > 50)
+                        {
+                            lastUiUpdate = DateTime.Now;
+                            string currentText = sb.ToString();
+                            _ = Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+                            {
+                                await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                                if (!token.IsCancellationRequested && LocalPilotSettings.Instance.ShowCompletionGhost)
+                                {
+                                    _ghostAdornment?.ShowGhost(currentText);
+                                }
+                            });
+                        }
                     }
                     return sb.ToString().Trim();
                 }, token);
 
                 if (!LocalPilotSettings.Instance.EnableInlineCompletion || token.IsCancellationRequested) return;
 
-                // 3. Return to UI thread only to render
-                await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory
-                      .SwitchToMainThreadAsync(CancellationToken.None);
-
-                if (!token.IsCancellationRequested && LocalPilotSettings.Instance.ShowCompletionGhost)
-                    _ghostAdornment?.ShowGhost(completionText);
+                // Ghost text is now handled incrementally during the stream above.
             }
             catch (OperationCanceledException) { /* user typed again — expected */ }
             catch (Exception ex)

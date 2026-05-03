@@ -18,18 +18,22 @@ namespace LocalPilot.Options
             
         public static bool Exists => File.Exists(SettingsFile);
 
+        private static readonly object _saveLock = new object();
+
         public static void Save(LocalPilotSettings s)
         {
-
-            try
+            lock (_saveLock)
             {
-                Directory.CreateDirectory(SettingsDir);
-                var json = JsonConvert.SerializeObject(s, Formatting.Indented);
-                File.WriteAllText(SettingsFile, json);
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[LocalPilot] Save settings failed: {ex.Message}");
+                try
+                {
+                    Directory.CreateDirectory(SettingsDir);
+                    var json = JsonConvert.SerializeObject(s, Formatting.Indented);
+                    File.WriteAllText(SettingsFile, json);
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[LocalPilot] Save settings failed: {ex.Message}");
+                }
             }
         }
 

@@ -142,51 +142,80 @@ namespace LocalPilot.Services
                             }
                         }
                     } catch { /* Fail gracefully, we will fallback to disk */ }
+                    
+                    // 🚀 WORLD-CLASS PERFORMANCE: Parallel Workspace Scan
+                    var fileEntries = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    var allFiles = SafeEnumerateFiles(new DirectoryInfo(rootPath)).ToList();
+                    
+                    LocalPilotLogger.Log($"[ProjectMap] Scanning {allFiles.Count} files in parallel...");
+                    var scanTasks = allFiles.Select(async file =>
+                    {
+                        try
+                        {
+                            string head = await ReadFilePrefixAsync(file.FullName, maxBytesPerFile, openDocContents);
+                            if (!string.IsNullOrEmpty(head) && head != "[Binary/Excluded]")
+                            {
+                                string relativePath = GetRelativePath(rootPath, file.FullName);
+                                var sbEntry = new StringBuilder();
+                                sbEntry.AppendLine($"- File: {relativePath}");
+                                
+                                // Grab symbols (now indexed during ReadFilePrefixAsync in parallel)
+                                var fileSymbols = _symbolIndex.Values.SelectMany(v => v)
+                                    .Where(l => l.FilePath == file.FullName)
+                                    .Take(15)
+                                    .ToList();
+                                
+                                if (fileSymbols.Any())
+                                {
+                                    sbEntry.AppendLine($"  Symbols: [{string.Join(", ", fileSymbols.Select(s => s.Name))}]");
+                                }
 
+                                string sanitized = head.Replace("\r", "").Replace("\n", " ").Replace("  ", " ");
+                                if (sanitized.Length > 150) sanitized = sanitized.Substring(0, 150) + "...";
+                                sbEntry.AppendLine($"  Preview: \"{sanitized.Replace("\"", "'")}\"");
+                                
+                                fileEntries[file.FullName] = sbEntry.ToString();
+                            }
+                        }
+                        catch { }
+                    });
+
+                    await Task.WhenAll(scanTasks);
+
+                    // 3. Assemble the final High-Signal YAML snapshot
                     var sb = new StringBuilder();
                     sb.AppendLine("## WORKSPACE EXECUTIVE SUMMARY (YAML)");
                     sb.AppendLine($"# Generated: {DateTime.Now:O}");
                     sb.AppendLine($"# Root: {rootPath}");
+                    
+                    var stats = new {
+                        Controllers = allFiles.Count(f => f.Name.EndsWith("Controller.cs")),
+                        Models = allFiles.Count(f => f.FullName.Contains("\\Models\\") || f.FullName.Contains("\\Dtos\\")),
+                        Components = allFiles.Count(f => f.Extension == ".tsx" || f.Extension == ".vue" || f.Extension == ".svelte"),
+                        Services = allFiles.Count(f => f.Name.EndsWith("Service.cs")),
+                        TotalFiles = allFiles.Count
+                    };
+                    
+                    sb.AppendLine("Architecture:");
+                    sb.AppendLine($"  Type: {DetermineProjectType(allFiles)}");
+                    sb.AppendLine($"  Scale: {stats.TotalFiles} relevant source files");
+                    sb.AppendLine($"  Components: {stats.Components}");
+                    sb.AppendLine($"  Controllers: {stats.Controllers}");
+                    sb.AppendLine($"  Models: {stats.Models}");
+                    sb.AppendLine($"  Services: {stats.Services}");
                     sb.AppendLine("---");
 
-                    var files = SafeEnumerateFiles(new DirectoryInfo(rootPath)).ToList();
-
-                    foreach (var file in files)
+                    foreach (var file in allFiles)
                     {
-                        try
+                        if (fileEntries.TryGetValue(file.FullName, out var entry))
                         {
-                            string relativePath = GetRelativePath(rootPath, file.FullName);
-                            
-                            sb.AppendLine($"- File: {relativePath}");
-                            
-                            // Grab signatures from the index (snapshot the values to avoid collection changed)
-                            var allSymbols = _symbolIndex.Values.ToArray();
-                            var fileSymbols = allSymbols.SelectMany(v => v)
-                                .Where(l => l.FilePath == file.FullName)
-                                .Take(20)
-                                .ToList();
-                            
-                            if (fileSymbols.Any())
-                            {
-                                sb.AppendLine($"  Symbols: [{string.Join(", ", fileSymbols.Select(s => s.Name))}]");
-                            }
-
-                            // Shallow content preview
-                            string head = await ReadFilePrefixAsync(file.FullName, maxBytesPerFile, openDocContents);
-                            if (!string.IsNullOrEmpty(head) && head != "[Binary/Excluded]")
-                            {
-                                string sanitized = head.Replace("\r", "").Replace("\n", " ").Replace("  ", " ");
-                                if (sanitized.Length > 150) sanitized = sanitized.Substring(0, 150) + "...";
-                                sb.AppendLine($"  Preview: \"{sanitized.Replace("\"", "'")}\"");
-                            }
-
+                            sb.Append(entry);
                             if (sb.Length > maxTotalBytes) 
                             {
                                 sb.AppendLine("  # Note: Snapshot truncated due to context window limits.");
                                 break;
                             }
                         }
-                        catch { }
                     }
 
                     _cachedMap = sb.ToString();
@@ -428,6 +457,19 @@ namespace LocalPilot.Services
                 if (content[i] == '\n') line++;
             }
             return line;
+        }
+
+        private string DetermineProjectType(List<FileInfo> files)
+        {
+            bool hasCs = files.Any(f => f.Extension == ".cs");
+            bool hasWeb = files.Any(f => f.Extension == ".tsx" || f.Extension == ".vue" || f.Extension == ".svelte" || f.Extension == ".html");
+            bool hasSql = files.Any(f => f.Extension == ".sql");
+
+            if (hasCs && hasWeb) return "Full-Stack (C#/.NET + Web)";
+            if (hasCs) return "Backend (C#/.NET)";
+            if (hasWeb) return "Frontend (Web/JS Framework)";
+            if (hasSql) return "Database Project";
+            return "General Codebase";
         }
 
         private string GetRelativePath(string rootPath, string fullPath)

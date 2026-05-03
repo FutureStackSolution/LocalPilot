@@ -22,36 +22,41 @@ namespace LocalPilot.Services
 
         public async Task<List<ChatMessage>> CompactIfNeededAsync(List<ChatMessage> history, string model, int threshold = 20)
         {
-            // Only compact if history is getting deep (excluding system prompts)
-            var userAssistantMessages = history.Where(m => m.Role != "system").ToList();
-            if (userAssistantMessages.Count < threshold) return history;
+            // Only compact if history is getting deep
+            if (history.Count < threshold) return history;
 
-            LocalPilotLogger.Log($"[Compactor] History threshold reached ({userAssistantMessages.Count}). Initiating auto-compaction...");
+            LocalPilotLogger.Log($"[Compactor] History threshold reached ({history.Count}). Initiating KV-cache aware auto-compaction...");
 
-            // 1. Preserve the foundational system prompts and the original task
+            // 🚀 WORLD-CLASS PERFORMANCE: Stable Prefix Strategy (KV-Cache Reuse)
+            // We keep the first 3 messages (usually System + Initial Context + Initial Task) 
+            // completely unchanged. This allows Ollama to skip processing these tokens on every turn.
             var result = new List<ChatMessage>();
-            result.AddRange(history.Where(m => m.Role == "system").Take(2)); // Identity & Context
+            var stablePrefix = history.Take(3).ToList();
+            result.AddRange(stablePrefix);
             
-            // 2. Identify the window to compact (everything except the last 6 messages)
-            var toCompact = userAssistantMessages.Take(userAssistantMessages.Count - 6).ToList();
-            var keptMessages = userAssistantMessages.Skip(userAssistantMessages.Count - 6).ToList();
+            var dynamicHistory = history.Skip(3).ToList();
+            if (dynamicHistory.Count < 10) return history; // Not enough to summarize
 
-            // 3. Extract Architectural Decisions & Code Snippets from the 'toCompact' window
+            // Identify the 'Middle' to compact and the 'Recent' to keep
+            var toCompact = dynamicHistory.Take(dynamicHistory.Count - 6).ToList();
+            var keptMessages = dynamicHistory.Skip(dynamicHistory.Count - 6).ToList();
+
+            // Extract Architectural Decisions & Code Snippets from the 'Middle' window
             string architecturalSummary = await SummarizeDecisionsAsync(toCompact, model);
             
-            // 4. Build the Compacted State Message
+            // Build the Compacted State Message
             var compactedState = new ChatMessage
             {
                 Role = "system",
                 Content = $"## CONTEXT AUTO-COMPACTION (History Restored)\n\n" +
                           $"Summary of previous architectural decisions and state:\n{architecturalSummary}\n\n" +
-                          $"Note: Detailed logs for these turns have been pruned to optimize context window space."
+                          $"Note: To optimize KV-cache performance, the middle of the conversation has been summarized."
             };
 
             result.Add(compactedState);
             result.AddRange(keptMessages);
 
-            LocalPilotLogger.Log($"[Compactor] History compacted. Block size reduced from {userAssistantMessages.Count} to {keptMessages.Count + 1} turns.");
+            LocalPilotLogger.Log($"[Compactor] History compacted. Block size reduced from {history.Count} to {result.Count} turns. Stable prefix preserved.");
             
             return result;
         }
