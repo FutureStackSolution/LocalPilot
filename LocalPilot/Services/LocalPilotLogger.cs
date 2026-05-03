@@ -64,6 +64,7 @@ namespace LocalPilot.Services
                 {
                     if (_pane == null && !_initializing)
                     {
+                        // Initialization still needs to happen once, we can try to do it safely
                         await InitializePanesAsync();
                     }
 

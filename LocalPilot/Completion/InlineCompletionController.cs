@@ -49,6 +49,8 @@ namespace LocalPilot.Completion
 
         private void OnTextBufferChanged(object sender, TextContentChangedEventArgs e)
         {
+            if (!LocalPilotSettings.Instance.EnableInlineCompletion) return;
+
             // Dismiss existing ghost text on any edit
             _ghostAdornment?.HideGhost();
 
@@ -72,6 +74,8 @@ namespace LocalPilot.Completion
 
         private void OnCaretPositionChanged(object sender, CaretPositionChangedEventArgs e)
         {
+            if (!LocalPilotSettings.Instance.EnableInlineCompletion) return;
+
             // Cancel any pending completion when user moves caret
             _cts?.Cancel();
             _ghostAdornment?.HideGhost();

@@ -87,22 +87,25 @@ namespace LocalPilot.Services
 
                 if (_index.IsEmpty) await LoadIndexAsync(_solutionRoot);
 
-                LocalPilotLogger.Log("[RAG] Starting parallel differential sync...", LogCategory.Agent);
-                
-                // 1. Collect all relevant files
-                var allFiles = Directory.EnumerateFiles(_solutionRoot, "*.*", SearchOption.AllDirectories)
-                    .Where(IsRelevantFile).ToList();
+                // 🚀 SWITCH TO BACKGROUND: Don't block the UI thread during solution scanning
+                await Task.Run(async () =>
+                {
+                    LocalPilotLogger.Log("[RAG] Starting parallel differential sync...", LogCategory.Agent);
+                    
+                    // 1. Collect all relevant files
+                    var allFiles = Directory.EnumerateFiles(_solutionRoot, "*.*", SearchOption.AllDirectories)
+                        .Where(IsRelevantFile).ToList();
 
-                // 2. Filter for changed files
-                var filesToUpdate = allFiles.Where(f => {
-                    var info = new FileInfo(f);
-                    var relPath = GetRelativePath(f);
-                    if (_index.TryGetValue(relPath, out var chunks) && chunks.Any())
-                    {
-                        return info.LastWriteTime > chunks[0].LastModified;
-                    }
-                    return true;
-                }).ToList();
+                    // 2. Filter for changed files
+                    var filesToUpdate = allFiles.Where(f => {
+                        var info = new FileInfo(f);
+                        var relPath = GetRelativePath(f);
+                        if (_index.TryGetValue(relPath, out var chunks) && chunks.Any())
+                        {
+                            return info.LastWriteTime > chunks[0].LastModified;
+                        }
+                        return true;
+                    }).ToList();
 
                 if (filesToUpdate.Any())
                 {
@@ -118,6 +121,7 @@ namespace LocalPilot.Services
                     _lastIndexTime = DateTime.Now;
                     await SaveIndexAsync(_solutionRoot);
                 }
+            });
 
                 SetupIncrementalWatcher(ollama);
                 int chunkCount = _index.Values.Sum(v => v.Count);

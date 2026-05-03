@@ -63,6 +63,12 @@ namespace LocalPilot.Services
         /// </summary>
         public async Task RunTaskAsync(string taskDescription, List<ChatMessage> messages, CancellationToken ct, string modelOverride = null)
         {
+            if (_ollama.CircuitBreakerTripped)
+            {
+                OnStatusUpdate?.Invoke(AgentStatus.Failed, "Ollama is unreachable (Circuit Breaker tripped). Please check your connection.");
+                return;
+            }
+
             IsActive = true;
             GlobalPriorityGuard.StartAgentTurn();
             try
@@ -799,15 +805,13 @@ namespace LocalPilot.Services
             long requiredCtx = (long)(estimatedTokens * 1.25);
             
             // Tiered minimums to avoid frequent context switching.
-            // 8192 minimum: even "small" agent sessions need room for the system prompt,
-            // tool schema, active editor snippet, and at least one tool call + result.
             if (requiredCtx < 8192) requiredCtx = 8192;
             else if (requiredCtx < 16384) requiredCtx = 16384;
             else if (requiredCtx < 32768) requiredCtx = 32768;
             
-            // 🚀 QUICK ACTION CAP: Limit context to 8k for explain/fix to ensure GPU speed
-            int maxCtx = isQuickAction ? 8192 : 128000;
-            options.NumCtx = (int)Math.Min(requiredCtx, maxCtx);
+            // 🚀 STRICT CAP: Ensure context never exceeds hardware/Ollama stability limits.
+            int maxCtx = isQuickAction ? 8192 : 32768;
+            options.NumCtx = (int)Math.Min(requiredCtx, (long)maxCtx);
 
             LocalPilotLogger.Log($"[Orchestrator] Dynamic Context Allocation: {options.NumCtx} tokens (QuickAction: {isQuickAction}, EstimatedInput: {estimatedTokens})");
 

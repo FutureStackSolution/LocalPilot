@@ -138,13 +138,16 @@ namespace LocalPilot.Services
                 if (solution == null || string.IsNullOrEmpty(solution.FullPath)) return;
                 _workspaceRoot = Path.GetDirectoryName(solution.FullPath);
 
-                // 🚀 PARALLEL SCAN ENGINE
-                var allFiles = Directory.EnumerateFiles(_workspaceRoot, "*.*", SearchOption.AllDirectories)
-                    .Where(f => {
-                        var ext = Path.GetExtension(f).ToLowerInvariant();
-                        return (ext == ".cs" || ext == ".ts" || ext == ".tsx") &&
-                               !f.Contains("\\obj\\") && !f.Contains("\\bin\\") && !f.Contains("\\node_modules\\");
-                    }).ToList();
+                // 🚀 SWITCH TO BACKGROUND: Don't block the UI thread during the heavy scan
+                await Task.Run(() => 
+                {
+                    // 🚀 PARALLEL SCAN ENGINE
+                    var allFiles = Directory.EnumerateFiles(_workspaceRoot, "*.*", SearchOption.AllDirectories)
+                        .Where(f => {
+                            var ext = Path.GetExtension(f).ToLowerInvariant();
+                            return (ext == ".cs" || ext == ".ts" || ext == ".tsx") &&
+                                   !f.Contains("\\obj\\") && !f.Contains("\\bin\\") && !f.Contains("\\node_modules\\");
+                        }).ToList();
 
                 try
                 {
@@ -158,9 +161,10 @@ namespace LocalPilot.Services
                 }
                 catch (OperationCanceledException) { LocalPilotLogger.Log("[Nexus] Graph rebuild yielded to agent."); }
 
-                PerformBridging(newGraph);
-                _graph = newGraph;
-                _graph.LastUpdated = DateTime.Now;
+                    PerformBridging(newGraph);
+                    _graph = newGraph;
+                    _graph.LastUpdated = DateTime.Now;
+                });
 
                 await SaveToDiskAsync();
                 LocalPilotLogger.Log($"[Nexus] Graph synchronized: {_graph.Nodes.Count} nodes, {_graph.Edges.Count} edges.", LogCategory.Agent);

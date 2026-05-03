@@ -86,7 +86,7 @@ namespace LocalPilot.Services
                     var payload = new { 
                         model, 
                         prompt, 
-                        keep_alive = "10m" // Keep embedding model warm for 10 mins
+                        keep_alive = "10m" 
                     };
                     var body = JsonConvert.SerializeObject(payload);
                     var content = new StringContent(body, Encoding.UTF8, "application/json");
@@ -96,17 +96,16 @@ namespace LocalPilot.Services
                     if (!response.IsSuccessStatusCode)
                     {
                         if (i == maxRetries - 1) break;
-                        int delayMs = (int)Math.Pow(2, i + 1) * 1000; // Exponential backoff: 2s, 4s
+                        int delayMs = (int)Math.Pow(2, i + 1) * 1000;
                         await Task.Delay(delayMs, ct);
                         continue;
                     }
 
-                    var json = await response.Content.ReadAsStringAsync();
+                    var json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
                     var obj = JObject.Parse(json);
                     var embeddingArray = obj["embedding"] as JArray;
                     
-                    _consecutiveFailures = 0;
-                    CircuitBreakerTripped = false;
+                    ResetCircuitBreaker();
 
                     if (embeddingArray == null) return null;
                     return embeddingArray.ToObject<float[]>();
@@ -120,7 +119,8 @@ namespace LocalPilot.Services
                 {
                     if (i == maxRetries - 1)
                     {
-                        LocalPilotLogger.LogError($"[Ollama] Embedding failed after {maxRetries} attempts: {ex.Message}", ex);
+                        LocalPilotLogger.LogError($"[Ollama] Embedding failed after {maxRetries} attempts: {ex.Message}", ex, LogCategory.Ollama);
+                        HandleFailure();
                         break;
                     }
                     int delayMs = (int)Math.Pow(2, i + 1) * 1000;
@@ -128,15 +128,26 @@ namespace LocalPilot.Services
                 }
             }
 
-            // If we reach here, we exhausted retries
+            return null;
+        }
+
+        private void HandleFailure()
+        {
             _consecutiveFailures++;
             if (_consecutiveFailures >= 5)
             {
                 CircuitBreakerTripped = true;
-                LocalPilotLogger.Log("[Ollama] CIRCUIT BREAKER TRIPPED. Too many consecutive embedding failures.", LogCategory.Ollama);
+                LocalPilotLogger.Log("[Ollama] CIRCUIT BREAKER TRIPPED. Too many consecutive failures. Will retry later.", LogCategory.Ollama, LogSeverity.Warning);
             }
+        }
 
-            return null;
+        private void ResetCircuitBreaker()
+        {
+            if (CircuitBreakerTripped)
+                LocalPilotLogger.Log("[Ollama] Connection restored. Resetting circuit breaker.", LogCategory.Ollama);
+            
+            _consecutiveFailures = 0;
+            CircuitBreakerTripped = false;
         }
 
         // ── Code completion (generate endpoint) ───────────────────────────────
@@ -146,6 +157,11 @@ namespace LocalPilot.Services
             OllamaOptions options = null,
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
         {
+            if (CircuitBreakerTripped)
+            {
+                yield return "\n[LocalPilot] Ollama is currently unreachable. Please check if Ollama is running.";
+                yield break;
+            }
             var payload = new
             {
                 model,
@@ -172,6 +188,7 @@ namespace LocalPilot.Services
             catch (Exception ex)
             {
                 errorMessage = $"\n[LocalPilot Error] Could not reach Ollama: {ex.Message}";
+                HandleFailure();
             }
 
             if (errorMessage != null)
@@ -235,6 +252,11 @@ namespace LocalPilot.Services
             OllamaOptions options = null,
             [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
         {
+            if (CircuitBreakerTripped)
+            {
+                yield return ChatStreamResult.Text("\n⚠️ **LocalPilot Error:** Ollama is currently unreachable. The circuit breaker is tripped due to multiple connection failures.\n\nPlease ensure Ollama is running and accessible at " + _baseUrl);
+                yield break;
+            }
             // ── GUARD: Detect embedding-only models early ─────────────────────────
             // Models like nomic-embed-text, bge-*, e5-* do NOT support /api/chat.
             // Ollama returns HTTP 400 for these. Surface a clear error instead.
@@ -283,13 +305,35 @@ namespace LocalPilot.Services
 
             HttpResponseMessage response = null;
             string errorDetails = null;
+            bool toolSupportFailed = false;
+
             try
             {
                 var request = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/api/chat");
                 request.Content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
 
                 response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
-                response.EnsureSuccessStatusCode();
+                
+                if (response.StatusCode == System.Net.HttpStatusCode.BadRequest)
+                {
+                    var errorBody = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                    
+                    // 🚀 AGGRESSIVE FALLBACK: If tools were provided and we got a 400, it's almost certainly
+                    // a tool-related protocol error (e.g. Ollama < 0.3.0 or incompatible model).
+                    if (tools != null && tools.Count > 0)
+                    {
+                        toolSupportFailed = true;
+                        LocalPilotLogger.Log($"[Ollama] Model '{model}' or Ollama version does not support native tool calling (400 Bad Request). Falling back to text-only mode.", LogCategory.Ollama, LogSeverity.Warning);
+                    }
+                    else
+                    {
+                        errorDetails = $"Bad Request (400): {errorBody}";
+                    }
+                }
+                else
+                {
+                    response.EnsureSuccessStatusCode();
+                }
             }
             catch (OperationCanceledException)
             {
@@ -299,6 +343,37 @@ namespace LocalPilot.Services
             {
                 errorDetails = ex.Message;
                 LocalPilotLogger.LogError("[Ollama] Core Network Error", ex, LogCategory.Ollama);
+                HandleFailure();
+            }
+
+            // 🚀 FALLBACK: If tools caused a 400, retry without tools
+            if (toolSupportFailed)
+            {
+                // Warn the user that tool calling might be degraded
+                yield return ChatStreamResult.Text("\n> [!NOTE]\n> The selected model (`" + model + "`) does not support native tool calling. LocalPilot is falling back to text-based tool parsing, which may be less reliable.\n\n");
+
+                var fallbackPayload = new
+                {
+                    model,
+                    messages,
+                    stream = true,
+                    options = options ?? new OllamaOptions(),
+                    keep_alive = "5m"
+                };
+                string fallbackJson = JsonConvert.SerializeObject(fallbackPayload, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore });
+                
+                try
+                {
+                    var request = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/api/chat");
+                    request.Content = new StringContent(fallbackJson, Encoding.UTF8, "application/json");
+                    response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+                    response.EnsureSuccessStatusCode();
+                    errorDetails = null; // Clear any previous error
+                }
+                catch (Exception ex)
+                {
+                    errorDetails = $"Fallback failed: {ex.Message}";
+                }
             }
 
             if (errorDetails != null)
