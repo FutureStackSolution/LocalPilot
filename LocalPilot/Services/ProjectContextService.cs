@@ -257,24 +257,26 @@ namespace LocalPilot.Services
 
                         foreach (var chunk in processedChunks)
                         {
-                            // Update Search Index (FTS5)
+                            long chunkId = 0;
+                            // 1. Update Chunks table with vectors (Get the ID for fast JOINs)
                             using (var cmd = _storage.GetConnection().CreateCommand())
                             {
                                 cmd.Transaction = transaction;
-                                cmd.CommandText = "INSERT INTO SearchIndex (Content, Path) VALUES (@Content, @Path)";
-                                cmd.Parameters.AddWithValue("@Content", chunk.Text);
-                                cmd.Parameters.AddWithValue("@Path", relativePath);
-                                await cmd.ExecuteNonQueryAsync(ct);
-                            }
-
-                            // Update Chunks table with vectors
-                            using (var cmd = _storage.GetConnection().CreateCommand())
-                            {
-                                cmd.Transaction = transaction;
-                                cmd.CommandText = "INSERT INTO Chunks (Path, Content, Vector) VALUES (@Path, @Content, @Vector)";
+                                cmd.CommandText = "INSERT INTO Chunks (Path, Content, Vector) VALUES (@Path, @Content, @Vector); SELECT last_insert_rowid();";
                                 cmd.Parameters.AddWithValue("@Path", relativePath);
                                 cmd.Parameters.AddWithValue("@Content", chunk.Text);
                                 cmd.Parameters.AddWithValue("@Vector", chunk.Vector != null ? GetRawBytes(chunk.Vector) : null);
+                                chunkId = (long)await cmd.ExecuteScalarAsync(ct);
+                            }
+
+                            // 2. Update Search Index (FTS5) with ChunkId reference
+                            using (var cmd = _storage.GetConnection().CreateCommand())
+                            {
+                                cmd.Transaction = transaction;
+                                cmd.CommandText = "INSERT INTO SearchIndex (Content, Path, ChunkId) VALUES (@Content, @Path, @ChunkId)";
+                                cmd.Parameters.AddWithValue("@Content", chunk.Text);
+                                cmd.Parameters.AddWithValue("@Path", relativePath);
+                                cmd.Parameters.AddWithValue("@ChunkId", chunkId);
                                 await cmd.ExecuteNonQueryAsync(ct);
                             }
                         }
@@ -382,7 +384,7 @@ namespace LocalPilot.Services
                     cmd.CommandText = @"
                         SELECT si.Path, si.Content, bm25(SearchIndex) as rank, c.Vector 
                         FROM SearchIndex si
-                        JOIN Chunks c ON si.Content = c.Content AND si.Path = c.Path
+                        JOIN Chunks c ON si.ChunkId = c.Id
                         WHERE SearchIndex MATCH @query 
                         ORDER BY rank 
                         LIMIT @limit";

@@ -116,8 +116,13 @@ namespace LocalPilot.Services
             // 🚀 PERSISTENT PERFORMANCE CACHE: Check SQLite before hitting Ollama
             string cacheKey = $"{model}:{prompt}";
             var cached = await StorageService.Instance.GetCachedEmbeddingAsync(cacheKey);
-            if (cached != null) return cached;
+            if (cached != null) 
+            {
+                LocalPilotLogger.Log($"[Storage] Embedding Cache HIT - Skipping Ollama API for: {prompt.Substring(0, Math.Min(prompt.Length, 30))}...", LogCategory.Storage, LogSeverity.Debug);
+                return cached;
+            }
 
+            LocalPilotLogger.Log($"[Storage] Embedding Cache MISS - Calling Ollama API...", LogCategory.Storage, LogSeverity.Debug);
             int maxRetries = 3;
             for (int i = 0; i < maxRetries; i++)
             {

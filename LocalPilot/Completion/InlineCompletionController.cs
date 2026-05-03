@@ -182,20 +182,26 @@ namespace LocalPilot.Completion
                     await foreach (var chunk in _sharedOllama.StreamCompletionAsync(
                         LocalPilotSettings.Instance.CompletionModel, prompt, opts, token).ConfigureAwait(false))
                     {
-                        sb.Append(chunk);
                         if (token.IsCancellationRequested) break;
+                        sb.Append(chunk);
+
+                        // 🚀 STREAMING RENDER: Update ghost text every time we get a chunk
+                        string currentText = sb.ToString();
+                        _ = Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+                        {
+                            await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                            if (!token.IsCancellationRequested && LocalPilotSettings.Instance.ShowCompletionGhost)
+                            {
+                                _ghostAdornment?.ShowGhost(currentText);
+                            }
+                        });
                     }
                     return sb.ToString().Trim();
                 }, token);
 
                 if (!LocalPilotSettings.Instance.EnableInlineCompletion || token.IsCancellationRequested) return;
 
-                // 3. Return to UI thread only to render
-                await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory
-                      .SwitchToMainThreadAsync(CancellationToken.None);
-
-                if (!token.IsCancellationRequested && LocalPilotSettings.Instance.ShowCompletionGhost)
-                    _ghostAdornment?.ShowGhost(completionText);
+                // Ghost text is now handled incrementally during the stream above.
             }
             catch (OperationCanceledException) { /* user typed again — expected */ }
             catch (Exception ex)

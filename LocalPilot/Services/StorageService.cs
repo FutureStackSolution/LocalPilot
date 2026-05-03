@@ -100,6 +100,7 @@ namespace LocalPilot.Services
                         CREATE VIRTUAL TABLE IF NOT EXISTS SearchIndex USING fts5(
                             Content, 
                             Path UNINDEXED, 
+                            ChunkId UNINDEXED,
                             tokenize='porter unicode61'
                         );";
                     cmd.ExecuteNonQuery();
