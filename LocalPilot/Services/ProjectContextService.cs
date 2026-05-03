@@ -13,37 +13,6 @@ using Newtonsoft.Json;
 
 namespace LocalPilot.Services
 {
-    public class CodeChunk
-    {
-        public string FilePath { get; set; }
-        public string Content { get; set; }
-        
-        [JsonIgnore]
-        public float[] Vector { get; set; }
-
-        [JsonProperty("V")]
-        public string VectorBase64
-        {
-            get => Vector == null ? null : Convert.ToBase64String(GetRawBytes(Vector));
-            set => Vector = string.IsNullOrEmpty(value) ? null : GetFloats(Convert.FromBase64String(value));
-        }
-
-        public DateTime LastModified { get; set; }
-
-        private static byte[] GetRawBytes(float[] floats)
-        {
-            byte[] dest = new byte[floats.Length * sizeof(float)];
-            Buffer.BlockCopy(floats, 0, dest, 0, dest.Length);
-            return dest;
-        }
-
-        private static float[] GetFloats(byte[] bytes)
-        {
-            float[] dest = new float[bytes.Length / sizeof(float)];
-            Buffer.BlockCopy(bytes, 0, dest, 0, bytes.Length);
-            return dest;
-        }
-    }
 
     /// <summary>
     /// Local RAG Service: Indexes the Visual Studio solution and provides semantic search.
@@ -62,6 +31,13 @@ namespace LocalPilot.Services
         private readonly ConcurrentDictionary<string, byte> _pendingFiles = new ConcurrentDictionary<string, byte>();
         private CancellationTokenSource _watcherCts;
         private volatile bool _isIndexing = false;
+
+        private class LegacyCodeChunk
+        {
+            public string FilePath { get; set; }
+            public string Content { get; set; }
+            public DateTime LastModified { get; set; }
+        }
 
         private ProjectContextService() { }
 
@@ -327,7 +303,7 @@ namespace LocalPilot.Services
             {
                 LocalPilotLogger.Log("[RAG] Migrating legacy JSON index to SQLite...");
                 string json = File.ReadAllText(legacyPath);
-                var loaded = JsonConvert.DeserializeObject<Dictionary<string, List<CodeChunk>>>(json);
+                var loaded = JsonConvert.DeserializeObject<Dictionary<string, List<LegacyCodeChunk>>>(json);
                 
                 if (loaded != null)
                 {
