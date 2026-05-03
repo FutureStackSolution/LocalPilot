@@ -8,6 +8,7 @@ using System.ComponentModel.Composition;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.VisualStudio.Language.Intellisense;
 
 namespace LocalPilot.Completion
 {
@@ -22,6 +23,7 @@ namespace LocalPilot.Completion
     internal sealed class InlineCompletionController : IWpfTextViewCreationListener
     {
         [Import] internal ITextDocumentFactoryService TextDocumentFactory { get; set; }
+        [Import] internal ICompletionBroker CompletionBroker { get; set; }
 
         // Shared OllamaService instance across all editor tabs to unify circuit breaker state
         private static readonly OllamaService _sharedOllama = new OllamaService(LocalPilotSettings.Instance.OllamaBaseUrl);
@@ -104,6 +106,12 @@ namespace LocalPilot.Completion
                 // 1. Get snapshot and buffer info on the UI thread
                 await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory
                       .SwitchToMainThreadAsync(token);
+
+                // 🛡️ INTELLI-FIRST: Don't show ghost text if VS IntelliSense is active
+                if (CompletionBroker.IsCompletionActive(_view))
+                {
+                    return;
+                }
 
                 // Debug guard: silence completions during debugging sessions
                 var shellDebugger = await Community.VisualStudio.Toolkit.VS.GetRequiredServiceAsync<Microsoft.VisualStudio.Shell.Interop.SVsShellDebugger, Microsoft.VisualStudio.Shell.Interop.IVsDebugger>();
