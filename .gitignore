@@ -380,6 +380,7 @@ MSBuild_Logs/
 
 # Local History for Visual Studio
 **/.localhistory/
+.localpilot/
 
 # Visual Studio History (VSHistory) files
 .vshistory/

@@ -308,9 +308,25 @@ namespace LocalPilot.Services
             {
                 LocalPilotLogger.Log("[RAG] Migrating legacy JSON index to SQLite...");
                 string json = File.ReadAllText(legacyPath);
-                var loaded = JsonConvert.DeserializeObject<Dictionary<string, List<LegacyCodeChunk>>>(json);
                 
-                if (loaded != null)
+                Dictionary<string, List<LegacyCodeChunk>> loaded = null;
+                try
+                {
+                    loaded = JsonConvert.DeserializeObject<Dictionary<string, List<LegacyCodeChunk>>>(json);
+                }
+                catch (JsonSerializationException)
+                {
+                    // Fallback: If it's a flat array (legacy format), group it by FilePath
+                    var flatList = JsonConvert.DeserializeObject<List<LegacyCodeChunk>>(json);
+                    if (flatList != null)
+                    {
+                        loaded = flatList.Where(c => !string.IsNullOrEmpty(c.FilePath))
+                                         .GroupBy(c => c.FilePath)
+                                         .ToDictionary(g => g.Key, g => g.ToList());
+                    }
+                }
+                
+                if (loaded != null && loaded.Count > 0)
                 {
                     foreach (var kvp in loaded)
                     {
@@ -330,9 +346,9 @@ namespace LocalPilot.Services
                     }
                 }
                 
-                // Cleanup
-                File.Move(legacyPath, legacyPath + ".old");
-                LocalPilotLogger.Log("[RAG] Migration complete.");
+                // Cleanup: Delete legacy file now that data is in SQLite
+                File.Delete(legacyPath);
+                LocalPilotLogger.Log("[RAG] Migration complete. Legacy index deleted.");
             }
             catch (Exception ex) { LocalPilotLogger.LogError("[RAG] Legacy migration failed", ex); }
         }
@@ -360,6 +376,14 @@ namespace LocalPilot.Services
                 _watcherCts = new CancellationTokenSource();
                 _watcher = new FileSystemWatcher(_solutionRoot) { IncludeSubdirectories = true, Filter = "*.*", EnableRaisingEvents = true };
                 _watcher.Changed += (s, e) => { if (IsRelevantFile(e.FullPath)) _pendingFiles.TryAdd(e.FullPath, 0); };
+                _watcher.Created += (s, e) => { if (IsRelevantFile(e.FullPath)) _pendingFiles.TryAdd(e.FullPath, 0); };
+                _watcher.Deleted += (s, e) => 
+                {
+                    _ = Task.Run(async () => {
+                        await _storage.ExecuteAsync("DELETE FROM Files WHERE Path = @Path", new { Path = GetRelativePath(e.FullPath) });
+                        await _storage.ExecuteAsync("DELETE FROM SearchIndex WHERE Path = @Path", new { Path = GetRelativePath(e.FullPath) });
+                    });
+                };
                 
                 _ = Task.Run(async () => {
                     while (!_watcherCts.Token.IsCancellationRequested)

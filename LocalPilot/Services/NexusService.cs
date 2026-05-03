@@ -302,7 +302,8 @@ namespace LocalPilot.Services
                     foreach (var n in loaded.Nodes) await _storage.ExecuteAsync("INSERT OR REPLACE INTO NexusNodes (Id, Label, Type, Metadata) VALUES (@Id, @L, @T, @P)", new { Id = n.Id, L = n.Name, T = n.Type.ToString(), P = n.FilePath });
                     foreach (var e in loaded.Edges) await _storage.ExecuteAsync("INSERT OR REPLACE INTO NexusEdges (SourceId, TargetId, Type) VALUES (@S, @T, @Ty)", new { S = e.FromId, T = e.ToId, Ty = e.Type.ToString() });
                 }
-                File.Move(path, path + ".old");
+                File.Delete(path);
+                LocalPilotLogger.Log("[Nexus] Migration complete. Legacy graph deleted.");
             }
             catch { }
         }
