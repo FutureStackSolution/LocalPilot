@@ -18,7 +18,6 @@ namespace LocalPilot.Services
     {
         private static readonly HttpClient _httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
         private static readonly HttpClient _backgroundHttpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
-        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, float[]> _embeddingCache = new System.Collections.Concurrent.ConcurrentDictionary<string, float[]>(StringComparer.OrdinalIgnoreCase);
         private string _baseUrl;
 
         private volatile bool _circuitBreakerTripped = false;
@@ -114,9 +113,10 @@ namespace LocalPilot.Services
 
             if (string.IsNullOrWhiteSpace(model) || string.IsNullOrWhiteSpace(prompt)) return null;
 
-            // 🚀 PERFORMANCE CACHE: Skip Ollama network call if we've already embedded this exact text
+            // 🚀 PERSISTENT PERFORMANCE CACHE: Check SQLite before hitting Ollama
             string cacheKey = $"{model}:{prompt}";
-            if (_embeddingCache.TryGetValue(cacheKey, out var cached)) return cached;
+            var cached = await StorageService.Instance.GetCachedEmbeddingAsync(cacheKey);
+            if (cached != null) return cached;
 
             int maxRetries = 3;
             for (int i = 0; i < maxRetries; i++)
@@ -168,8 +168,8 @@ namespace LocalPilot.Services
                         if (embeddingArray == null) return null;
                         var result = embeddingArray.ToObject<float[]>();
                         
-                        // Cache the result for future turns
-                        if (result != null) _embeddingCache.TryAdd(cacheKey, result);
+                        // Persist to SQLite for future sessions
+                        if (result != null) await StorageService.Instance.StoreCachedEmbeddingAsync(cacheKey, result);
                         
                         return result;
                     }

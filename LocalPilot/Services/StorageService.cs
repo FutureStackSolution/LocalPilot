@@ -114,6 +114,14 @@ namespace LocalPilot.Services
                         );
                         CREATE INDEX IF NOT EXISTS idx_chunks_path ON Chunks(Path);";
                     cmd.ExecuteNonQuery();
+
+                    cmd.CommandText = @"
+                        CREATE TABLE IF NOT EXISTS EmbeddingCache (
+                            Key TEXT PRIMARY KEY,
+                            Vector BLOB,
+                            Timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                        );";
+                    cmd.ExecuteNonQuery();
                 }
                 transaction.Commit();
             }
@@ -121,6 +129,55 @@ namespace LocalPilot.Services
 
         public SqliteConnection GetConnection() => _connection;
         public System.Threading.SemaphoreSlim GetLock() => _dbLock;
+
+        public async Task<float[]> GetCachedEmbeddingAsync(string key)
+        {
+            await _dbLock.WaitAsync();
+            try
+            {
+                using (var cmd = _connection.CreateCommand())
+                {
+                    cmd.CommandText = "SELECT Vector FROM EmbeddingCache WHERE Key = @Key";
+                    cmd.Parameters.AddWithValue("@Key", key);
+                    using (var reader = await cmd.ExecuteReaderAsync())
+                    {
+                        if (await reader.ReadAsync())
+                        {
+                            byte[] blob = reader.GetValue(0) as byte[];
+                            if (blob == null) return null;
+                            
+                            var result = new float[blob.Length / 4];
+                            Buffer.BlockCopy(blob, 0, result, 0, blob.Length);
+                            return result;
+                        }
+                    }
+                }
+            }
+            catch { }
+            finally { _dbLock.Release(); }
+            return null;
+        }
+
+        public async Task StoreCachedEmbeddingAsync(string key, float[] vector)
+        {
+            if (vector == null) return;
+            await _dbLock.WaitAsync();
+            try
+            {
+                byte[] blob = new byte[vector.Length * 4];
+                Buffer.BlockCopy(vector, 0, blob, 0, blob.Length);
+
+                using (var cmd = _connection.CreateCommand())
+                {
+                    cmd.CommandText = "INSERT OR REPLACE INTO EmbeddingCache (Key, Vector) VALUES (@Key, @Vector)";
+                    cmd.Parameters.AddWithValue("@Key", key);
+                    cmd.Parameters.AddWithValue("@Vector", blob);
+                    await cmd.ExecuteNonQueryAsync();
+                }
+            }
+            catch { }
+            finally { _dbLock.Release(); }
+        }
 
         public async Task ExecuteAsync(string sql, object parameters = null)
         {
