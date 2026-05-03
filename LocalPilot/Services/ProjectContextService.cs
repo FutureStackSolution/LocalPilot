@@ -45,7 +45,7 @@ namespace LocalPilot.Services
 
     /// <summary>
     /// Local RAG Service: Indexes the Visual Studio solution and provides semantic search.
-    /// Optimized with Parallel Incremental Indexing and Memory-Efficient Differential Sync.
+    /// Hardened with defensive error handling — this service MUST NOT crash the IDE under any circumstances.
     /// </summary>
     public class ProjectContextService
     {
@@ -54,7 +54,6 @@ namespace LocalPilot.Services
 
         private readonly ConcurrentDictionary<string, List<CodeChunk>> _index = new ConcurrentDictionary<string, List<CodeChunk>>(StringComparer.OrdinalIgnoreCase);
         private readonly SemaphoreSlim _indexLock = new SemaphoreSlim(1, 1);
-        private readonly SemaphoreSlim _parallelLock = new SemaphoreSlim(5, 5); 
         private DateTime _lastIndexTime = DateTime.MinValue;
         private DateTime _lastDiskSaveTime = DateTime.MinValue;
         
@@ -63,20 +62,41 @@ namespace LocalPilot.Services
         private readonly ConcurrentDictionary<string, byte> _pendingFiles = new ConcurrentDictionary<string, byte>();
         private CancellationTokenSource _watcherCts;
 
+        // Tracks whether the service is currently indexing (prevents re-entrant crashes)
+        private volatile bool _isIndexing = false;
+
         private ProjectContextService() { }
 
         /// <summary>
-        /// 🚀 HIGH PERFORMANCE: Parallel differential indexing of the solution.
+        /// Parallel differential indexing of the solution.
+        /// Fully defensive — will never throw or crash the IDE.
         /// </summary>
         public async Task IndexSolutionAsync(OllamaService ollama, CancellationToken ct = default)
         {
+            // Guard: prevent re-entrant indexing
+            if (_isIndexing) return;
+
+            // Non-blocking lock: if someone else is indexing, just skip
             if (!await _indexLock.WaitAsync(0)) return;
+            _isIndexing = true;
             try
             {
-                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                var solution = await VS.Solutions.GetCurrentSolutionAsync();
-                if (solution == null || string.IsNullOrEmpty(solution.FullPath)) return;
-                var currentRoot = Path.GetDirectoryName(solution.FullPath);
+                string currentRoot = null;
+                try
+                {
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    var solution = await VS.Solutions.GetCurrentSolutionAsync();
+                    if (solution == null || string.IsNullOrEmpty(solution.FullPath)) return;
+                    currentRoot = Path.GetDirectoryName(solution.FullPath);
+                }
+                catch (Exception ex)
+                {
+                    LocalPilotLogger.LogError("[RAG] Failed to get solution root", ex);
+                    return;
+                }
+
+                if (string.IsNullOrEmpty(currentRoot) || !Directory.Exists(currentRoot)) return;
+
                 if (_solutionRoot != currentRoot)
                 {
                     LocalPilotLogger.Log($"[RAG] Solution changed. Clearing index for {currentRoot}", LogCategory.Agent);
@@ -87,53 +107,101 @@ namespace LocalPilot.Services
 
                 if (_index.IsEmpty) await LoadIndexAsync(_solutionRoot);
 
-                // 🚀 SWITCH TO BACKGROUND: Don't block the UI thread during solution scanning
+                // SWITCH TO BACKGROUND: Don't block the UI thread during solution scanning
                 await Task.Run(async () =>
                 {
-                    LocalPilotLogger.Log("[RAG] Starting parallel differential sync...", LogCategory.Agent);
-                    
-                    // 1. Collect all relevant files
-                    var allFiles = Directory.EnumerateFiles(_solutionRoot, "*.*", SearchOption.AllDirectories)
-                        .Where(IsRelevantFile).ToList();
-
-                    // 2. Filter for changed files
-                    var filesToUpdate = allFiles.Where(f => {
-                        var info = new FileInfo(f);
-                        var relPath = GetRelativePath(f);
-                        if (_index.TryGetValue(relPath, out var chunks) && chunks.Any())
-                        {
-                            return info.LastWriteTime > chunks[0].LastModified;
-                        }
-                        return true;
-                    }).ToList();
-
-                if (filesToUpdate.Any())
-                {
-                    LocalPilotLogger.Log($"[RAG] Indexing {filesToUpdate.Count} new or modified files...", LogCategory.Agent);
-                    try 
+                    try
                     {
-                        using (var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, GlobalPriorityGuard.YieldToken))
+                        LocalPilotLogger.Log("[RAG] Starting parallel differential sync...", LogCategory.Agent);
+                        
+                        // 1. Collect all relevant files (defensive: catch IO errors during enumeration)
+                        List<string> allFiles;
+                        try
                         {
-                            await ParallelUpdateAsync(filesToUpdate, ollama, linkedCts.Token);
+                            allFiles = Directory.EnumerateFiles(_solutionRoot, "*.*", SearchOption.AllDirectories)
+                                .Where(IsRelevantFile).ToList();
+                        }
+                        catch (Exception ex)
+                        {
+                            LocalPilotLogger.LogError("[RAG] File enumeration failed — some directories may be inaccessible", ex);
+                            // Fallback: try top-level only
+                            try
+                            {
+                                allFiles = Directory.EnumerateFiles(_solutionRoot, "*.*", SearchOption.TopDirectoryOnly)
+                                    .Where(IsRelevantFile).ToList();
+                            }
+                            catch
+                            {
+                                allFiles = new List<string>();
+                            }
+                        }
+
+                        // 2. Filter for changed files
+                        var filesToUpdate = allFiles.Where(f => {
+                            try
+                            {
+                                var info = new FileInfo(f);
+                                if (!info.Exists) return false;
+                                var relPath = GetRelativePath(f);
+                                if (_index.TryGetValue(relPath, out var chunks) && chunks != null && chunks.Any())
+                                {
+                                    return info.LastWriteTime > chunks[0].LastModified;
+                                }
+                                return true;
+                            }
+                            catch { return false; } // Skip files we can't stat
+                        }).ToList();
+
+                        if (filesToUpdate.Any())
+                        {
+                            LocalPilotLogger.Log($"[RAG] Indexing {filesToUpdate.Count} new or modified files...", LogCategory.Agent);
+                            try 
+                            {
+                                using (var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, GlobalPriorityGuard.YieldToken))
+                                {
+                                    await ParallelUpdateAsync(filesToUpdate, ollama, linkedCts.Token);
+                                }
+                            }
+                            catch (OperationCanceledException) { LocalPilotLogger.Log("[RAG] Full sync yielded to agent."); }
+                            catch (Exception ex) { LocalPilotLogger.LogError("[RAG] Parallel update failed (non-fatal)", ex); }
+
+                            _lastIndexTime = DateTime.Now;
+                            await SaveIndexAsync(_solutionRoot);
                         }
                     }
-                    catch (OperationCanceledException) { LocalPilotLogger.Log("[RAG] Full sync yielded to agent."); }
-                    _lastIndexTime = DateTime.Now;
-                    await SaveIndexAsync(_solutionRoot);
-                }
-            });
+                    catch (Exception ex)
+                    {
+                        LocalPilotLogger.LogError("[RAG] Background indexing failed (non-fatal)", ex);
+                    }
+                });
 
                 SetupIncrementalWatcher(ollama);
-                int chunkCount = _index.Values.Sum(v => v.Count);
-                LocalPilotLogger.Log($"[RAG] Sync complete. {chunkCount} chunks ready.");
+                
+                try
+                {
+                    // Snapshot the values to avoid iterating a changing collection
+                    int chunkCount = _index.Values.ToArray().Sum(v => v?.Count ?? 0);
+                    LocalPilotLogger.Log($"[RAG] Sync complete. {chunkCount} chunks ready.");
+                }
+                catch { LocalPilotLogger.Log("[RAG] Sync complete."); }
             }
-            finally { _indexLock.Release(); }
+            catch (Exception ex)
+            {
+                // ABSOLUTE LAST RESORT: If anything above leaked, catch it here.
+                // Under no circumstances should indexing crash the IDE.
+                LocalPilotLogger.LogError("[RAG] IndexSolutionAsync failed catastrophically (non-fatal)", ex);
+            }
+            finally
+            {
+                _isIndexing = false;
+                _indexLock.Release();
+            }
         }
 
         private async Task ParallelUpdateAsync(List<string> files, OllamaService ollama, CancellationToken ct)
         {
-            // 🚀 CONTROLLED PARALLELISM: Process files using user-configured concurrency to prevent overwhelming the local Ollama server
-            int concurrency = Math.Max(1, LocalPilotSettings.Instance.BackgroundIndexingConcurrency);
+            // Controlled parallelism using user-configured concurrency
+            int concurrency = Math.Max(1, Math.Min(8, LocalPilotSettings.Instance.BackgroundIndexingConcurrency));
             using (var semaphore = new SemaphoreSlim(concurrency))
             {
                 var tasks = new List<Task>();
@@ -145,69 +213,117 @@ namespace LocalPilot.Services
                         break;
                     }
 
-                    ct.ThrowIfCancellationRequested(); // Check for Agent activity
-                    await semaphore.WaitAsync(ct);
-                    
+                    // Check cancellation BEFORE spawning more tasks
+                    if (ct.IsCancellationRequested) break;
+
+                    try
+                    {
+                        await semaphore.WaitAsync(ct);
+                    }
+                    catch (OperationCanceledException) { break; }
+
                     tasks.Add(Task.Run(async () => 
                     {
                         try
                         {
                             await ProcessFileAsync(file, GetRelativePath(file), ollama, ct);
                         }
+                        catch (OperationCanceledException) { } // Expected — agent started
+                        catch (Exception ex)
+                        {
+                            // Log but don't propagate — one file failure must not kill the batch
+                            LocalPilotLogger.LogError($"[RAG] Failed to index {Path.GetFileName(file)}", ex);
+                        }
                         finally
                         {
                             semaphore.Release();
                         }
-                    }, ct));
+                    }, CancellationToken.None)); // Use None here: we handle cancellation inside
                 }
-                await Task.WhenAll(tasks);
+
+                // Wait for all in-flight tasks with a timeout to prevent infinite hangs
+                try
+                {
+                    var allDone = Task.WhenAll(tasks);
+                    if (await Task.WhenAny(allDone, Task.Delay(TimeSpan.FromMinutes(5))) != allDone)
+                    {
+                        LocalPilotLogger.Log("[RAG] WARNING: Parallel indexing timed out after 5 minutes. Some files may not be indexed.", LogCategory.Agent);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LocalPilotLogger.LogError("[RAG] Task.WhenAll failed (non-fatal)", ex);
+                }
             }
         }
 
         private void SetupIncrementalWatcher(OllamaService ollama)
         {
             if (_watcher != null) return;
-            _watcherCts = new CancellationTokenSource();
-            _watcher = new FileSystemWatcher(_solutionRoot) { IncludeSubdirectories = true, Filter = "*.*", EnableRaisingEvents = true };
-            
-            _watcher.Changed += (s, e) => { if (IsRelevantFile(e.FullPath)) _pendingFiles.TryAdd(e.FullPath, 0); };
-            
-            // Start background consumer for incremental RAG
-            _ = Task.Run(async () => {
-                while (!_watcherCts.Token.IsCancellationRequested)
-                {
-                    if (GlobalPriorityGuard.ShouldYield() || _pendingFiles.IsEmpty)
-                    {
-                        if (GlobalPriorityGuard.ShouldYield() && !_pendingFiles.IsEmpty)
-                        {
-                            LocalPilotLogger.Log("[RAG] Priority Yield: Pausing brain sync while Agent is active...", LogCategory.Agent);
-                        }
-                        await Task.Delay(5000); // Deep Sleep during activity
-                        continue;
-                    }
 
-                    if (!_pendingFiles.IsEmpty)
+            try
+            {
+                if (!Directory.Exists(_solutionRoot)) return;
+
+                _watcherCts = new CancellationTokenSource();
+                _watcher = new FileSystemWatcher(_solutionRoot)
+                {
+                    IncludeSubdirectories = true,
+                    Filter = "*.*",
+                    EnableRaisingEvents = true,
+                    // Increase buffer size to prevent overflow events under heavy file activity
+                    InternalBufferSize = 32768
+                };
+                
+                _watcher.Changed += (s, e) => { try { if (IsRelevantFile(e.FullPath)) _pendingFiles.TryAdd(e.FullPath, 0); } catch { } };
+                _watcher.Error += (s, e) => { LocalPilotLogger.Log($"[RAG] FileSystemWatcher error: {e.GetException()?.Message}", LogCategory.Agent); };
+                
+                // Start background consumer for incremental RAG
+                _ = Task.Run(async () => {
+                    while (!_watcherCts.Token.IsCancellationRequested)
                     {
-                        await Task.Delay(5000); // Debounce RAG updates (more expensive than Nexus)
-                        var batch = _pendingFiles.Keys.ToList();
-                        _pendingFiles.Clear();
-                        
-                        await _indexLock.WaitAsync();
-                        try 
-                        { 
-                            // 🚀 LINKED CANCELLATION: Abort if agent starts OR if watcher stops
-                            using (var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_watcherCts.Token, GlobalPriorityGuard.YieldToken))
+                        try
+                        {
+                            if (GlobalPriorityGuard.ShouldYield() || _pendingFiles.IsEmpty)
                             {
-                                await ParallelUpdateAsync(batch, ollama, linkedCts.Token); 
-                                await SaveIndexAsync(_solutionRoot); 
+                                await Task.Delay(5000, _watcherCts.Token);
+                                continue;
+                            }
+
+                            if (!_pendingFiles.IsEmpty)
+                            {
+                                await Task.Delay(5000, _watcherCts.Token); // Debounce
+                                var batch = _pendingFiles.Keys.ToList();
+                                _pendingFiles.Clear();
+                                
+                                // Non-blocking lock: skip this batch if a full sync is running
+                                if (!await _indexLock.WaitAsync(0)) continue;
+                                try 
+                                { 
+                                    using (var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_watcherCts.Token, GlobalPriorityGuard.YieldToken))
+                                    {
+                                        await ParallelUpdateAsync(batch, ollama, linkedCts.Token); 
+                                        await SaveIndexAsync(_solutionRoot); 
+                                    }
+                                }
+                                catch (OperationCanceledException) { LocalPilotLogger.Log("[RAG] Background sync yielded to agent."); }
+                                catch (Exception ex) { LocalPilotLogger.LogError("[RAG] Incremental update failed (non-fatal)", ex); }
+                                finally { _indexLock.Release(); }
                             }
                         }
-                        catch (OperationCanceledException) { LocalPilotLogger.Log("[RAG] Background sync yielded to agent."); }
-                        finally { _indexLock.Release(); }
+                        catch (OperationCanceledException) { break; }
+                        catch (Exception ex)
+                        {
+                            LocalPilotLogger.LogError("[RAG] Watcher consumer loop error (non-fatal)", ex);
+                            await Task.Delay(10000); // Back off on errors
+                        }
                     }
-                    await Task.Delay(2000);
-                }
-            });
+                });
+            }
+            catch (Exception ex)
+            {
+                LocalPilotLogger.LogError("[RAG] Failed to setup FileSystemWatcher (non-fatal)", ex);
+            }
         }
 
         private string GetRelativePath(string fullPath)
@@ -223,31 +339,70 @@ namespace LocalPilot.Services
         {
             try
             {
-                var fileInfo = new FileInfo(fullPath);
-                if (fileInfo.Length > 256000) return; // Cap RAG at 256KB for performance
+                // Guard: ensure file still exists (could be deleted between enumeration and processing)
+                if (!File.Exists(fullPath)) return;
 
-                string content = await Task.Run(() => File.ReadAllText(fullPath));
+                var fileInfo = new FileInfo(fullPath);
+                if (!fileInfo.Exists || fileInfo.Length > 256000 || fileInfo.Length == 0) return;
+
+                string content;
+                try
+                {
+                    content = await Task.Run(() => File.ReadAllText(fullPath), ct);
+                }
+                catch (IOException)
+                {
+                    // File is locked (VS might have it open for writing)
+                    return;
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    return;
+                }
+
                 if (string.IsNullOrWhiteSpace(content)) return;
 
                 var chunks = ChunkContent(fullPath, content);
                 var newChunks = new List<CodeChunk>();
 
+                // Use a local semaphore-per-file instead of the shared _parallelLock
+                // to prevent cross-file contention from deadlocking the pipeline
                 foreach (var chunkText in chunks)
                 {
-                    ct.ThrowIfCancellationRequested();
-                    await _parallelLock.WaitAsync(ct);
+                    if (ct.IsCancellationRequested) break;
+
                     try
                     {
                         float[] vector = null;
-                        if (!string.IsNullOrWhiteSpace(LocalPilotSettings.Instance.EmbeddingModel))
+                        string embeddingModel = LocalPilotSettings.Instance.EmbeddingModel;
+                        if (!string.IsNullOrWhiteSpace(embeddingModel) && !ollama.CircuitBreakerTripped)
                         {
-                            vector = await ollama.GetEmbeddingsAsync(LocalPilotSettings.Instance.EmbeddingModel, chunkText, ct);
+                            try
+                            {
+                                vector = await ollama.GetEmbeddingsAsync(embeddingModel, chunkText, ct);
+                            }
+                            catch (OperationCanceledException) { throw; } // Re-throw cancellation
+                            catch (Exception ex)
+                            {
+                                // Embedding failed for this chunk — still index the text for keyword search
+                                LocalPilotLogger.Log($"[RAG] Embedding failed for chunk in {Path.GetFileName(fullPath)}: {ex.Message}");
+                            }
                         }
                         
                         // Add chunk even if vector is null (enables keyword search fallback)
-                        newChunks.Add(new CodeChunk { FilePath = relativePath, Content = chunkText, Vector = vector, LastModified = fileInfo.LastWriteTime });
+                        newChunks.Add(new CodeChunk
+                        {
+                            FilePath = relativePath,
+                            Content = chunkText,
+                            Vector = vector,
+                            LastModified = fileInfo.LastWriteTime
+                        });
                     }
-                    finally { _parallelLock.Release(); }
+                    catch (OperationCanceledException) { break; }
+                    catch (Exception ex)
+                    {
+                        LocalPilotLogger.LogError($"[RAG] Chunk processing failed in {Path.GetFileName(fullPath)}", ex);
+                    }
                 }
 
                 if (newChunks.Any())
@@ -259,76 +414,104 @@ namespace LocalPilot.Services
                     _index.TryRemove(relativePath, out _);
                 }
             }
-            catch { }
+            catch (OperationCanceledException) { } // Expected
+            catch (Exception ex)
+            {
+                // Absolute last catch — one file must never crash the indexer
+                LocalPilotLogger.LogError($"[RAG] ProcessFileAsync failed for {Path.GetFileName(fullPath)}", ex);
+            }
         }
 
         public async Task<string> SearchContextAsync(OllamaService ollama, string query, int topN = 5)
         {
-            if (string.IsNullOrWhiteSpace(query) || _index.IsEmpty) return string.Empty;
-
-            float[] queryVector = null;
-            if (!string.IsNullOrWhiteSpace(LocalPilotSettings.Instance.EmbeddingModel) && !ollama.CircuitBreakerTripped)
+            try
             {
-                queryVector = await ollama.GetEmbeddingsAsync(LocalPilotSettings.Instance.EmbeddingModel, query);
-            }
+                if (string.IsNullOrWhiteSpace(query) || _index.IsEmpty) return string.Empty;
 
-            var results = _index.Values.SelectMany(x => x)
-                .Select(c => 
+                float[] queryVector = null;
+                if (!string.IsNullOrWhiteSpace(LocalPilotSettings.Instance.EmbeddingModel) && !ollama.CircuitBreakerTripped)
                 {
-                    double score = 0;
-                    // Boost if filename matches
-                    if (query.IndexOf(Path.GetFileNameWithoutExtension(c.FilePath), StringComparison.OrdinalIgnoreCase) >= 0)
-                        score += 0.3;
-
-                    if (queryVector != null && c.Vector != null)
+                    try
                     {
-                        // Primary: Semantic Vector Search
-                        score += CosineSimilarity(queryVector, c.Vector);
+                        queryVector = await ollama.GetEmbeddingsAsync(LocalPilotSettings.Instance.EmbeddingModel, query);
                     }
-                    else
+                    catch { } // Non-fatal: fall back to keyword search
+                }
+
+                // Snapshot the index to prevent collection-modified exceptions during iteration
+                var allChunks = _index.Values.ToArray().Where(v => v != null).SelectMany(x => x);
+
+                var results = allChunks
+                    .Select(c => 
                     {
-                        // Fallback: Lexical Keyword Search
-                        score += CalculateKeywordScore(query, c.Content);
-                    }
-                    return new { Chunk = c, Score = score };
-                })
-                .Where(r => r.Score > 0.1) // Lower threshold to allow keyword matches
-                .OrderByDescending(r => r.Score)
-                .Take(topN).ToList();
+                        try
+                        {
+                            double score = 0;
+                            if (query.IndexOf(Path.GetFileNameWithoutExtension(c.FilePath ?? ""), StringComparison.OrdinalIgnoreCase) >= 0)
+                                score += 0.3;
 
-            if (!results.Any()) return string.Empty;
+                            if (queryVector != null && c.Vector != null)
+                            {
+                                score += CosineSimilarity(queryVector, c.Vector);
+                            }
+                            else
+                            {
+                                score += CalculateKeywordScore(query, c.Content);
+                            }
+                            return new { Chunk = c, Score = score };
+                        }
+                        catch { return new { Chunk = c, Score = 0.0 }; }
+                    })
+                    .Where(r => r.Score > 0.1)
+                    .OrderByDescending(r => r.Score)
+                    .Take(topN).ToList();
 
-            var sb = new System.Text.StringBuilder();
-            sb.AppendLine("\n<grounding_context>");
-            foreach (var r in results)
-            {
-                sb.AppendLine($"  <file_snippet path=\"{r.Chunk.FilePath}\">");
-                sb.AppendLine(r.Chunk.Content);
-                sb.AppendLine("  </file_snippet>");
+                if (!results.Any()) return string.Empty;
+
+                var sb = new System.Text.StringBuilder();
+                sb.AppendLine("\n<grounding_context>");
+                foreach (var r in results)
+                {
+                    sb.AppendLine($"  <file_snippet path=\"{r.Chunk.FilePath}\">");
+                    sb.AppendLine(r.Chunk.Content);
+                    sb.AppendLine("  </file_snippet>");
+                }
+                sb.AppendLine("</grounding_context>");
+                return sb.ToString();
             }
-            sb.AppendLine("</grounding_context>");
-            return sb.ToString();
+            catch (Exception ex)
+            {
+                LocalPilotLogger.LogError("[RAG] SearchContextAsync failed (non-fatal)", ex);
+                return string.Empty;
+            }
         }
 
         private bool IsRelevantFile(string path)
         {
-            var ext = Path.GetExtension(path).ToLower();
-            string[] allowed = { 
-                ".cs", ".vb", ".cshtml", ".vbhtml", // .NET
-                ".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx", // C/C++
-                ".java", ".kt", ".gradle", ".jsp", // Java/Android
-                ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", // JS/TS
-                ".html", ".css", ".scss", ".sass", ".less", // Web/Style
-                ".json", ".md", ".yaml", ".yml", ".xml", // Config/Docs
-                ".vue", ".svelte", ".astro" // Frameworks
-            };
-            if (path.Contains("\\.localpilot\\") || path.Contains("\\obj\\") || path.Contains("\\bin\\") || path.Contains("\\node_modules\\") || path.Contains("\\dist\\")) return false;
-            return allowed.Contains(ext);
+            try
+            {
+                var ext = Path.GetExtension(path).ToLower();
+                string[] allowed = { 
+                    ".cs", ".vb", ".cshtml", ".vbhtml", // .NET
+                    ".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx", // C/C++
+                    ".java", ".kt", ".gradle", ".jsp", // Java/Android
+                    ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", // JS/TS
+                    ".html", ".css", ".scss", ".sass", ".less", // Web/Style
+                    ".json", ".md", ".yaml", ".yml", ".xml", // Config/Docs
+                    ".vue", ".svelte", ".astro" // Frameworks
+                };
+                if (path.Contains("\\.localpilot\\") || path.Contains("\\obj\\") || path.Contains("\\bin\\") || 
+                    path.Contains("\\node_modules\\") || path.Contains("\\dist\\") || path.Contains("\\.git\\")) return false;
+                return allowed.Contains(ext);
+            }
+            catch { return false; }
         }
 
         private List<string> ChunkContent(string path, string content)
         {
             var chunks = new List<string>();
+            if (string.IsNullOrEmpty(content)) return chunks;
+            
             int chunkSize = 2500; // Roughly 500-600 tokens, optimized for embedding models
             for (int i = 0; i < content.Length; i += chunkSize)
             {
@@ -339,15 +522,17 @@ namespace LocalPilot.Services
 
         private double CosineSimilarity(float[] v1, float[] v2)
         {
-            if (v1 == null || v2 == null || v1.Length != v2.Length) return 0;
+            if (v1 == null || v2 == null || v1.Length != v2.Length || v1.Length == 0) return 0;
             double dot = 0, m1 = 0, m2 = 0;
             for (int i = 0; i < v1.Length; i++) { dot += (double)v1[i] * v2[i]; m1 += (double)v1[i] * v1[i]; m2 += (double)v2[i] * v2[i]; }
-            return dot / (Math.Sqrt(m1) * Math.Sqrt(m2));
+            double denom = Math.Sqrt(m1) * Math.Sqrt(m2);
+            if (denom == 0) return 0; // Prevent NaN from zero-magnitude vectors
+            return dot / denom;
         }
 
         private double CalculateKeywordScore(string query, string content)
         {
-            if (string.IsNullOrWhiteSpace(content)) return 0;
+            if (string.IsNullOrWhiteSpace(content) || string.IsNullOrWhiteSpace(query)) return 0;
             
             var queryWords = query.ToLower().Split(new[] { ' ', '?', '.', ',', ':', ';', '_', '-' }, StringSplitOptions.RemoveEmptyEntries)
                                   .Where(w => w.Length > 2).ToList(); 
@@ -365,11 +550,11 @@ namespace LocalPilot.Services
                 {
                     count++;
                     index += word.Length;
+                    if (count >= 50) break; // Cap to prevent O(n²) on pathological inputs
                 }
                 
                 if (count > 0)
                 {
-                    // Logarithmic term frequency scaling
                     score += (1.0 + Math.Log(count)) * 0.15; 
                 }
             }
@@ -380,64 +565,88 @@ namespace LocalPilot.Services
         {
             try
             {
+                if (string.IsNullOrEmpty(root)) return;
                 string dir = Path.Combine(root, ".localpilot");
                 if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
                 string path = Path.Combine(dir, "index.json");
 
-                using (var sw = new StreamWriter(path))
+                // Serialize to a temp file first, then replace atomically to prevent corruption
+                string tempPath = path + ".tmp";
+                using (var sw = new StreamWriter(tempPath))
                 using (var jw = new Newtonsoft.Json.JsonTextWriter(sw))
                 {
                     var serializer = new Newtonsoft.Json.JsonSerializer();
-                    serializer.Serialize(jw, _index);
+                    // Snapshot the dictionary to prevent collection-modified during serialization
+                    var snapshot = _index.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+                    serializer.Serialize(jw, snapshot);
                 }
+                // Atomic replace
+                if (File.Exists(path)) File.Delete(path);
+                File.Move(tempPath, path);
                 _lastDiskSaveTime = DateTime.Now;
             }
-            catch { }
+            catch (Exception ex)
+            {
+                LocalPilotLogger.LogError("[RAG] SaveIndexAsync failed (non-fatal)", ex);
+            }
         }
 
         private async Task LoadIndexAsync(string root)
         {
             try
             {
+                if (string.IsNullOrEmpty(root)) return;
                 string path = Path.Combine(root, ".localpilot", "index.json");
-                if (File.Exists(path))
+                if (!File.Exists(path)) return;
+
+                // Read in background to avoid blocking
+                string json = await Task.Run(() => File.ReadAllText(path));
+                if (string.IsNullOrWhiteSpace(json)) return;
+
+                // Try to parse as the new Dictionary format first, then fall back to old List format
+                try
                 {
-                    using (var sr = new StreamReader(path))
-                    using (var jr = new Newtonsoft.Json.JsonTextReader(sr))
+                    var loaded = Newtonsoft.Json.JsonConvert.DeserializeObject<Dictionary<string, List<CodeChunk>>>(json);
+                    if (loaded != null)
                     {
-                        var serializer = new Newtonsoft.Json.JsonSerializer();
-                        jr.Read();
-                        if (jr.TokenType == Newtonsoft.Json.JsonToken.StartArray)
+                        _index.Clear();
+                        foreach (var kvp in loaded)
                         {
-                            // Backwards compatibility for old format
-                            var loadedList = serializer.Deserialize<List<CodeChunk>>(jr);
-                            if (loadedList != null)
-                            {
-                                _index.Clear();
-                                foreach (var group in loadedList.GroupBy(c => c.FilePath))
-                                {
-                                    _index[group.Key] = group.ToList();
-                                }
-                            }
+                            if (kvp.Value != null)
+                                _index[kvp.Key] = kvp.Value;
                         }
-                        else if (jr.TokenType == Newtonsoft.Json.JsonToken.StartObject)
-                        {
-                            var loaded = serializer.Deserialize<Dictionary<string, List<CodeChunk>>>(jr);
-                            if (loaded != null)
-                            {
-                                _index.Clear();
-                                foreach (var kvp in loaded)
-                                {
-                                    _index[kvp.Key] = kvp.Value;
-                                }
-                            }
-                        }
-                        _lastIndexTime = File.GetLastWriteTime(path);
-                        _lastDiskSaveTime = _lastIndexTime;
                     }
                 }
+                catch
+                {
+                    // Backwards compatibility: try old List<CodeChunk> format
+                    try
+                    {
+                        var loadedList = Newtonsoft.Json.JsonConvert.DeserializeObject<List<CodeChunk>>(json);
+                        if (loadedList != null)
+                        {
+                            _index.Clear();
+                            foreach (var group in loadedList.GroupBy(c => c.FilePath))
+                            {
+                                _index[group.Key] = group.ToList();
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        // Corrupt index file — delete it and start fresh
+                        LocalPilotLogger.LogError("[RAG] Index file is corrupted. Deleting and reindexing.", ex);
+                        try { File.Delete(path); } catch { }
+                    }
+                }
+
+                _lastIndexTime = File.GetLastWriteTime(path);
+                _lastDiskSaveTime = _lastIndexTime;
             }
-            catch { }
+            catch (Exception ex)
+            {
+                LocalPilotLogger.LogError("[RAG] LoadIndexAsync failed (non-fatal)", ex);
+            }
         }
     }
 }

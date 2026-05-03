@@ -79,13 +79,27 @@ namespace LocalPilot.Services
         }
 
         // ── Semantic Embeddings ────────────────────────────────────────────────
+        private DateTime _circuitBreakerCooldownUntil = DateTime.MinValue;
+
         public async Task<float[]> GetEmbeddingsAsync(string model, string prompt, CancellationToken ct = default)
         {
-            if (CircuitBreakerTripped) return null;
+            // Check circuit breaker with cooldown: if tripped, wait before retrying
+            if (CircuitBreakerTripped)
+            {
+                if (DateTime.Now < _circuitBreakerCooldownUntil) return null;
+                // Cooldown expired — allow one probe request to see if the server is back
+                CircuitBreakerTripped = false;
+                System.Threading.Interlocked.Exchange(ref _consecutiveFailures, 0);
+                LocalPilotLogger.Log("[Ollama] Circuit breaker cooldown expired. Probing connection...", LogCategory.Ollama);
+            }
+
+            if (string.IsNullOrWhiteSpace(model) || string.IsNullOrWhiteSpace(prompt)) return null;
 
             int maxRetries = 3;
             for (int i = 0; i < maxRetries; i++)
             {
+                if (ct.IsCancellationRequested) return null;
+
                 try
                 {
                     var payload = new { 
@@ -96,29 +110,68 @@ namespace LocalPilot.Services
                     var body = JsonConvert.SerializeObject(payload);
                     var content = new StringContent(body, Encoding.UTF8, "application/json");
 
-                    var response = await _backgroundHttpClient.PostAsync($"{_baseUrl}/api/embeddings", content, ct).ConfigureAwait(false);
-                    
-                    if (!response.IsSuccessStatusCode)
+                    // Per-request timeout: 30 seconds max for an embedding call
+                    using (var requestCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
                     {
-                        if (i == maxRetries - 1) break;
-                        int delayMs = (int)Math.Pow(2, i + 1) * 1000;
-                        await Task.Delay(delayMs, ct);
-                        continue;
+                        requestCts.CancelAfter(TimeSpan.FromSeconds(30));
+
+                        var response = await _backgroundHttpClient.PostAsync($"{_baseUrl}/api/embeddings", content, requestCts.Token).ConfigureAwait(false);
+                        
+                        if (!response.IsSuccessStatusCode)
+                        {
+                            int statusCode = (int)response.StatusCode;
+
+                            // 4xx errors are client errors — retrying won't help
+                            if (statusCode >= 400 && statusCode < 500)
+                            {
+                                LocalPilotLogger.Log($"[Ollama] Embedding request rejected ({statusCode}). Model '{model}' may not support embeddings.", LogCategory.Ollama, LogSeverity.Warning);
+                                HandleFailure();
+                                return null;
+                            }
+
+                            // 5xx: retry with backoff
+                            if (i == maxRetries - 1) break;
+                            int delayMs = (int)Math.Pow(2, i + 1) * 1000;
+                            await Task.Delay(delayMs, ct);
+                            continue;
+                        }
+
+                        var json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                        var obj = JObject.Parse(json);
+                        var embeddingArray = obj["embedding"] as JArray;
+                        
+                        ResetCircuitBreaker();
+
+                        if (embeddingArray == null) return null;
+                        return embeddingArray.ToObject<float[]>();
                     }
-
-                    var json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-                    var obj = JObject.Parse(json);
-                    var embeddingArray = obj["embedding"] as JArray;
-                    
-                    ResetCircuitBreaker();
-
-                    if (embeddingArray == null) return null;
-                    return embeddingArray.ToObject<float[]>();
                 }
-                catch (HttpRequestException) when (i < maxRetries - 1)
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
                 {
+                    // User/agent cancellation — propagate immediately, don't retry
+                    return null;
+                }
+                catch (OperationCanceledException)
+                {
+                    // Per-request timeout (not user cancellation)
+                    LocalPilotLogger.Log($"[Ollama] Embedding request timed out (attempt {i + 1}/{maxRetries})", LogCategory.Ollama);
+                    if (i == maxRetries - 1)
+                    {
+                        HandleFailure();
+                        break;
+                    }
+                }
+                catch (HttpRequestException ex)
+                {
+                    // Network error — Ollama is likely down
+                    if (i == maxRetries - 1)
+                    {
+                        LocalPilotLogger.LogError($"[Ollama] Embedding failed after {maxRetries} attempts: {ex.Message}", ex, LogCategory.Ollama);
+                        HandleFailure();
+                        break;
+                    }
                     int delayMs = (int)Math.Pow(2, i + 1) * 1000;
-                    await Task.Delay(delayMs, ct);
+                    try { await Task.Delay(delayMs, ct); } catch { return null; }
                 }
                 catch (Exception ex)
                 {
@@ -129,7 +182,7 @@ namespace LocalPilot.Services
                         break;
                     }
                     int delayMs = (int)Math.Pow(2, i + 1) * 1000;
-                    await Task.Delay(delayMs, ct);
+                    try { await Task.Delay(delayMs, ct); } catch { return null; }
                 }
             }
 
@@ -142,7 +195,9 @@ namespace LocalPilot.Services
             if (failures >= 5)
             {
                 CircuitBreakerTripped = true;
-                LocalPilotLogger.Log("[Ollama] CIRCUIT BREAKER TRIPPED. Too many consecutive failures. Will retry later.", LogCategory.Ollama, LogSeverity.Warning);
+                // v1.8 Resilience: Set 5 minute cooldown to prevent hammering a dead service
+                _circuitBreakerCooldownUntil = DateTime.Now.AddMinutes(5);
+                LocalPilotLogger.Log("[Ollama] CIRCUIT BREAKER TRIPPED. Too many consecutive failures. Cooldown active for 5 mins.", LogCategory.Ollama, LogSeverity.Warning);
             }
         }
 
