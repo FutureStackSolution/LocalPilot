@@ -119,36 +119,35 @@ namespace LocalPilot.Completion
 
                 var snapshot = _view.TextBuffer.CurrentSnapshot;
                 var caretPos = _view.Caret.Position.BufferPosition.Position;
-                
-                // Context window: 64 lines before, 16 after cursor
-                const int beforeLines = 64;
-                const int afterLines = 16;
-
-                int startPos = Math.Max(0, caretPos);
-                int linesFound = 0;
-                while (startPos > 0 && linesFound < beforeLines)
-                {
-                    startPos--;
-                    if (snapshot[startPos] == '\n') linesFound++;
-                }
-
-                int endPos = caretPos;
-                linesFound = 0;
-                while (endPos < snapshot.Length && linesFound < afterLines)
-                {
-                    if (snapshot[endPos] == '\n') linesFound++;
-                    endPos++;
-                }
-
-                var prefix = snapshot.GetText(startPos, caretPos - startPos);
-                var suffix = snapshot.GetText(caretPos, endPos - caretPos);
                 var fileExt = System.IO.Path.GetExtension(_document?.FilePath ?? ".cs");
                 var filePath = _document?.FilePath ?? "untitled";
 
-                // 2. Offload network request to background thread
+                // 2. Offload network request and heavy text processing to background thread
                 var completionText = await Task.Run(async () =>
                 {
-                    // Prompt builder already handles line trimming, no need to double-trim here
+                    // Context window: 64 lines before, 16 after cursor
+                    const int beforeLines = 64;
+                    const int afterLines = 16;
+
+                    int startPos = Math.Max(0, caretPos);
+                    int linesFound = 0;
+                    while (startPos > 0 && linesFound < beforeLines)
+                    {
+                        startPos--;
+                        if (snapshot[startPos] == '\n') linesFound++;
+                    }
+
+                    int endPos = caretPos;
+                    linesFound = 0;
+                    while (endPos < snapshot.Length && linesFound < afterLines)
+                    {
+                        if (snapshot[endPos] == '\n') linesFound++;
+                        endPos++;
+                    }
+
+                    var prefix = snapshot.GetText(startPos, caretPos - startPos);
+                    var suffix = snapshot.GetText(caretPos, endPos - caretPos);
+
                     var prompt = _promptBuilder.Build(fileExt, prefix, suffix, filePath);
                     var perfMode = LocalPilotSettings.Instance.Mode;
                     var maxTokens = perfMode switch
@@ -167,7 +166,6 @@ namespace LocalPilot.Completion
 
                     _sharedOllama.UpdateBaseUrl(LocalPilotSettings.Instance.OllamaBaseUrl);
 
-                    // Use StringBuilder instead of string concatenation to avoid O(n²) allocation
                     var sb = new StringBuilder(256);
                     await foreach (var chunk in _sharedOllama.StreamCompletionAsync(
                         LocalPilotSettings.Instance.CompletionModel, prompt, opts, token).ConfigureAwait(false))

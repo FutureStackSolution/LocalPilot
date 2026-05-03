@@ -594,24 +594,35 @@
         </Border>
 
         <!-- ═══════════════════════  MESSAGES  ══════════════════════════════ -->
-        <ScrollViewer Grid.Row="1" x:Name="ChatScroll"
-                      VerticalScrollBarVisibility="Auto"
-                      HorizontalScrollBarVisibility="Disabled"
-                      Background="{DynamicResource LpWindowBgBrush}"
-                      ScrollViewer.CanContentScroll="True">
+        <!-- 🚀 PERFORMANCE UPGRADE: ListBox provides native virtualization and recycling.
+             ItemsControl inside a ScrollViewer disables virtualization because the scrollviewer 
+             provides infinite measure height. ListBox handles its own scrolling correctly. -->
+        <ListBox Grid.Row="1" x:Name="MessagesContainer"
+                 Background="{DynamicResource LpWindowBgBrush}"
+                 BorderThickness="0"
+                 Padding="0,6"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                 ScrollViewer.CanContentScroll="True"
+                 VirtualizingStackPanel.IsVirtualizing="True"
+                 VirtualizingStackPanel.VirtualizationMode="Recycling"
+                 HorizontalContentAlignment="Stretch">
+            <ListBox.Template>
+                <ControlTemplate TargetType="ListBox">
+                    <ScrollViewer x:Name="ChatScroll" Focusable="false" Background="Transparent">
+                        <ItemsPresenter />
+                    </ScrollViewer>
+                </ControlTemplate>
+            </ListBox.Template>
+            <ListBox.ItemsPanel>
+                <ItemsPanelTemplate>
+                    <VirtualizingStackPanel />
+                </ItemsPanelTemplate>
+            </ListBox.ItemsPanel>
             
-            <ItemsControl x:Name="MessagesContainer" 
-                          VerticalAlignment="Top"
-                          VirtualizingStackPanel.IsVirtualizing="True"
-                          VirtualizingStackPanel.VirtualizationMode="Recycling">
-                <ItemsControl.ItemsPanel>
-                    <ItemsPanelTemplate>
-                        <VirtualizingStackPanel Margin="0,6,0,6"/>
-                    </ItemsPanelTemplate>
-                </ItemsControl.ItemsPanel>
-                
-                <ItemsControl.Items>
-                    <!-- Welcome prompt — Copilot style: subtle, centred, muted -->
+            <ListBox.Items>
+                <!-- Welcome prompt — Copilot style: subtle, centred, muted -->
+                <ListBoxItem IsHitTestVisible="False">
                     <StackPanel x:Name="WelcomePanel">
                         <TextBlock Text="What's on your mind?"
                                    FontSize="12"
@@ -624,9 +635,9 @@
                                    Margin="24,0,24,10"
                                    TextWrapping="Wrap"/>
                     </StackPanel>
-                </ItemsControl.Items>
-            </ItemsControl>
-        </ScrollViewer>
+                </ListBoxItem>
+            </ListBox.Items>
+        </ListBox>
 
         <!-- ═══════════════════════  DIAGNOSTIC CONSOLE  ═══════════════════════ -->
         <!-- Collapsible terminal-like log view -->

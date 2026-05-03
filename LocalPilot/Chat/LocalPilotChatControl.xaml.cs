@@ -246,14 +246,33 @@ namespace LocalPilot.Chat
             _scanCts = null;
         }
 
+        private ScrollViewer _scrollViewer;
         private void DebouncedScrollToEnd()
         {
             long now = DateTime.Now.Ticks / 10000;
             if (now - _lastScrollToEndTime > 40) // ~25 FPS scroll limit to avoid layout thrashing
             {
-                ChatScroll.ScrollToEnd();
+                if (_scrollViewer == null)
+                {
+                    _scrollViewer = FindVisualChild<ScrollViewer>(MessagesContainer);
+                }
+                
+                _scrollViewer?.ScrollToEnd();
                 _lastScrollToEndTime = now;
             }
+        }
+
+        private T FindVisualChild<T>(DependencyObject obj) where T : DependencyObject
+        {
+            if (obj == null) return null;
+            for (int i = 0; i < VisualTreeHelper.GetChildrenCount(obj); i++)
+            {
+                var child = VisualTreeHelper.GetChild(obj, i);
+                if (child is T t) return t;
+                var childOfChild = FindVisualChild<T>(child);
+                if (childOfChild != null) return childOfChild;
+            }
+            return null;
         }
 
         private void OnThemeChanged(ThemeChangedEventArgs e) => UpdateBrushes();
@@ -338,7 +357,7 @@ namespace LocalPilot.Chat
                 _themeBorder   = (Brush)this.Resources["LpMenuBorderBrush"];
 
                 UpdateSyntaxBrushes();
-                ChatScroll.Background = _themeWindowBg;
+                MessagesContainer.Background = _themeWindowBg;
                 
             }
             catch { }
@@ -586,7 +605,7 @@ namespace LocalPilot.Chat
             _currentNarrativeLabel = layout.NarrativeLabel;
             _currentActivityLabel = layout.ActivityLabel;
 
-            MessagesContainer.Items.Add(_agentTurnContainer);
+            MessagesContainer.Items.Add(new ListBoxItem { Content = _agentTurnContainer, IsHitTestVisible = true });
             
             // Ensure status bar reflects the new turn
             AgentStatusBar.Visibility = Visibility.Visible;
@@ -1241,7 +1260,7 @@ namespace LocalPilot.Chat
             if (string.IsNullOrEmpty(text))
             {
                 msgContainer.Children.Add(contentArea);
-                MessagesContainer.Items.Add(msgContainer);
+                MessagesContainer.Items.Add(new ListBoxItem { Content = msgContainer, IsHitTestVisible = true });
                 _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
                 {
                     await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
@@ -1252,7 +1271,7 @@ namespace LocalPilot.Chat
 
             RenderFullMarkdown(contentArea, text);
             msgContainer.Children.Add(contentArea);
-            MessagesContainer.Items.Add(msgContainer);
+            MessagesContainer.Items.Add(new ListBoxItem { Content = msgContainer, IsHitTestVisible = true });
 
             _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
             {
@@ -2272,7 +2291,6 @@ namespace LocalPilot.Chat
                 Margin = new Thickness(0, 0, 8, 0),
                 Padding = new Thickness(10, 4, 10, 4)
             };
-            btnIgnore.Click += (s, e) => { MessagesContainer.Items.Remove(banner); };
             buttonStack.Children.Add(btnIgnore);
 
             var btnFix = new Button
@@ -2281,17 +2299,21 @@ namespace LocalPilot.Chat
                 Style = (Style)this.Resources["LpPrimaryActionButtonStyle"],
                 Padding = new Thickness(12, 6, 12, 6)
             };
-            btnFix.Click += (s, e) => {
-                MessagesContainer.Items.Remove(banner);
-                onButtonClick();
-            };
             buttonStack.Children.Add(btnFix);
 
             Grid.SetColumn(buttonStack, 2);
             grid.Children.Add(buttonStack);
 
             banner.Child = grid;
-            MessagesContainer.Items.Add(banner);
+            var listItem = new ListBoxItem { Content = banner, IsHitTestVisible = true };
+            
+            btnIgnore.Click += (s, e) => { MessagesContainer.Items.Remove(listItem); };
+            btnFix.Click += (s, e) => {
+                MessagesContainer.Items.Remove(listItem);
+                onButtonClick();
+            };
+
+            MessagesContainer.Items.Add(listItem);
             DebouncedScrollToEnd();
         }
     }
