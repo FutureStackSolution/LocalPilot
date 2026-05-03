@@ -10,6 +10,9 @@ using Community.VisualStudio.Toolkit;
 using LocalPilot.Settings;
 using Microsoft.Data.Sqlite;
 using Newtonsoft.Json;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace LocalPilot.Services
 {
@@ -184,18 +187,13 @@ namespace LocalPilot.Services
         {
             if (!File.Exists(fullPath)) return;
             var fileInfo = new FileInfo(fullPath);
-            if (fileInfo.Length > 512000) return; // 500KB cap
+            if (fileInfo.Length > 1024000) return; // 1MB cap
 
             string content = await Task.Run(() => File.ReadAllText(fullPath), ct);
             if (string.IsNullOrWhiteSpace(content)) return;
 
-            // 1. Generate Embeddings (if enabled)
-            float[] vector = null;
-            string embeddingModel = LocalPilotSettings.Instance.EmbeddingModel;
-            if (!string.IsNullOrWhiteSpace(embeddingModel) && !ollama.CircuitBreakerTripped)
-            {
-                try { vector = await ollama.GetEmbeddingsAsync(embeddingModel, content, ct); } catch { }
-            }
+            // 1. Semantic Chunking (Roslyn-powered)
+            var chunks = GetSemanticChunks(content, Path.GetExtension(fullPath).ToLower());
 
             // 2. Persist to SQLite
             await _storage.GetLock().WaitAsync(ct);
@@ -205,33 +203,69 @@ namespace LocalPilot.Services
                 {
                     try
                     {
-                        // Update Files table
+                        // Clear old data for this file
                         using (var cmd = _storage.GetConnection().CreateCommand())
                         {
                             cmd.Transaction = transaction;
-                            cmd.CommandText = @"
-                                INSERT OR REPLACE INTO Files (Path, Content, LastIndexed, Metadata) 
-                                VALUES (@Path, @Content, @LastIndexed, @Metadata)";
                             cmd.Parameters.AddWithValue("@Path", relativePath);
-                            cmd.Parameters.AddWithValue("@Content", content);
-                            cmd.Parameters.AddWithValue("@LastIndexed", fileInfo.LastWriteTime);
-                            cmd.Parameters.AddWithValue("@Metadata", vector != null ? Convert.ToBase64String(GetRawBytes(vector)) : "");
+                            
+                            cmd.CommandText = "DELETE FROM Files WHERE Path = @Path";
+                            await cmd.ExecuteNonQueryAsync(ct);
+                            
+                            cmd.CommandText = "DELETE FROM SearchIndex WHERE Path = @Path";
+                            await cmd.ExecuteNonQueryAsync(ct);
+                            
+                            cmd.CommandText = "DELETE FROM Chunks WHERE Path = @Path";
                             await cmd.ExecuteNonQueryAsync(ct);
                         }
 
-                        // Update Search Index (FTS5)
+                        // Insert into Files registry
                         using (var cmd = _storage.GetConnection().CreateCommand())
                         {
                             cmd.Transaction = transaction;
-                            cmd.CommandText = "DELETE FROM SearchIndex WHERE Path = @Path";
+                            cmd.CommandText = "INSERT INTO Files (Path, Content, LastIndexed) VALUES (@Path, @Content, @LastIndexed)";
                             cmd.Parameters.AddWithValue("@Path", relativePath);
-                            await cmd.ExecuteNonQueryAsync(ct);
-
-                            cmd.CommandText = "INSERT INTO SearchIndex (Content, Path) VALUES (@Content, @Path)";
-                            cmd.Parameters.Clear();
                             cmd.Parameters.AddWithValue("@Content", content);
-                            cmd.Parameters.AddWithValue("@Path", relativePath);
+                            cmd.Parameters.AddWithValue("@LastIndexed", fileInfo.LastWriteTime);
                             await cmd.ExecuteNonQueryAsync(ct);
+                        }
+
+                        // Process chunks in parallel
+                        string embeddingModel = LocalPilotSettings.Instance.EmbeddingModel;
+                        var processedChunks = new List<(string text, float[] vector)>();
+
+                        foreach (var chunkText in chunks)
+                        {
+                            float[] vector = null;
+                            if (!string.IsNullOrWhiteSpace(embeddingModel) && !ollama.CircuitBreakerTripped)
+                            {
+                                try { vector = await ollama.GetEmbeddingsAsync(embeddingModel, chunkText, ct); } catch { }
+                            }
+                            processedChunks.Add((chunkText, vector));
+                        }
+
+                        foreach (var chunk in processedChunks)
+                        {
+                            // Update Search Index (FTS5)
+                            using (var cmd = _storage.GetConnection().CreateCommand())
+                            {
+                                cmd.Transaction = transaction;
+                                cmd.CommandText = "INSERT INTO SearchIndex (Content, Path) VALUES (@Content, @Path)";
+                                cmd.Parameters.AddWithValue("@Content", chunk.text);
+                                cmd.Parameters.AddWithValue("@Path", relativePath);
+                                await cmd.ExecuteNonQueryAsync(ct);
+                            }
+
+                            // Update Chunks table with vectors
+                            using (var cmd = _storage.GetConnection().CreateCommand())
+                            {
+                                cmd.Transaction = transaction;
+                                cmd.CommandText = "INSERT INTO Chunks (Path, Content, Vector) VALUES (@Path, @Content, @Vector)";
+                                cmd.Parameters.AddWithValue("@Path", relativePath);
+                                cmd.Parameters.AddWithValue("@Content", chunk.text);
+                                cmd.Parameters.AddWithValue("@Vector", chunk.vector != null ? GetRawBytes(chunk.vector) : null);
+                                await cmd.ExecuteNonQueryAsync(ct);
+                            }
                         }
 
                         transaction.Commit();
@@ -249,41 +283,99 @@ namespace LocalPilot.Services
             }
         }
 
+        private List<string> GetSemanticChunks(string content, string ext)
+        {
+            var chunks = new List<string>();
+            if (ext == ".cs")
+            {
+                try
+                {
+                    var tree = CSharpSyntaxTree.ParseText(content);
+                    var root = tree.GetRoot();
+                    var nodes = root.DescendantNodes().Where(n => n is MethodDeclarationSyntax || n is ClassDeclarationSyntax || n is PropertyDeclarationSyntax);
+                    foreach (var node in nodes)
+                    {
+                        var text = node.ToFullString().Trim();
+                        if (text.Length > 100) chunks.Add(text);
+                    }
+                }
+                catch { }
+            }
+            if (!chunks.Any())
+            {
+                const int chunkSize = 2000;
+                for (int i = 0; i < content.Length; i += 1800)
+                {
+                    chunks.Add(content.Substring(i, Math.Min(chunkSize, content.Length - i)));
+                }
+            }
+            return chunks.Distinct().ToList();
+        }
+
         public async Task<string> SearchContextAsync(OllamaService ollama, string query, int topN = 5)
         {
             try
             {
                 if (string.IsNullOrWhiteSpace(query)) return string.Empty;
 
-                var results = new List<(string path, string content, double score)>();
+                // 1. Get Query Embedding (in parallel with FTS fetch)
+                string embeddingModel = LocalPilotSettings.Instance.EmbeddingModel;
+                Task<float[]> queryVectorTask = null;
+                if (!string.IsNullOrWhiteSpace(embeddingModel) && !ollama.CircuitBreakerTripped)
+                {
+                    queryVectorTask = ollama.GetEmbeddingsAsync(embeddingModel, query);
+                }
 
-                // 🚀 ULTRA-FAST FTS5 SEARCH
+                var candidates = new List<(string path, string content, double bm25Score, float[] vector)>();
+
+                // 2. 🚀 FAST HYBRID FETCH: Keywords (BM25) + Metadata (Vectors)
                 using (var cmd = _storage.GetConnection().CreateCommand())
                 {
-                    // Porter stemming + BM25 ranking built-in to SQLite
                     cmd.CommandText = @"
-                        SELECT Path, Content, bm25(SearchIndex) as rank 
-                        FROM SearchIndex 
-                        WHERE Content MATCH @query 
+                        SELECT si.Path, si.Content, bm25(SearchIndex) as rank, c.Vector 
+                        FROM SearchIndex si
+                        JOIN Chunks c ON si.Content = c.Content AND si.Path = c.Path
+                        WHERE SearchIndex MATCH @query 
                         ORDER BY rank 
                         LIMIT @limit";
                     cmd.Parameters.AddWithValue("@query", query);
-                    cmd.Parameters.AddWithValue("@limit", topN * 2);
+                    cmd.Parameters.AddWithValue("@limit", topN * 4); // Over-sample for re-ranking
 
                     using (var reader = await cmd.ExecuteReaderAsync())
                     {
                         while (await reader.ReadAsync())
                         {
-                            results.Add((reader.GetString(0), reader.GetString(1), -reader.GetDouble(2)));
+                            byte[] vectorBytes = await reader.IsDBNullAsync(3) ? null : (byte[])reader.GetValue(3);
+                            float[] vec = ParseRawBytes(vectorBytes);
+                            // bm25 rank is negative (lower is better), so we flip it for scoring
+                            candidates.Add((reader.GetString(0), reader.GetString(1), -reader.GetDouble(2), vec));
                         }
                     }
                 }
 
-                if (!results.Any()) return string.Empty;
+                if (!candidates.Any()) return string.Empty;
+
+                float[] queryVector = null;
+                if (queryVectorTask != null) 
+                {
+                    try { queryVector = await queryVectorTask; } catch { }
+                }
+
+                // 3. 🧠 SEMANTIC RE-RANKING: Vector Similarity + BM25 Fusion
+                var rankedResults = candidates.Select(c =>
+                {
+                    double vectorScore = (queryVector != null && c.vector != null) ? CosineSimilarity(queryVector, c.vector) : 0;
+                    // Weighted Fusion: 80% Semantic, 20% Keyword
+                    double score = vectorScore > 0 ? (vectorScore * 0.8) + (Math.Min(0.5, c.bm25Score / 100.0) * 0.2) : c.bm25Score;
+                    return new { c.path, c.content, score };
+                })
+                .OrderByDescending(x => x.score)
+                .Take(topN)
+                .ToList();
 
                 var sb = new System.Text.StringBuilder();
                 sb.AppendLine("\n<grounding_context>");
-                foreach (var r in results.OrderByDescending(x => x.score).Take(topN))
+                foreach (var r in rankedResults)
                 {
                     sb.AppendLine($"  <file_snippet path=\"{r.path}\">");
                     sb.AppendLine(r.content);
@@ -405,6 +497,28 @@ namespace LocalPilot.Services
             byte[] dest = new byte[floats.Length * sizeof(float)];
             Buffer.BlockCopy(floats, 0, dest, 0, dest.Length);
             return dest;
+        }
+
+        private static float[] ParseRawBytes(byte[] bytes)
+        {
+            if (bytes == null || bytes.Length % sizeof(float) != 0) return null;
+            float[] floats = new float[bytes.Length / sizeof(float)];
+            Buffer.BlockCopy(bytes, 0, floats, 0, bytes.Length);
+            return floats;
+        }
+
+        private static float CosineSimilarity(float[] v1, float[] v2)
+        {
+            if (v1 == null || v2 == null || v1.Length != v2.Length) return 0;
+            float dot = 0, mag1 = 0, mag2 = 0;
+            for (int i = 0; i < v1.Length; i++)
+            {
+                dot += v1[i] * v2[i];
+                mag1 += v1[i] * v1[i];
+                mag2 += v2[i] * v2[i];
+            }
+            if (mag1 <= 0 || mag2 <= 0) return 0;
+            return dot / (float)(Math.Sqrt(mag1) * Math.Sqrt(mag2));
         }
     }
 }

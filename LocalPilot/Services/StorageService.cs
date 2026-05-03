@@ -45,12 +45,21 @@ namespace LocalPilot.Services
             _connection = new SqliteConnection($"Data Source={_dbPath}");
             _connection.Open();
 
-            // 🚀 PERFORMANCE TUNING: Enable WAL mode for high concurrency
+            // 🚀 WORLD-CLASS PERFORMANCE TUNING
             using (var cmd = _connection.CreateCommand())
             {
-                cmd.CommandText = "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;";
+                // WAL mode for concurrency
+                // mmap_size for memory-mapped I/O (up to 256MB)
+                // cache_size set to -20000 (roughly 20MB of memory cache)
+                // synchronous=NORMAL for the best balance of safety and speed
+                cmd.CommandText = @"
+                    PRAGMA journal_mode=WAL; 
+                    PRAGMA synchronous=NORMAL; 
+                    PRAGMA mmap_size=268435456; 
+                    PRAGMA cache_size=-20000;
+                    PRAGMA page_size=4096;";
                 cmd.ExecuteNonQuery();
-                LocalPilotLogger.Log("[Storage] SQLite WAL mode enabled for high-concurrency.", LogCategory.Storage);
+                LocalPilotLogger.Log("[Storage] SQLite Turbo Mode enabled (WAL + MMAP).", LogCategory.Storage);
             }
 
             using (var transaction = _connection.BeginTransaction())
@@ -87,14 +96,23 @@ namespace LocalPilot.Services
                     cmd.ExecuteNonQuery();
 
                     // 3. FTS5 Search Index (for ultra-fast text retrieval)
-                    // Note: If FTS5 is not available in the binary, this might fail, 
-                    // but modern Microsoft.Data.Sqlite includes it.
                     cmd.CommandText = @"
                         CREATE VIRTUAL TABLE IF NOT EXISTS SearchIndex USING fts5(
                             Content, 
                             Path UNINDEXED, 
                             tokenize='porter unicode61'
                         );";
+                    cmd.ExecuteNonQuery();
+
+                    // 4. Granular Chunks (for Semantic RAG)
+                    cmd.CommandText = @"
+                        CREATE TABLE IF NOT EXISTS Chunks (
+                            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            Path TEXT,
+                            Content TEXT,
+                            Vector BLOB
+                        );
+                        CREATE INDEX IF NOT EXISTS idx_chunks_path ON Chunks(Path);";
                     cmd.ExecuteNonQuery();
                 }
                 transaction.Commit();
