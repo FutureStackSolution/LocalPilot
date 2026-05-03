@@ -3,6 +3,7 @@ using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Text;
 using System.Threading;
@@ -99,127 +100,147 @@ namespace LocalPilot.Services
         // ── Semantic Embeddings ────────────────────────────────────────────────
         private DateTime _circuitBreakerCooldownUntil = DateTime.MinValue;
 
+        private static string ComputeHash(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return string.Empty;
+            using (var sha = System.Security.Cryptography.SHA256.Create())
+            {
+                byte[] bytes = Encoding.UTF8.GetBytes(text);
+                byte[] hash = sha.ComputeHash(bytes);
+                return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
+            }
+        }
+
         public async Task<float[]> GetEmbeddingsAsync(string model, string prompt, CancellationToken ct = default)
         {
-            // Check circuit breaker with cooldown: if tripped, wait before retrying
+            var results = await GetEmbeddingsBatchAsync(model, new List<string> { prompt }, ct);
+            return results != null && results.Count > 0 ? results[0] : null;
+        }
+
+        public async Task<List<float[]>> GetEmbeddingsBatchAsync(string model, List<string> prompts, CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(model) || prompts == null || prompts.Count == 0) return new List<float[]>();
+
             if (CircuitBreakerTripped)
             {
-                if (DateTime.Now < _circuitBreakerCooldownUntil) return null;
-                // Cooldown expired — allow one probe request to see if the server is back
+                if (DateTime.Now < _circuitBreakerCooldownUntil) return prompts.Select(_ => (float[])null).ToList();
                 CircuitBreakerTripped = false;
                 System.Threading.Interlocked.Exchange(ref _consecutiveFailures, 0);
-                LocalPilotLogger.Log("[Ollama] Circuit breaker cooldown expired. Probing connection...", LogCategory.Ollama);
             }
 
-            if (string.IsNullOrWhiteSpace(model) || string.IsNullOrWhiteSpace(prompt)) return null;
+            var finalResults = new float[prompts.Count];
+            var resultsList = new List<float[]>(new float[prompts.Count][]);
+            var missingIndices = new List<int>();
+            var missingPrompts = new List<string>();
 
-            // 🚀 PERSISTENT PERFORMANCE CACHE: Check SQLite before hitting Ollama
-            string cacheKey = $"{model}:{prompt}";
-            var cached = await StorageService.Instance.GetCachedEmbeddingAsync(cacheKey);
-            if (cached != null) 
+            // 1. Check Cache
+            for (int i = 0; i < prompts.Count; i++)
             {
-                LocalPilotLogger.Log($"[Storage] Embedding Cache HIT - Skipping Ollama API for: {prompt.Substring(0, Math.Min(prompt.Length, 30))}...", LogCategory.Storage, LogSeverity.Debug);
-                return cached;
-            }
+                string p = prompts[i];
+                if (string.IsNullOrWhiteSpace(p)) continue;
 
-            LocalPilotLogger.Log($"[Storage] Embedding Cache MISS - Calling Ollama API...", LogCategory.Storage, LogSeverity.Debug);
-            int maxRetries = 3;
-            for (int i = 0; i < maxRetries; i++)
-            {
-                if (ct.IsCancellationRequested) return null;
-
-                try
+                string hash = ComputeHash(p);
+                string cacheKey = $"{model}:{hash}";
+                var cached = await StorageService.Instance.GetCachedEmbeddingAsync(cacheKey);
+                
+                if (cached != null)
                 {
-                    var payload = new { 
-                        model, 
-                        prompt, 
-                        keep_alive = "10m" 
-                    };
-                    var body = JsonConvert.SerializeObject(payload);
-                    var content = new StringContent(body, Encoding.UTF8, "application/json");
+                    resultsList[i] = cached;
+                }
+                else
+                {
+                    missingIndices.Add(i);
+                    missingPrompts.Add(p);
+                }
+            }
 
-                    // Per-request timeout: 30 seconds max for an embedding call
-                    using (var requestCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
+            if (missingIndices.Count == 0) return resultsList;
+
+            // 2. Fetch Missing from Ollama
+            LocalPilotLogger.Log($"[Storage] Embedding Cache MISS ({missingIndices.Count}/{prompts.Count} chunks) - Requesting from Ollama...", LogCategory.Storage, LogSeverity.Debug);
+
+            try
+            {
+                // Try /api/embed (Batch supported)
+                var payload = new { model, input = missingPrompts, keep_alive = "10m" };
+                var body = JsonConvert.SerializeObject(payload);
+                var content = new StringContent(body, Encoding.UTF8, "application/json");
+
+                using (var requestCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
+                {
+                    requestCts.CancelAfter(TimeSpan.FromSeconds(60)); // Longer timeout for batch
+                    var response = await _backgroundHttpClient.PostAsync($"{_baseUrl}/api/embed", content, requestCts.Token).ConfigureAwait(false);
+
+                    if (response.IsSuccessStatusCode)
                     {
-                        requestCts.CancelAfter(TimeSpan.FromSeconds(30));
-
-                        var response = await _backgroundHttpClient.PostAsync($"{_baseUrl}/api/embeddings", content, requestCts.Token).ConfigureAwait(false);
-                        
-                        if (!response.IsSuccessStatusCode)
-                        {
-                            int statusCode = (int)response.StatusCode;
-
-                            // 4xx errors are client errors — retrying won't help
-                            if (statusCode >= 400 && statusCode < 500)
-                            {
-                                LocalPilotLogger.Log($"[Ollama] Embedding request rejected ({statusCode}). Model '{model}' may not support embeddings.", LogCategory.Ollama, LogSeverity.Warning);
-                                HandleFailure();
-                                return null;
-                            }
-
-                            // 5xx: retry with backoff
-                            if (i == maxRetries - 1) break;
-                            int delayMs = (int)Math.Pow(2, i + 1) * 1000;
-                            await Task.Delay(delayMs, ct);
-                            continue;
-                        }
-
                         var json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
                         var obj = JObject.Parse(json);
-                        var embeddingArray = obj["embedding"] as JArray;
+                        var embeddings = obj["embeddings"] as JArray;
                         
-                        ResetCircuitBreaker();
+                        if (embeddings != null && embeddings.Count == missingIndices.Count)
+                        {
+                            ResetCircuitBreaker();
+                            for (int i = 0; i < missingIndices.Count; i++)
+                            {
+                                var vec = embeddings[i].ToObject<float[]>();
+                                resultsList[missingIndices[i]] = vec;
+                                
+                                // Store in cache
+                                if (vec != null)
+                                {
+                                    string hash = ComputeHash(missingPrompts[i]);
+                                    await StorageService.Instance.StoreCachedEmbeddingAsync($"{model}:{hash}", vec);
+                                }
+                            }
+                            return resultsList;
+                        }
+                    }
+                }
+            }
+            catch { /* Fallback to legacy individual calls if /api/embed fails */ }
 
-                        if (embeddingArray == null) return null;
-                        var result = embeddingArray.ToObject<float[]>();
-                        
-                        // Persist to SQLite for future sessions
-                        if (result != null) await StorageService.Instance.StoreCachedEmbeddingAsync(cacheKey, result);
-                        
-                        return result;
-                    }
-                }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            // 3. Fallback to /api/embeddings (Individual calls)
+            // This ensures compatibility with older Ollama versions
+            for (int i = 0; i < missingIndices.Count; i++)
+            {
+                if (ct.IsCancellationRequested) break;
+                
+                var prompt = missingPrompts[i];
+                var vec = await GetEmbeddingsLegacyAsync(model, prompt, ct);
+                resultsList[missingIndices[i]] = vec;
+
+                if (vec != null)
                 {
-                    // User/agent cancellation — propagate immediately, don't retry
-                    return null;
-                }
-                catch (OperationCanceledException)
-                {
-                    // Per-request timeout (not user cancellation)
-                    LocalPilotLogger.Log($"[Ollama] Embedding request timed out (attempt {i + 1}/{maxRetries})", LogCategory.Ollama);
-                    if (i == maxRetries - 1)
-                    {
-                        HandleFailure();
-                        break;
-                    }
-                }
-                catch (HttpRequestException ex)
-                {
-                    // Network error — Ollama is likely down
-                    if (i == maxRetries - 1)
-                    {
-                        LocalPilotLogger.LogError($"[Ollama] Embedding failed after {maxRetries} attempts: {ex.Message}", ex, LogCategory.Ollama);
-                        HandleFailure();
-                        break;
-                    }
-                    int delayMs = (int)Math.Pow(2, i + 1) * 1000;
-                    try { await Task.Delay(delayMs, ct); } catch { return null; }
-                }
-                catch (Exception ex)
-                {
-                    if (i == maxRetries - 1)
-                    {
-                        LocalPilotLogger.LogError($"[Ollama] Embedding failed after {maxRetries} attempts: {ex.Message}", ex, LogCategory.Ollama);
-                        HandleFailure();
-                        break;
-                    }
-                    int delayMs = (int)Math.Pow(2, i + 1) * 1000;
-                    try { await Task.Delay(delayMs, ct); } catch { return null; }
+                    string hash = ComputeHash(prompt);
+                    await StorageService.Instance.StoreCachedEmbeddingAsync($"{model}:{hash}", vec);
                 }
             }
 
-            return null;
+            return resultsList;
+        }
+
+        private async Task<float[]> GetEmbeddingsLegacyAsync(string model, string prompt, CancellationToken ct)
+        {
+            try
+            {
+                var payload = new { model, prompt, keep_alive = "10m" };
+                var body = JsonConvert.SerializeObject(payload);
+                var content = new StringContent(body, Encoding.UTF8, "application/json");
+
+                using (var requestCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
+                {
+                    requestCts.CancelAfter(TimeSpan.FromSeconds(30));
+                    var response = await _backgroundHttpClient.PostAsync($"{_baseUrl}/api/embeddings", content, requestCts.Token).ConfigureAwait(false);
+                    
+                    if (!response.IsSuccessStatusCode) return null;
+
+                    var json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                    var obj = JObject.Parse(json);
+                    var vec = obj["embedding"] as JArray;
+                    return vec?.ToObject<float[]>();
+                }
+            }
+            catch { return null; }
         }
 
         private void HandleFailure()

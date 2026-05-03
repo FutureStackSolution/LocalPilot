@@ -78,8 +78,17 @@ namespace LocalPilot.Services
                         LocalPilotLogger.Log("[RAG] Starting differential SQLite sync...", LogCategory.Agent);
                         var sw = System.Diagnostics.Stopwatch.StartNew();
                         
-                        var allFiles = Directory.EnumerateFiles(_solutionRoot, "*.*", SearchOption.AllDirectories)
+                        List<string> allFiles = new List<string>();
+                        try
+                        {
+                            allFiles = Directory.EnumerateFiles(_solutionRoot, "*.*", SearchOption.AllDirectories)
                                                 .Where(IsRelevantFile).ToList();
+                        }
+                        catch (Exception ex)
+                        {
+                            LocalPilotLogger.Log($"[RAG] Partial file scan due to directory restrictions: {ex.Message}", LogCategory.Agent, LogSeverity.Warning);
+                            // Fallback: search just the root or known subdirs if possible
+                        }
 
                         var filesToUpdate = new List<string>();
                         
@@ -205,7 +214,13 @@ namespace LocalPilot.Services
             string hash = ComputeHash(content);
             var chunks = GetSemanticChunks(content, Path.GetExtension(fullPath).ToLower());
 
-            // 2. Persist to SQLite
+            // 🚀 WORLD-CLASS: Process chunks IN BATCH for massive speedup and reduced log spam
+            // We do the slow work (Embeddings) OUTSIDE the DB lock to prevent deadlocks.
+            string embeddingModel = LocalPilotSettings.Instance.EmbeddingModel;
+            var vectors = await ollama.GetEmbeddingsBatchAsync(embeddingModel, chunks, ct);
+            var processedChunks = chunks.Zip(vectors, (text, vector) => new { Text = text, Vector = vector }).ToList();
+
+            // 2. Persist to SQLite (Quick batch write)
             await _storage.GetLock().WaitAsync(ct);
             try
             {
@@ -218,13 +233,13 @@ namespace LocalPilot.Services
                         {
                             cmd.Transaction = transaction;
                             cmd.Parameters.AddWithValue("@Path", relativePath);
-                            
+
                             cmd.CommandText = "DELETE FROM Files WHERE Path = @Path";
                             await cmd.ExecuteNonQueryAsync(ct);
-                            
+
                             cmd.CommandText = "DELETE FROM SearchIndex WHERE Path = @Path";
                             await cmd.ExecuteNonQueryAsync(ct);
-                            
+
                             cmd.CommandText = "DELETE FROM Chunks WHERE Path = @Path";
                             await cmd.ExecuteNonQueryAsync(ct);
                         }
@@ -240,20 +255,6 @@ namespace LocalPilot.Services
                             cmd.Parameters.AddWithValue("@Hash", hash);
                             await cmd.ExecuteNonQueryAsync(ct);
                         }
-
-                        // 🚀 WORLD-CLASS: Process chunks IN PARALLEL for massive speedup
-                        string embeddingModel = LocalPilotSettings.Instance.EmbeddingModel;
-                        var chunkTasks = chunks.Select(async chunkText =>
-                        {
-                            float[] v = null;
-                            if (!string.IsNullOrWhiteSpace(embeddingModel) && !ollama.CircuitBreakerTripped)
-                            {
-                                try { v = await ollama.GetEmbeddingsAsync(embeddingModel, chunkText, ct); } catch { }
-                            }
-                            return new { Text = chunkText, Vector = v };
-                        });
-
-                        var processedChunks = await Task.WhenAll(chunkTasks);
 
                         foreach (var chunk in processedChunks)
                         {
@@ -382,9 +383,9 @@ namespace LocalPilot.Services
                 using (var cmd = _storage.GetConnection().CreateCommand())
                 {
                     cmd.CommandText = @"
-                        SELECT si.Path, si.Content, bm25(SearchIndex) as rank, c.Vector 
+                        SELECT si.Path, si.Content, si.rank, c.Vector 
                         FROM SearchIndex si
-                        JOIN Chunks c ON si.ChunkId = c.Id
+                        LEFT JOIN Chunks c ON si.ChunkId = c.Id
                         WHERE SearchIndex MATCH @query 
                         ORDER BY rank 
                         LIMIT @limit";
@@ -525,6 +526,16 @@ namespace LocalPilot.Services
                         await _storage.ExecuteAsync("DELETE FROM Files WHERE Path = @Path", new { Path = GetRelativePath(e.FullPath) });
                         await _storage.ExecuteAsync("DELETE FROM SearchIndex WHERE Path = @Path", new { Path = GetRelativePath(e.FullPath) });
                     });
+                };
+                _watcher.Renamed += (s, e) =>
+                {
+                    // Clean up old path
+                    _ = Task.Run(async () => {
+                        await _storage.ExecuteAsync("DELETE FROM Files WHERE Path = @Path", new { Path = GetRelativePath(e.OldFullPath) });
+                        await _storage.ExecuteAsync("DELETE FROM SearchIndex WHERE Path = @Path", new { Path = GetRelativePath(e.OldFullPath) });
+                    });
+                    // Queue new path for indexing
+                    if (IsRelevantFile(e.FullPath)) _pendingFiles.TryAdd(e.FullPath, 0);
                 };
                 
                 _ = Task.Run(async () => {

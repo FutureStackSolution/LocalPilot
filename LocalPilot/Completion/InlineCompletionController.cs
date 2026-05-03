@@ -179,22 +179,28 @@ namespace LocalPilot.Completion
                     _sharedOllama.UpdateBaseUrl(LocalPilotSettings.Instance.OllamaBaseUrl);
 
                     var sb = new StringBuilder(256);
+                    DateTime lastUiUpdate = DateTime.MinValue;
+
                     await foreach (var chunk in _sharedOllama.StreamCompletionAsync(
                         LocalPilotSettings.Instance.CompletionModel, prompt, opts, token).ConfigureAwait(false))
                     {
                         if (token.IsCancellationRequested) break;
                         sb.Append(chunk);
 
-                        // 🚀 STREAMING RENDER: Update ghost text every time we get a chunk
-                        string currentText = sb.ToString();
-                        _ = Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+                        // 🚀 THROTTLED RENDER: Update ghost text every 50ms to prevent UI thread flooding
+                        if ((DateTime.Now - lastUiUpdate).TotalMilliseconds > 50)
                         {
-                            await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                            if (!token.IsCancellationRequested && LocalPilotSettings.Instance.ShowCompletionGhost)
+                            lastUiUpdate = DateTime.Now;
+                            string currentText = sb.ToString();
+                            _ = Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
                             {
-                                _ghostAdornment?.ShowGhost(currentText);
-                            }
-                        });
+                                await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                                if (!token.IsCancellationRequested && LocalPilotSettings.Instance.ShowCompletionGhost)
+                                {
+                                    _ghostAdornment?.ShowGhost(currentText);
+                                }
+                            });
+                        }
                     }
                     return sb.ToString().Trim();
                 }, token);

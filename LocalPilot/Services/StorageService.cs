@@ -18,6 +18,7 @@ namespace LocalPilot.Services
         private static readonly System.Threading.SemaphoreSlim _dbLock = new System.Threading.SemaphoreSlim(1, 1);
         private readonly string _dbPath;
         private SqliteConnection _connection;
+        private const int CurrentSchemaVersion = 2;
 
         public static StorageService Instance
         {
@@ -42,89 +43,150 @@ namespace LocalPilot.Services
 
         private void InitializeDatabase()
         {
-            _connection = new SqliteConnection($"Data Source={_dbPath}");
-            _connection.Open();
+            int retryCount = 0;
+            const int MaxRetries = 1;
 
-            // 🚀 WORLD-CLASS PERFORMANCE TUNING
-            using (var cmd = _connection.CreateCommand())
+            while (retryCount <= MaxRetries)
             {
-                // WAL mode for concurrency
-                // mmap_size for memory-mapped I/O (up to 256MB)
-                // cache_size set to -20000 (roughly 20MB of memory cache)
-                // synchronous=NORMAL for the best balance of safety and speed
-                cmd.CommandText = @"
-                    PRAGMA journal_mode=WAL; 
-                    PRAGMA synchronous=NORMAL; 
-                    PRAGMA mmap_size=268435456; 
-                    PRAGMA cache_size=-20000;
-                    PRAGMA page_size=4096;";
-                cmd.ExecuteNonQuery();
-                LocalPilotLogger.Log("[Storage] SQLite Turbo Mode enabled (WAL + MMAP).", LogCategory.Storage);
-            }
+                try
+                {
+                    if (_connection == null)
+                    {
+                        _connection = new SqliteConnection($"Data Source={_dbPath}");
+                        _connection.Open();
+                    }
 
+                    // 1. Core Performance Tuning
+                    using (var cmd = _connection.CreateCommand())
+                    {
+                        cmd.CommandText = @"
+                            PRAGMA journal_mode=WAL; 
+                            PRAGMA synchronous=NORMAL; 
+                            PRAGMA mmap_size=268435456; 
+                            PRAGMA cache_size=-20000;
+                            PRAGMA page_size=4096;";
+                        cmd.ExecuteNonQuery();
+                    }
+
+                    // 2. Schema Version Check
+                    int version = 0;
+                    using (var cmd = _connection.CreateCommand())
+                    {
+                        cmd.CommandText = "PRAGMA user_version;";
+                        version = Convert.ToInt32(cmd.ExecuteScalar());
+                    }
+
+                    if (version < CurrentSchemaVersion)
+                    {
+                        LocalPilotLogger.Log($"[Storage] Database schema outdated (v{version} -> v{CurrentSchemaVersion}). Applying migrations...", LogCategory.Storage);
+                        ApplyMigrations(version);
+                    }
+
+                    // 3. Final Verification: Ensure critical tables exist
+                    using (var cmd = _connection.CreateCommand())
+                    {
+                        cmd.CommandText = "CREATE TABLE IF NOT EXISTS Files (Path TEXT PRIMARY KEY, Hash TEXT, Content TEXT, LastIndexed DATETIME, Metadata TEXT);";
+                        cmd.ExecuteNonQuery();
+                    }
+
+                    return; // Success!
+                }
+                catch (Exception ex)
+                {
+                    LocalPilotLogger.LogError($"[Storage] Database initialization attempt {retryCount + 1} failed", ex);
+                    
+                    if (retryCount < MaxRetries)
+                    {
+                        // 🚀 SELF-HEALING: If DB is corrupted or migrations fail, wipe and restart.
+                        // Since this is a cache, data loss is better than a broken system.
+                        ResetDatabase();
+                        retryCount++;
+                    }
+                    else
+                    {
+                        LocalPilotLogger.Log("[Storage] CRITICAL: Self-healing failed. LocalPilot will proceed in memory-only mode where possible.", LogCategory.Storage, LogSeverity.Error);
+                        break;
+                    }
+                }
+            }
+        }
+
+        private void ResetDatabase()
+        {
+            try
+            {
+                _connection?.Close();
+                _connection = null;
+
+                if (File.Exists(_dbPath))
+                {
+                    File.Delete(_dbPath);
+                    LocalPilotLogger.Log("[Storage] Corrupt database file deleted to allow clean re-initialization.", LogCategory.Storage, LogSeverity.Warning);
+                }
+            }
+            catch (Exception ex)
+            {
+                LocalPilotLogger.LogError("[Storage] Failed to reset corrupted database", ex);
+            }
+        }
+
+        private void ApplyMigrations(int currentVersion)
+        {
             using (var transaction = _connection.BeginTransaction())
             {
-                using (var cmd = _connection.CreateCommand())
+                try
                 {
-                    cmd.Transaction = transaction;
+                    using (var cmd = _connection.CreateCommand())
+                    {
+                        cmd.Transaction = transaction;
 
-                    // 1. Files table (RAG / Context)
-                    cmd.CommandText = @"
-                        CREATE TABLE IF NOT EXISTS Files (
-                            Path TEXT PRIMARY KEY,
-                            Hash TEXT,
-                            Content TEXT,
-                            LastIndexed DATETIME,
-                            Metadata TEXT
-                        );";
-                    cmd.ExecuteNonQuery();
+                        if (currentVersion < 1)
+                        {
+                            // Initial baseline
+                            cmd.CommandText = @"
+                                CREATE TABLE IF NOT EXISTS Files (Path TEXT PRIMARY KEY, Hash TEXT, Content TEXT, LastIndexed DATETIME, Metadata TEXT);
+                                CREATE TABLE IF NOT EXISTS NexusNodes (Id TEXT PRIMARY KEY, Label TEXT, Type TEXT, Metadata TEXT);
+                                CREATE TABLE IF NOT EXISTS NexusEdges (SourceId TEXT, TargetId TEXT, Type TEXT, PRIMARY KEY (SourceId, TargetId, Type));
+                                CREATE VIRTUAL TABLE IF NOT EXISTS SearchIndex USING fts5(Content, Path UNINDEXED, ChunkId UNINDEXED, tokenize='porter unicode61');
+                                CREATE TABLE IF NOT EXISTS Chunks (Id INTEGER PRIMARY KEY AUTOINCREMENT, Path TEXT, Content TEXT, Vector BLOB);
+                                CREATE TABLE IF NOT EXISTS EmbeddingCache (Key TEXT PRIMARY KEY, Vector BLOB, Timestamp DATETIME DEFAULT CURRENT_TIMESTAMP);
+                                CREATE INDEX IF NOT EXISTS idx_chunks_path ON Chunks(Path);";
+                            cmd.ExecuteNonQuery();
+                        }
 
-                    // 2. Nexus Graph (Dependencies)
-                    cmd.CommandText = @"
-                        CREATE TABLE IF NOT EXISTS NexusNodes (
-                            Id TEXT PRIMARY KEY,
-                            Label TEXT,
-                            Type TEXT,
-                            Metadata TEXT
-                        );
-                        CREATE TABLE IF NOT EXISTS NexusEdges (
-                            SourceId TEXT,
-                            TargetId TEXT,
-                            Type TEXT,
-                            PRIMARY KEY (SourceId, TargetId, Type)
-                        );";
-                    cmd.ExecuteNonQuery();
+                        if (currentVersion < 2)
+                        {
+                            // Migration for v2: Ensure SearchIndex has ChunkId (recreate if missing as FTS5 is limited)
+                            bool hasChunkId = false;
+                            try
+                            {
+                                using (var checkCmd = _connection.CreateCommand()) {
+                                    checkCmd.Transaction = transaction;
+                                    checkCmd.CommandText = "SELECT ChunkId FROM SearchIndex LIMIT 1";
+                                    checkCmd.ExecuteScalar();
+                                    hasChunkId = true;
+                                }
+                            } catch { hasChunkId = false; }
 
-                    // 3. FTS5 Search Index (for ultra-fast text retrieval)
-                    cmd.CommandText = @"
-                        CREATE VIRTUAL TABLE IF NOT EXISTS SearchIndex USING fts5(
-                            Content, 
-                            Path UNINDEXED, 
-                            ChunkId UNINDEXED,
-                            tokenize='porter unicode61'
-                        );";
-                    cmd.ExecuteNonQuery();
+                            if (!hasChunkId)
+                            {
+                                cmd.CommandText = "DROP TABLE IF EXISTS SearchIndex; CREATE VIRTUAL TABLE SearchIndex USING fts5(Content, Path UNINDEXED, ChunkId UNINDEXED, tokenize='porter unicode61');";
+                                cmd.ExecuteNonQuery();
+                            }
+                        }
 
-                    // 4. Granular Chunks (for Semantic RAG)
-                    cmd.CommandText = @"
-                        CREATE TABLE IF NOT EXISTS Chunks (
-                            Id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            Path TEXT,
-                            Content TEXT,
-                            Vector BLOB
-                        );
-                        CREATE INDEX IF NOT EXISTS idx_chunks_path ON Chunks(Path);";
-                    cmd.ExecuteNonQuery();
-
-                    cmd.CommandText = @"
-                        CREATE TABLE IF NOT EXISTS EmbeddingCache (
-                            Key TEXT PRIMARY KEY,
-                            Vector BLOB,
-                            Timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-                        );";
-                    cmd.ExecuteNonQuery();
+                        // Update version pragma
+                        cmd.CommandText = $"PRAGMA user_version = {CurrentSchemaVersion};";
+                        cmd.ExecuteNonQuery();
+                    }
+                    transaction.Commit();
+                    LocalPilotLogger.Log($"[Storage] Database migrated to v{CurrentSchemaVersion} successfully.", LogCategory.Storage);
                 }
-                transaction.Commit();
+                catch (Exception ex)
+                {
+                    transaction.Rollback();
+                    throw new Exception("Migration failed. Database will be reset.", ex);
+                }
             }
         }
 
