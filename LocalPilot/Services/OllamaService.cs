@@ -16,11 +16,16 @@ namespace LocalPilot.Services
     /// </summary>
     public class OllamaService
     {
-        private static readonly HttpClient _httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(30) };
-        private static readonly HttpClient _backgroundHttpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(30) };
+        private static readonly HttpClient _httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
+        private static readonly HttpClient _backgroundHttpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
         private string _baseUrl;
 
-        public bool CircuitBreakerTripped { get; private set; } = false;
+        private volatile bool _circuitBreakerTripped = false;
+        public bool CircuitBreakerTripped
+        {
+            get => _circuitBreakerTripped;
+            private set => _circuitBreakerTripped = value;
+        }
         private int _consecutiveFailures = 0;
 
         public OllamaService(string baseUrl = "http://localhost:11434")
@@ -133,8 +138,8 @@ namespace LocalPilot.Services
 
         private void HandleFailure()
         {
-            _consecutiveFailures++;
-            if (_consecutiveFailures >= 5)
+            int failures = System.Threading.Interlocked.Increment(ref _consecutiveFailures);
+            if (failures >= 5)
             {
                 CircuitBreakerTripped = true;
                 LocalPilotLogger.Log("[Ollama] CIRCUIT BREAKER TRIPPED. Too many consecutive failures. Will retry later.", LogCategory.Ollama, LogSeverity.Warning);
@@ -146,7 +151,7 @@ namespace LocalPilot.Services
             if (CircuitBreakerTripped)
                 LocalPilotLogger.Log("[Ollama] Connection restored. Resetting circuit breaker.", LogCategory.Ollama);
             
-            _consecutiveFailures = 0;
+            System.Threading.Interlocked.Exchange(ref _consecutiveFailures, 0);
             CircuitBreakerTripped = false;
         }
 

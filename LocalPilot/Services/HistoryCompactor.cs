@@ -74,18 +74,17 @@ namespace LocalPilot.Services
 
             try
             {
-                // Use a lower temperature for high-fidelity summarization
                 var options = new OllamaOptions { Temperature = 0.0, NumPredict = 1024 };
-                string summary = "";
+                var summarySb = new System.Text.StringBuilder(512);
                 
                 await foreach (var token in _ollama.StreamChatAsync(model, new List<ChatMessage> { 
                     new ChatMessage { Role = "user", Content = sb.ToString() } 
                 }, options))
                 {
-                    summary += token;
+                    summarySb.Append(token);
                 }
 
-                return summary;
+                return summarySb.ToString();
             }
             catch (Exception ex)
             {

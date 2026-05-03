@@ -65,36 +65,11 @@ namespace LocalPilot.Services
             catch { return null; }
         }
 
-        public async Task<string> RenameSymbolAsync(string filePath, int line, int column, string newName, CancellationToken ct)
+        public Task<string> RenameSymbolAsync(string filePath, int line, int column, string newName, CancellationToken ct)
         {
-            try
-            {
-                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                
-                // 🚀 POLYGLOT BRIDGE: For non-C# languages, we use the VS Command Bridge
-                // This invokes the native language server's refactoring engine (e.g. Pyright, Gopls)
-                var dte = Package.GetGlobalService(typeof(global::EnvDTE.DTE)) as global::EnvDTE80.DTE2;
-                if (dte == null) return "Error: Visual Studio automation (DTE) not available.";
-
-                // First, ensure the file is active and the cursor is at the right location
-                await Community.VisualStudio.Toolkit.VS.Documents.OpenAsync(filePath);
-                var view = await Community.VisualStudio.Toolkit.VS.Documents.GetActiveDocumentViewAsync();
-                if (view?.TextView == null) return "Error: Could not activate document for refactoring.";
-
-                // Set cursor position (LSP is usually 0-indexed internally, but DTE is 1-indexed)
-                view.TextView.Caret.MoveTo(new Microsoft.VisualStudio.Text.SnapshotPoint(view.TextView.TextSnapshot, 
-                    view.TextView.TextSnapshot.GetLineFromLineNumber(line - 1).Start + (column - 1)));
-
-                // Trigger the native VS Rename dialog/command - this is the most compatible way for LSP
-                // The AI provides the 'newName', so we try to automate the dialog if possible.
-                dte.ExecuteCommand("Refactor.Rename", newName);
-                
-                return "LSP: Triggered native refactoring bridge for " + Path.GetExtension(filePath);
-            }
-            catch (Exception ex)
-            {
-                return "Error: LSP Bridge Refactoring failed: " + ex.Message;
-            }
+            // Avoid triggering the modal VS Rename dialog which blocks the agent workflow.
+            // Redirect to the text-based approach that works non-interactively.
+            return Task.FromResult($"Error: LSP-based rename is not available for {Path.GetExtension(filePath)} files in automated mode. Please use the 'replace_text' tool or 'grep_search' to find and update references manually.");
         }
     }
 }

@@ -5,6 +5,7 @@ using Microsoft.VisualStudio.Text.Editor;
 using Microsoft.VisualStudio.Utilities;
 using System;
 using System.ComponentModel.Composition;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -22,9 +23,11 @@ namespace LocalPilot.Completion
     {
         [Import] internal ITextDocumentFactoryService TextDocumentFactory { get; set; }
 
+        // Shared OllamaService instance across all editor tabs to unify circuit breaker state
+        private static readonly OllamaService _sharedOllama = new OllamaService(LocalPilotSettings.Instance.OllamaBaseUrl);
+
         private IWpfTextView _view;
         private ITextDocument _document;
-        private OllamaService _ollama;
         private CompletionPromptBuilder _promptBuilder;
         private GhostTextAdornment _ghostAdornment;
         private CancellationTokenSource _cts;
@@ -36,7 +39,6 @@ namespace LocalPilot.Completion
             if (!LocalPilotSettings.Instance.EnableInlineCompletion) return;
 
             _view = textView;
-            _ollama = new OllamaService(LocalPilotSettings.Instance.OllamaBaseUrl);
             _promptBuilder = new CompletionPromptBuilder(LocalPilotSettings.Instance);
             _ghostAdornment = new GhostTextAdornment(textView);
 
@@ -54,7 +56,6 @@ namespace LocalPilot.Completion
             // Dismiss existing ghost text on any edit
             _ghostAdornment?.HideGhost();
 
-            // 🚀 AUTONOMOUS DEBOUNCE: Derived from Intelligence Mode
             var mode = LocalPilotSettings.Instance.Mode;
             var delay = mode switch
             {
@@ -67,9 +68,20 @@ namespace LocalPilot.Completion
             {
                 _debounceTimer?.Dispose();
                 _debounceTimer = new Timer(
-                    _ => _ = TriggerCompletionAsync(),
+                    _ => { var t = TriggerCompletionSafeAsync(); },
                     null, delay, Timeout.Infinite);
             }
+        }
+
+        /// <summary>
+        /// Safely wraps the async completion call from timer callbacks
+        /// to prevent unhandled exceptions from crashing the process.
+        /// </summary>
+        private async Task TriggerCompletionSafeAsync()
+        {
+            try { await TriggerCompletionAsync().ConfigureAwait(false); }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[LocalPilot] Timer callback error: {ex.Message}"); }
         }
 
         private void OnCaretPositionChanged(object sender, CaretPositionChangedEventArgs e)
@@ -93,7 +105,7 @@ namespace LocalPilot.Completion
                 await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory
                       .SwitchToMainThreadAsync(token);
 
-                // 🚀 DEBUG GUARD: Silence completions during debugging sessions to prevent clashing with Watchdog/Copilot
+                // Debug guard: silence completions during debugging sessions
                 var shellDebugger = await Community.VisualStudio.Toolkit.VS.GetRequiredServiceAsync<Microsoft.VisualStudio.Shell.Interop.SVsShellDebugger, Microsoft.VisualStudio.Shell.Interop.IVsDebugger>();
                 if (shellDebugger != null)
                 {
@@ -108,7 +120,7 @@ namespace LocalPilot.Completion
                 var snapshot = _view.TextBuffer.CurrentSnapshot;
                 var caretPos = _view.Caret.Position.BufferPosition.Position;
                 
-                // 🚀 AUTONOMOUS CONTEXT: Using 'Golden Ratio' for optimized FIM completion
+                // Context window: 64 lines before, 16 after cursor
                 const int beforeLines = 64;
                 const int afterLines = 16;
 
@@ -133,12 +145,13 @@ namespace LocalPilot.Completion
                 var fileExt = System.IO.Path.GetExtension(_document?.FilePath ?? ".cs");
                 var filePath = _document?.FilePath ?? "untitled";
 
-                // 2. Offload network request and processing to a background thread
+                // 2. Offload network request to background thread
                 var completionText = await Task.Run(async () =>
                 {
+                    // Prompt builder already handles line trimming, no need to double-trim here
                     var prompt = _promptBuilder.Build(fileExt, prefix, suffix, filePath);
-                    var mode = LocalPilotSettings.Instance.Mode;
-                    var maxTokens = mode switch
+                    var perfMode = LocalPilotSettings.Instance.Mode;
+                    var maxTokens = perfMode switch
                     {
                         PerformanceMode.Fast => 128,
                         PerformanceMode.HighAccuracy => 512,
@@ -147,20 +160,22 @@ namespace LocalPilot.Completion
 
                     var opts = new OllamaOptions
                     {
-                        Temperature = mode == PerformanceMode.Fast ? 0.4 : (mode == PerformanceMode.HighAccuracy ? 0.1 : 0.2),
+                        Temperature = perfMode == PerformanceMode.Fast ? 0.4 : (perfMode == PerformanceMode.HighAccuracy ? 0.1 : 0.2),
                         NumPredict = maxTokens,
                         Stop = new System.Collections.Generic.List<string> { "\n\n\n", "</MID>" }
                     };
 
-                    _ollama.UpdateBaseUrl(LocalPilotSettings.Instance.OllamaBaseUrl);
-                    string result = string.Empty;
-                    await foreach (var chunk in _ollama.StreamCompletionAsync(
+                    _sharedOllama.UpdateBaseUrl(LocalPilotSettings.Instance.OllamaBaseUrl);
+
+                    // Use StringBuilder instead of string concatenation to avoid O(n²) allocation
+                    var sb = new StringBuilder(256);
+                    await foreach (var chunk in _sharedOllama.StreamCompletionAsync(
                         LocalPilotSettings.Instance.CompletionModel, prompt, opts, token).ConfigureAwait(false))
                     {
-                        result += chunk;
+                        sb.Append(chunk);
                         if (token.IsCancellationRequested) break;
                     }
-                    return result.Trim();
+                    return sb.ToString().Trim();
                 }, token);
 
                 if (!LocalPilotSettings.Instance.EnableInlineCompletion || token.IsCancellationRequested) return;
@@ -186,9 +201,11 @@ namespace LocalPilot.Completion
             _view.Closed -= OnViewClosed;
 
             _cts?.Cancel();
-            _debounceTimer?.Dispose();
+            lock (_lock)
+            {
+                _debounceTimer?.Dispose();
+                _debounceTimer = null;
+            }
         }
-
-
     }
 }

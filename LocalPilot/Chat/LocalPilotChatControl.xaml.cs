@@ -35,7 +35,7 @@ namespace LocalPilot.Chat
         private TaskCompletionSource<bool> _permissionTcs;
         private StackPanel _agentCurrentContainer;
         private StackPanel _agentTurnContainer;
-        private readonly ProjectMapService _projectMap;
+
         private bool _isStreaming = false;
         private readonly ChatSessionViewModel _sessionViewModel;
         private readonly AgentTurnCoordinator _agentTurnCoordinator;
@@ -95,8 +95,7 @@ namespace LocalPilot.Chat
             
             // Initialize Agent Services
             _toolRegistry = new ToolRegistry();
-            _projectMap = new ProjectMapService();
-            _agentOrchestrator = new AgentOrchestrator(_ollama, _toolRegistry, ProjectContextService.Instance, _projectMap);
+            _agentOrchestrator = new AgentOrchestrator(_ollama, _toolRegistry, ProjectContextService.Instance, ProjectMapService.Instance);
             
             // 🚀 SMART FIX INITIALIZATION: Connect the error-watchdog to the brain
             SmartFixService.Instance.Initialize(_agentOrchestrator);
@@ -226,15 +225,12 @@ namespace LocalPilot.Chat
                 if (solution == null || string.IsNullOrEmpty(solution.FullPath)) return;
 
                 string root = System.IO.Path.GetDirectoryName(solution.FullPath);
-                LocalPilotLogger.Log($"[Background] Triggering pre-emptive context indexing for {root}...");
+                LocalPilotLogger.Log($"[Background] Triggering pre-emptive project map warmup for {root}...");
 
-                // 1. Warm up the Project Map (Pre-calculate headers)
+                // Warm up the Project Map only (RAG indexing is already done by LocalPilotPackage on startup)
                 _ = Task.Run(async () => {
-                    await _projectMap.GenerateProjectMapAsync(root);
+                    await ProjectMapService.Instance.GenerateProjectMapAsync(root);
                 });
-
-                // 2. Perform Semantic Indexing (RAG)
-                _ = ProjectContextService.Instance.IndexSolutionAsync(_ollama);
             }
             catch (Exception ex)
             {

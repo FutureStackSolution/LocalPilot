@@ -69,7 +69,7 @@ namespace LocalPilot.Services
             ".cs", ".js", ".ts", ".tsx", ".jsx", ".vue", ".svelte", ".py", ".go", ".rs", ".cpp", ".h", ".hpp", ".swift", ".java", ".kt", ".dart", ".rb", ".php", ".sh", ".ps1", ".sql", ".yml", ".yaml", ".json", ".xml", ".md", ".txt", ".tf", ".dockerfile", ".csproj", ".sln", ".slnx"
         };
 
-        private Dictionary<string, List<SymbolLocation>> _symbolIndex = new Dictionary<string, List<SymbolLocation>>(StringComparer.OrdinalIgnoreCase);
+        private System.Collections.Concurrent.ConcurrentDictionary<string, List<SymbolLocation>> _symbolIndex = new System.Collections.Concurrent.ConcurrentDictionary<string, List<SymbolLocation>>(StringComparer.OrdinalIgnoreCase);
         private string _cachedMap = null;
         private string _lastRoot = null;
         private readonly SemaphoreSlim _lock = new SemaphoreSlim(1, 1);
@@ -88,7 +88,7 @@ namespace LocalPilot.Services
             if (_lastRoot != rootPath)
             {
                 LocalPilotLogger.Log($"[ProjectMap] Solution changed. Clearing symbol index for {rootPath}...");
-                lock (_symbolIndex) { _symbolIndex.Clear(); }
+                _symbolIndex.Clear();
                 _cachedMap = null;
                 _lastRoot = rootPath;
                 _lastCacheTime = DateTime.MinValue;
@@ -143,7 +143,8 @@ namespace LocalPilot.Services
                     {
                         var symbols = _symbolIndex.Values.SelectMany(v => v)
                             .Where(l => l.FilePath == file.FullName)
-                            .Take(20);
+                            .Take(20)
+                            .ToList();
                         
                         if (symbols.Any())
                         {
@@ -266,15 +267,32 @@ namespace LocalPilot.Services
             {
                 if (IsBinaryFile(filePath)) return "[Binary/Excluded]";
 
-                // 🚀 SENIOR ARCHITECT FIX: Prioritize Live Buffer over Disk
-                string content = await GetLiveContentAsync(filePath, preFetched);
-                
-                string text = content.Length > bytesToRead ? content.Substring(0, bytesToRead) : content;
-                
-                // 🚀 POPULATE FAST INDEX
+                // Optimization: If we have pre-fetched content, use it directly
+                if (preFetched != null && preFetched.TryGetValue(filePath, out var prefetched))
+                {
+                    string truncated = prefetched.Length > bytesToRead ? prefetched.Substring(0, bytesToRead) : prefetched;
+                    IndexSymbols(filePath, truncated);
+                    return prefetched.Length > bytesToRead ? truncated + "... [Truncated]" : truncated;
+                }
+
+                // Read only the bytes we need from disk instead of loading the entire file
+                string text;
+                try
+                {
+                    using (var reader = new StreamReader(filePath))
+                    {
+                        var buffer = new char[bytesToRead];
+                        int read = await reader.ReadAsync(buffer, 0, bytesToRead);
+                        text = new string(buffer, 0, read);
+                    }
+                }
+                catch { return "[Access Denied]"; }
+
                 IndexSymbols(filePath, text);
 
-                if (content.Length > bytesToRead) return text + "... [Truncated]";
+                // Check if there's more content we didn't read
+                var fileInfo = new FileInfo(filePath);
+                if (fileInfo.Length > bytesToRead) return text + "... [Truncated]";
                 return text;
             }
             catch { return "[Access Denied]"; }
@@ -300,9 +318,22 @@ namespace LocalPilot.Services
 
         public IReadOnlyList<SymbolLocation> FindSymbols(string name)
         {
-            if (_symbolIndex.TryGetValue(name, out var list)) return list;
+            if (_symbolIndex.TryGetValue(name, out var list))
+            {
+                lock (_symbolIndex) { return list.ToList(); }
+            }
             return new List<SymbolLocation>();
         }
+
+        // Pre-compiled regex patterns for symbol indexing performance
+        private static readonly Regex[] _symbolPatterns = new[]
+        {
+            new Regex(@"(?<!\/\/\s*)(?:class|interface|struct|type|trait)\s+(?<name>[a-zA-Z_]\w*)", RegexOptions.Compiled),
+            new Regex(@"(?<!\/\/\s*)@(?:Component|Injectable|Directive|NgModule|Pipe)\s*\(\s*\{", RegexOptions.Compiled),
+            new Regex(@"(?<!\/\/\s*)(?:func|def|function)\s+(?<name>[a-zA-Z_]\w*)\s*\(", RegexOptions.Compiled),
+            new Regex(@"(?<!\/\/\s*)(?:export\s+)?(?:const|let|var)\s+(?<name>[a-zA-Z_]\w*)\s*[:=]\s*(?:\(.*\))\s*=>", RegexOptions.Compiled),
+            new Regex(@"(?<!\/\/\s*)(?:public|private|internal|protected|static|async|virtual)?\s+(?:(?<type>[a-zA-Z_][\w\<\>\[\]]*)\s+)?(?<name>[a-zA-Z_]\w*)\s*\((?<args>[^\)]*)\)\s*\{", RegexOptions.Compiled)
+        };
 
         private void IndexSymbols(string filePath, string content)
         {
@@ -310,19 +341,9 @@ namespace LocalPilot.Services
             var supported = new HashSet<string> { ".cs", ".js", ".ts", ".tsx", ".jsx", ".vue", ".svelte", ".py", ".go", ".razor", ".cshtml", ".rs", ".rb", ".php", ".java", ".kt", ".sql" };
             if (!supported.Contains(ext)) return;
 
-            // 🚀 Lightning Fast Polyglot Indexer
-            // Targets: Classes, Interfaces, Methods, Functions, Components (inc. Angular)
-            var patterns = new[] {
-                @"(?<!\/\/\s*)(?:class|interface|struct|type|trait)\s+(?<name>[a-zA-Z_]\w*)", // Type declarations
-                @"(?<!\/\/\s*)@(?:Component|Injectable|Directive|NgModule|Pipe)\s*\(\s*\{", // Angular Decorators
-                @"(?<!\/\/\s*)(?:func|def|function)\s+(?<name>[a-zA-Z_]\w*)\s*\(", // Keyword functions
-                @"(?<!\/\/\s*)(?:export\s+)?(?:const|let|var)\s+(?<name>[a-zA-Z_]\w*)\s*[:=]\s*(?:\(.*\))\s*=>", // Arrow Functions 
-                @"(?<!\/\/\s*)(?:public|private|internal|protected|static|async|virtual)?\s+(?:(?<type>[a-zA-Z_][\w\<\>\[\]]*)\s+)?(?<name>[a-zA-Z_]\w*)\s*\((?<args>[^\)]*)\)\s*\{" // C-style Methods
-            };
-
-            foreach (var pattern in patterns)
+            foreach (var pattern in _symbolPatterns)
             {
-                var matches = Regex.Matches(content, pattern);
+                var matches = pattern.Matches(content);
                 foreach (Match m in matches)
                 {
                     var name = m.Groups["name"].Value;

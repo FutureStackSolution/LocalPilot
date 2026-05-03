@@ -138,10 +138,9 @@ namespace LocalPilot.Services
                 if (solution == null || string.IsNullOrEmpty(solution.FullPath)) return;
                 _workspaceRoot = Path.GetDirectoryName(solution.FullPath);
 
-                // 🚀 SWITCH TO BACKGROUND: Don't block the UI thread during the heavy scan
+                // Switch to background: don't block the UI thread during the heavy scan
                 await Task.Run(() => 
                 {
-                    // 🚀 PARALLEL SCAN ENGINE
                     var allFiles = Directory.EnumerateFiles(_workspaceRoot, "*.*", SearchOption.AllDirectories)
                         .Where(f => {
                             var ext = Path.GetExtension(f).ToLowerInvariant();
@@ -149,21 +148,21 @@ namespace LocalPilot.Services
                                    !f.Contains("\\obj\\") && !f.Contains("\\bin\\") && !f.Contains("\\node_modules\\");
                         }).ToList();
 
-                try
-                {
-                    using (var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, GlobalPriorityGuard.YieldToken))
+                    try
                     {
-                        Parallel.ForEach(allFiles, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount, CancellationToken = linkedCts.Token }, file =>
+                        using (var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, GlobalPriorityGuard.YieldToken))
                         {
-                            AnalyzeFile(file, newGraph);
-                        });
+                            Parallel.ForEach(allFiles, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount, CancellationToken = linkedCts.Token }, file =>
+                            {
+                                AnalyzeFile(file, newGraph);
+                            });
+                        }
                     }
-                }
-                catch (OperationCanceledException) { LocalPilotLogger.Log("[Nexus] Graph rebuild yielded to agent."); }
+                    catch (OperationCanceledException) { LocalPilotLogger.Log("[Nexus] Graph rebuild yielded to agent."); }
 
                     PerformBridging(newGraph);
+                    newGraph.LastUpdated = DateTime.Now;
                     _graph = newGraph;
-                    _graph.LastUpdated = DateTime.Now;
                 });
 
                 await SaveToDiskAsync();

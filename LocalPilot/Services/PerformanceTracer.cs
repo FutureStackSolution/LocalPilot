@@ -25,6 +25,7 @@ namespace LocalPilot.Services
         public static PerformanceTracer Instance => _instance.Value;
 
         private readonly ConcurrentQueue<PerformanceMetrics> _history = new ConcurrentQueue<PerformanceMetrics>();
+        private const int MaxHistorySize = 100;
 
         public void RecordTurn(string taskId, int turn, long ms, int tokens, string model)
         {
@@ -38,6 +39,9 @@ namespace LocalPilot.Services
             };
             _history.Enqueue(metric);
             
+            // Evict oldest entries to prevent unbounded memory growth
+            while (_history.Count > MaxHistorySize && _history.TryDequeue(out _)) { }
+            
             LocalPilotLogger.Log($"[Performance] Turn {turn} completed in {ms}ms ({tokens} tokens) using {model}");
         }
 
@@ -49,7 +53,9 @@ namespace LocalPilot.Services
         public double GetAverageLatency()
         {
             if (_history.IsEmpty) return 0;
-            return _history.Average(m => m.DurationMs);
+            // Take a snapshot to avoid iterating a changing collection
+            var snapshot = _history.ToArray();
+            return snapshot.Length > 0 ? snapshot.Average(m => m.DurationMs) : 0;
         }
     }
 }

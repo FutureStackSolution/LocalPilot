@@ -49,13 +49,15 @@ namespace LocalPilot.Services
         public bool IsActive { get; private set; }
 
         public AgentOrchestrator(OllamaService ollama, ToolRegistry toolRegistry, ProjectContextService projectContext, ProjectMapService projectMap)
-
         {
             _ollama = ollama;
             _toolRegistry = toolRegistry;
             _projectContext = projectContext;
             _projectMap = projectMap;
+            _historyCompactor = new HistoryCompactor(ollama);
         }
+
+        private readonly HistoryCompactor _historyCompactor;
 
         /// <summary>
         /// Initiates an autonomous task for the agent.
@@ -90,10 +92,9 @@ namespace LocalPilot.Services
                 // 🚀 MODEL SELECTION: Use specific model for tasks (Explain, Refactor, etc) if provided
                 string contextModel = modelOverride ?? LocalPilot.Settings.LocalPilotSettings.Instance.ChatModel;
 
-                // 🚀 CONTEXT AUTO-COMPACTION: Prune if history is getting too deep
-                var compactor = new HistoryCompactor(_ollama);
+                // Context auto-compaction: prune if history is getting too deep
                 var originalCount = messages.Count;
-                var compactedMessages = await compactor.CompactIfNeededAsync(messages, contextModel);
+                var compactedMessages = await _historyCompactor.CompactIfNeededAsync(messages, contextModel);
                 
                 // If compaction happened, we swap the list content (preserving the reference if possible, 
                 // but since we return it to the UI, we'll just update the local variable here).
@@ -192,81 +193,75 @@ namespace LocalPilot.Services
                     }
                 }
 
-                // Inject Active Document context for better grounding
+                // Fetch active document info ONCE to avoid redundant UI thread switches
+                string activeSelection = "";
+                string activeDocPath = null;
+                string activeDocContent = null;
                 try
                 {
                     await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                     var activeDoc = await VS.Documents.GetActiveDocumentViewAsync();
                     if (activeDoc?.FilePath != null)
                     {
-                        // 🚀 AUTO-RAG: Inject semantic neighborhood awareness
-                        string neighborhood = await SymbolIndexService.Instance.GetNeighborhoodContextAsync(activeDoc.FilePath, ct);
+                        activeDocPath = activeDoc.FilePath;
+                        activeDocContent = activeDoc.TextBuffer?.CurrentSnapshot?.GetText();
+
+                        // Get selection if available
+                        if (activeDoc.TextView?.Selection != null && activeDoc.TextView.Selection.SelectedSpans.Count > 0)
+                        {
+                            activeSelection = activeDoc.TextView.Selection.SelectedSpans[0].GetText();
+                        }
+                        if (string.IsNullOrWhiteSpace(activeSelection) && activeDocContent != null)
+                        {
+                            activeSelection = activeDocContent;
+                        }
+
+                        // Inject semantic neighborhood from Roslyn/LSP
+                        string neighborhood = await SymbolIndexService.Instance.GetNeighborhoodContextAsync(activeDocPath, ct);
                         if (!string.IsNullOrEmpty(neighborhood))
                         {
                             messages.Add(new ChatMessage { Role = "system", Content = neighborhood });
                         }
 
-                        string content = activeDoc.TextBuffer.CurrentSnapshot.GetText();
-                        if (content.Length > 3000) content = content.Substring(0, 3000) + "... [truncated]";
-                        
-                        messages.Add(new ChatMessage { 
-                            Role = "system", 
-                            Content = $"## ACTIVE EDITOR SNIPPET\nPath: {activeDoc.FilePath}\nCode:\n```\n{content}\n```" 
-                        });
-                    }
-                }
-                catch { }
-
-                // 🚀 NEXUS INTELLIGENCE: Inject cross-language dependency awareness
-                try
-                {
-                    var nexus = NexusService.Instance.GetGraph();
-                    if (nexus.Nodes.Any())
-                    {
-                        var activeDoc = await VS.Documents.GetActiveDocumentViewAsync();
-                        if (activeDoc?.FilePath != null)
+                        // Inject active editor snippet (capped)
+                        string snippetContent = activeDocContent;
+                        if (snippetContent != null)
                         {
-                            var node = nexus.Nodes.FirstOrDefault(n => n.FilePath != null && n.FilePath.Equals(activeDoc.FilePath, StringComparison.OrdinalIgnoreCase));
-                            if (node != null)
-                            {
-                                var deps = nexus.Edges.Where(e => e.FromId == node.Id).ToList();
-                                if (deps.Any())
-                                {
-                                    var sb = new System.Text.StringBuilder();
-                                    sb.AppendLine("## NEXUS CONTEXT (Stack Dependencies)");
-                                    sb.AppendLine($"Active File '{node.Name}' connects to {deps.Count} resources.");
-                                    
-                                    // Budgeting: Only show top 5 dependencies to avoid context bloat
-                                    foreach (var edge in deps.Take(5))
-                                    {
-                                        var target = nexus.Nodes.FirstOrDefault(n => n.Id == edge.ToId);
-                                        sb.AppendLine($" - {target?.Name ?? edge.ToId} ({target?.Type})");
-                                    }
-                                    if (deps.Count > 5) sb.AppendLine($" ... and {deps.Count - 5} other architectural links.");
-                                    
-                                    messages.Add(new ChatMessage { Role = "system", Content = sb.ToString() });
-                                }
-                            }
+                            if (snippetContent.Length > 3000) snippetContent = snippetContent.Substring(0, 3000) + "... [truncated]";
+                            messages.Add(new ChatMessage { 
+                                Role = "system", 
+                                Content = $"## ACTIVE EDITOR SNIPPET\nPath: {activeDocPath}\nCode:\n```\n{snippetContent}\n```" 
+                            });
                         }
                     }
                 }
                 catch { }
 
-                // Context Injection: Fetch active selection for slash commands
-                string activeSelection = "";
+                // Nexus intelligence: inject cross-language dependency awareness
                 try
                 {
-                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                    var activeDoc = await VS.Documents.GetActiveDocumentViewAsync();
-                    if (activeDoc?.TextView != null)
+                    var nexus = NexusService.Instance.GetGraph();
+                    if (nexus.Nodes.Any() && activeDocPath != null)
                     {
-                        activeSelection = activeDoc.TextView.Selection.SelectedSpans.Count > 0 
-                                          ? activeDoc.TextView.Selection.SelectedSpans[0].GetText() 
-                                          : "";
-                        
-                        if (string.IsNullOrWhiteSpace(activeSelection))
+                        var node = nexus.Nodes.FirstOrDefault(n => n.FilePath != null && n.FilePath.Equals(activeDocPath, StringComparison.OrdinalIgnoreCase));
+                        if (node != null)
                         {
-                            activeSelection = activeDoc.TextBuffer.CurrentSnapshot.GetText();
+                            var deps = nexus.Edges.Where(e => e.FromId == node.Id).ToList();
+                            if (deps.Any())
+                            {
+                                var sb = new System.Text.StringBuilder();
+                                sb.AppendLine("## NEXUS CONTEXT (Stack Dependencies)");
+                                sb.AppendLine($"Active File '{node.Name}' connects to {deps.Count} resources.");
+                                
+                                foreach (var edge in deps.Take(5))
+                                {
+                                    var target = nexus.Nodes.FirstOrDefault(n => n.Id == edge.ToId);
+                                    sb.AppendLine($" - {target?.Name ?? edge.ToId} ({target?.Type})");
+                                }
+                                if (deps.Count > 5) sb.AppendLine($" ... and {deps.Count - 5} other architectural links.");
+                                
+                                messages.Add(new ChatMessage { Role = "system", Content = sb.ToString() });
+                            }
                         }
                     }
                 }
@@ -355,9 +350,14 @@ namespace LocalPilot.Services
                 // 🚀 STREAM INTERCEPTOR: Buffer and suppress tool-text leaking to UI
                 var options = ApplyPerformancePresets(LocalPilot.Settings.LocalPilotSettings.Instance.Mode, messages, isQuickAction);
                 
-                // 🚀 OODA ORIENTATION: Inject Turn Summary to prevent amnesia
+                // OODA ORIENTATION: Inject Turn Summary to prevent amnesia
                 if (step > 1)
                 {
+                    // Clean up previous turn's system messages to prevent context bloat
+                    messages.RemoveAll(m => m.Role == "system" && 
+                        (m.Content.StartsWith("## OODA ORIENTATION") ||
+                         m.Content.StartsWith("[LSP CONTEXT]")));
+
                     string historySummary = GenerateActionHistorySummary(messages);
                     messages.Add(new ChatMessage { Role = "system", Content = $"## OODA ORIENTATION (Turn {step})\n{historySummary}\n\nSTAY FOCUSED: Proceed to the next step of your plan." });
                 }
@@ -677,9 +677,9 @@ namespace LocalPilot.Services
             {
                 OnStatusUpdate?.Invoke(AgentStatus.Completed, "Task stopped at maximum step limit.");
             }
-        }
-        catch (OperationCanceledException)
-        {
+            }
+            catch (OperationCanceledException)
+            {
                 OnStatusUpdate?.Invoke(AgentStatus.Idle, "Task cancelled by user.");
             }
             catch (Exception ex)
@@ -925,7 +925,15 @@ namespace LocalPilot.Services
 
                 using (var proc = System.Diagnostics.Process.Start(startInfo))
                 {
-                    string output = await proc.StandardOutput.ReadToEndAsync();
+                    // 10-second timeout to prevent hangs on slow/network drives
+                    var outputTask = proc.StandardOutput.ReadToEndAsync();
+                    if (await Task.WhenAny(outputTask, Task.Delay(10000)) != outputTask)
+                    {
+                        try { proc.Kill(); } catch { }
+                        return null;
+                    }
+
+                    string output = await outputTask;
                     if (!string.IsNullOrWhiteSpace(output))
                         return $"Modified files:\n{output.Trim()}";
                 }
