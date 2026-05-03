@@ -255,6 +255,10 @@ namespace LocalPilot.Chat
                 if (_scrollViewer == null)
                 {
                     _scrollViewer = FindVisualChild<ScrollViewer>(MessagesContainer);
+                    if (_scrollViewer != null)
+                    {
+                        LocalPilotLogger.Log("[UI] Chat ScrollViewer hooked for virtualization.", LogCategory.UI, LogSeverity.Debug);
+                    }
                 }
                 
                 _scrollViewer?.ScrollToEnd();

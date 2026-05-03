@@ -95,6 +95,7 @@ namespace LocalPilot.Services
                     try
                     {
                         LocalPilotLogger.Log("[RAG] Starting differential SQLite sync...", LogCategory.Agent);
+                        var sw = System.Diagnostics.Stopwatch.StartNew();
                         
                         var allFiles = Directory.EnumerateFiles(_solutionRoot, "*.*", SearchOption.AllDirectories)
                                                 .Where(IsRelevantFile).ToList();
@@ -124,9 +125,13 @@ namespace LocalPilot.Services
                         {
                             LocalPilotLogger.Log($"[RAG] Updating {filesToUpdate.Count} files in persistent storage...", LogCategory.Agent);
                             await ParallelUpdateAsync(filesToUpdate, ollama, ct);
+                            sw.Stop();
+                            LocalPilotLogger.Log($"[RAG] SQLite sync complete in {sw.ElapsedMilliseconds}ms.", LogCategory.Performance);
                         }
-                        
-                        LocalPilotLogger.Log("[RAG] SQLite sync complete.", LogCategory.Agent);
+                        else
+                        {
+                            LocalPilotLogger.Log("[RAG] SQLite index is up to date.", LogCategory.Agent);
+                        }
                     }
                     catch (Exception ex)
                     {

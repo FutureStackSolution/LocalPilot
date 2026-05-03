@@ -16,7 +16,9 @@ namespace LocalPilot.Services
         Ollama,
         UI,
         Build,
-        LSP
+        LSP,
+        Storage,
+        Performance
     }
 
     public enum LogSeverity

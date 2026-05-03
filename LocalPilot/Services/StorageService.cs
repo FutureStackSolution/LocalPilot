@@ -36,6 +36,7 @@ namespace LocalPilot.Services
             if (!Directory.Exists(appData)) Directory.CreateDirectory(appData);
             _dbPath = Path.Combine(appData, "localpilot_v2.db");
             
+            LocalPilotLogger.Log($"[Storage] Initializing persistent engine at: {_dbPath}", LogCategory.Storage);
             InitializeDatabase();
         }
 
@@ -49,6 +50,7 @@ namespace LocalPilot.Services
             {
                 cmd.CommandText = "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;";
                 cmd.ExecuteNonQuery();
+                LocalPilotLogger.Log("[Storage] SQLite WAL mode enabled for high-concurrency.", LogCategory.Storage);
             }
 
             using (var transaction = _connection.BeginTransaction())
@@ -113,6 +115,11 @@ namespace LocalPilot.Services
                     AddParameters(cmd, parameters);
                     await cmd.ExecuteNonQueryAsync();
                 }
+            }
+            catch (Exception ex)
+            {
+                LocalPilotLogger.LogError($"[Storage] SQL Execution failed: {sql}", ex, LogCategory.Storage);
+                throw;
             }
             finally
             {
