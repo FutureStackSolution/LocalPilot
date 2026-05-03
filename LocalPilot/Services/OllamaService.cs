@@ -18,6 +18,7 @@ namespace LocalPilot.Services
     {
         private static readonly HttpClient _httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
         private static readonly HttpClient _backgroundHttpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, float[]> _embeddingCache = new System.Collections.Concurrent.ConcurrentDictionary<string, float[]>(StringComparer.OrdinalIgnoreCase);
         private string _baseUrl;
 
         private volatile bool _circuitBreakerTripped = false;
@@ -113,6 +114,10 @@ namespace LocalPilot.Services
 
             if (string.IsNullOrWhiteSpace(model) || string.IsNullOrWhiteSpace(prompt)) return null;
 
+            // 🚀 PERFORMANCE CACHE: Skip Ollama network call if we've already embedded this exact text
+            string cacheKey = $"{model}:{prompt}";
+            if (_embeddingCache.TryGetValue(cacheKey, out var cached)) return cached;
+
             int maxRetries = 3;
             for (int i = 0; i < maxRetries; i++)
             {
@@ -161,7 +166,12 @@ namespace LocalPilot.Services
                         ResetCircuitBreaker();
 
                         if (embeddingArray == null) return null;
-                        return embeddingArray.ToObject<float[]>();
+                        var result = embeddingArray.ToObject<float[]>();
+                        
+                        // Cache the result for future turns
+                        if (result != null) _embeddingCache.TryAdd(cacheKey, result);
+                        
+                        return result;
                     }
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested)

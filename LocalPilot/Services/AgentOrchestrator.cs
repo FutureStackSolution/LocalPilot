@@ -492,8 +492,60 @@ namespace LocalPilot.Services
                     }
                     lastToolCallSignature = currentSignature;
 
-                    // Execute tools in parallel (or sequence for risky ones)
-                    foreach (var toolCall in validToolCalls)
+                    // 🚀 WORLD-CLASS PERFORMANCE: Parallel Execution Engine
+                    // Split tools into 'Safe' (Read-only) and 'Risky' (Mutating)
+                    var safeTools = new List<ToolCallRequest>();
+                    var riskyTools = new List<ToolCallRequest>();
+
+                    foreach (ToolCallRequest tc in validToolCalls)
+                    {
+                        bool isRisky = tc.Name == "write_file" || 
+                                       tc.Name == "replace_text" || 
+                                       tc.Name == "delete_file" || 
+                                       tc.Name == "rename_symbol" || 
+                                       tc.Name == "run_terminal" ||
+                                       tc.Name == "write_to_file" ||
+                                       tc.Name == "replace_file_content";
+                        
+                        if (isRisky) riskyTools.Add(tc);
+                        else safeTools.Add(tc);
+                    }
+
+                    // 1. Execute Safe Tools in Parallel (Speed boost for multi-file analysis)
+                    if (safeTools.Any())
+                    {
+                        OnStatusUpdate?.Invoke(AgentStatus.Thinking, $"Executing {safeTools.Count} analysis tools in parallel...");
+                        var parallelTasks = safeTools.Select(async (ToolCallRequest toolCall) => 
+                        {
+                            if (ct.IsCancellationRequested) return;
+                            
+                            OnToolCallPending?.Invoke(toolCall);
+                            var toolSw = System.Diagnostics.Stopwatch.StartNew();
+                            var result = await _toolRegistry.ExecuteToolAsync(toolCall.Name, toolCall.Arguments, ct);
+                            toolSw.Stop();
+                            
+                            OnToolCallCompleted?.Invoke(toolCall, result);
+                            
+                            string output = result.Output ?? string.Empty;
+                            if (output.Length > 3000) 
+                            {
+                                output = output.Substring(0, 1500) + "\n\n... [TRUNCATED] ...\n\n" + output.Substring(output.Length - 1500);
+                            }
+
+                            lock (messages)
+                            {
+                                messages.Add(new ChatMessage { Role = "tool", Content = $"[Tool '{toolCall.Name}' result]\n{output}" });
+                                if (!result.IsError && result.Output != "No matches found." && !result.Output.Contains("not found"))
+                                {
+                                    stepHasMeaningfulResult = true;
+                                }
+                            }
+                        });
+                        await Task.WhenAll(parallelTasks);
+                    }
+
+                    // 2. Execute Risky Tools Sequentially (Safety first)
+                    foreach (ToolCallRequest toolCall in riskyTools)
                     {
                         if (ct.IsCancellationRequested) break;
 
