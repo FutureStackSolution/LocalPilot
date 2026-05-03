@@ -92,9 +92,15 @@ namespace LocalPilot.Services
                                 var relPath = GetRelativePath(f);
                                 string key = relPath.ToLowerInvariant();
                                 
-                                if (!dbSnapshot.TryGetValue(key, out var lastModified) || info.LastWriteTime > lastModified)
+                                if (!dbSnapshot.TryGetValue(key, out var snapshot) || info.LastWriteTime > snapshot.lastMod)
                                 {
-                                    filesToUpdate.Add(f);
+                                    // Deep check: If timestamp is newer, check the actual content hash
+                                    // This prevents re-indexing if git changed the timestamp but not the code
+                                    string currentHash = ComputeHash(File.ReadAllText(f));
+                                    if (snapshot.hash != currentHash)
+                                    {
+                                        filesToUpdate.Add(f);
+                                    }
                                 }
                             }
                             catch { }
@@ -127,22 +133,23 @@ namespace LocalPilot.Services
             }
         }
 
-        private async Task<Dictionary<string, DateTime>> GetFileHashesFromDbAsync()
+        private async Task<Dictionary<string, (DateTime lastMod, string hash)>> GetFileHashesFromDbAsync()
         {
-            var dict = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+            var dict = new Dictionary<string, (DateTime lastMod, string hash)>(StringComparer.OrdinalIgnoreCase);
             await _storage.GetLock().WaitAsync();
             try
             {
                 using (var cmd = _storage.GetConnection().CreateCommand())
                 {
-                    cmd.CommandText = "SELECT Path, LastIndexed FROM Files";
+                    cmd.CommandText = "SELECT Path, LastIndexed, Hash FROM Files";
                     using (var reader = await cmd.ExecuteReaderAsync())
                     {
                         while (await reader.ReadAsync())
                         {
                             string path = reader.GetString(0);
                             DateTime lastMod = reader.GetDateTime(1);
-                            dict[path.ToLowerInvariant()] = lastMod;
+                            string hash = reader.IsDBNull(2) ? "" : reader.GetString(2);
+                            dict[path.ToLowerInvariant()] = (lastMod, hash);
                         }
                     }
                 }
@@ -193,6 +200,7 @@ namespace LocalPilot.Services
             if (string.IsNullOrWhiteSpace(content)) return;
 
             // 1. Semantic Chunking (Roslyn-powered)
+            string hash = ComputeHash(content);
             var chunks = GetSemanticChunks(content, Path.GetExtension(fullPath).ToLower());
 
             // 2. Persist to SQLite
@@ -223,26 +231,27 @@ namespace LocalPilot.Services
                         using (var cmd = _storage.GetConnection().CreateCommand())
                         {
                             cmd.Transaction = transaction;
-                            cmd.CommandText = "INSERT INTO Files (Path, Content, LastIndexed) VALUES (@Path, @Content, @LastIndexed)";
+                            cmd.CommandText = "INSERT INTO Files (Path, Content, LastIndexed, Hash) VALUES (@Path, @Content, @LastIndexed, @Hash)";
                             cmd.Parameters.AddWithValue("@Path", relativePath);
                             cmd.Parameters.AddWithValue("@Content", content);
                             cmd.Parameters.AddWithValue("@LastIndexed", fileInfo.LastWriteTime);
+                            cmd.Parameters.AddWithValue("@Hash", hash);
                             await cmd.ExecuteNonQueryAsync(ct);
                         }
 
-                        // Process chunks in parallel
+                        // 🚀 WORLD-CLASS: Process chunks IN PARALLEL for massive speedup
                         string embeddingModel = LocalPilotSettings.Instance.EmbeddingModel;
-                        var processedChunks = new List<(string text, float[] vector)>();
-
-                        foreach (var chunkText in chunks)
+                        var chunkTasks = chunks.Select(async chunkText =>
                         {
-                            float[] vector = null;
+                            float[] v = null;
                             if (!string.IsNullOrWhiteSpace(embeddingModel) && !ollama.CircuitBreakerTripped)
                             {
-                                try { vector = await ollama.GetEmbeddingsAsync(embeddingModel, chunkText, ct); } catch { }
+                                try { v = await ollama.GetEmbeddingsAsync(embeddingModel, chunkText, ct); } catch { }
                             }
-                            processedChunks.Add((chunkText, vector));
-                        }
+                            return new { Text = chunkText, Vector = v };
+                        });
+
+                        var processedChunks = await Task.WhenAll(chunkTasks);
 
                         foreach (var chunk in processedChunks)
                         {
@@ -497,6 +506,17 @@ namespace LocalPilot.Services
             byte[] dest = new byte[floats.Length * sizeof(float)];
             Buffer.BlockCopy(floats, 0, dest, 0, dest.Length);
             return dest;
+        }
+
+        private static string ComputeHash(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return string.Empty;
+            using (var md5 = System.Security.Cryptography.MD5.Create())
+            {
+                byte[] bytes = System.Text.Encoding.UTF8.GetBytes(text);
+                byte[] hash = md5.ComputeHash(bytes);
+                return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
+            }
         }
 
         private static float[] ParseRawBytes(byte[] bytes)

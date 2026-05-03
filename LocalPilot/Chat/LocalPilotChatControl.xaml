@@ -606,6 +606,8 @@
                  ScrollViewer.CanContentScroll="True"
                  VirtualizingStackPanel.IsVirtualizing="True"
                  VirtualizingStackPanel.VirtualizationMode="Recycling"
+                 VirtualizingStackPanel.CacheLength="2,3"
+                 VirtualizingStackPanel.CacheLengthUnit="Item"
                  HorizontalContentAlignment="Stretch">
             <ListBox.Template>
                 <ControlTemplate TargetType="ListBox">

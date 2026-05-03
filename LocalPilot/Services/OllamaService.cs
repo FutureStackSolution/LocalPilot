@@ -38,6 +38,24 @@ namespace LocalPilot.Services
             _baseUrl = baseUrl?.TrimEnd('/') ?? "http://localhost:11434";
         }
 
+        // ── 🚀 World-Class: Background Warmup ─────────────────────────────────
+        /// <summary>
+        /// Sends a small, non-streaming request to Ollama to ensure the model is loaded 
+        /// into memory BEFORE the user interacts with it.
+        /// </summary>
+        public async Task WarmupAsync(string model, CancellationToken ct = default)
+        {
+            if (string.IsNullOrEmpty(model) || CircuitBreakerTripped) return;
+            try
+            {
+                var payload = new { model, prompt = "Hi", stream = false, keep_alive = "10m" };
+                var content = new StringContent(JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
+                await _httpClient.PostAsync($"{_baseUrl}/api/generate", content, ct).ConfigureAwait(false);
+                LocalPilotLogger.Log($"[Ollama] Warmup complete for model: {model}", LogCategory.Ollama);
+            }
+            catch { /* Best effort only */ }
+        }
+
         // ── Model listing ──────────────────────────────────────────────────────
         public async Task<List<string>> GetAvailableModelsAsync(CancellationToken ct = default)
         {

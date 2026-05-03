@@ -126,6 +126,10 @@ namespace LocalPilot
                     await Task.Delay(10000, cancellationToken).ConfigureAwait(false); 
                     
                     var ollama = new OllamaService(settings.OllamaBaseUrl);
+                    
+                    // 🚀 World-Class: Background Warmup (Pre-load the model)
+                    _ = ollama.WarmupAsync(settings.ChatModel, cancellationToken);
+                    
                     LocalPilotLogger.Log("[Autopilot] Indexing project context in background...");
                     await ProjectContextService.Instance.IndexSolutionAsync(ollama, cancellationToken);
 
