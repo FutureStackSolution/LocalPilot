@@ -189,7 +189,17 @@ Since **LocalPilot** runs Large Language Models (LLMs) **entirely on your local 
 
 ## 📜 Release History
 
-### 🚀 v1.9 - The Persistent Performance Update (latest)
+### 🚀 v1.9.1 - The Stability & Hardening Update (latest)
+**"Dynamic execution, laptop-first performance, and a hardened agentic core."**
+
+- **⚡ Dynamic Timeout Engine**: Implemented a task-complexity-aware timeout system that automatically scales from 60s to 300s for deep refactoring tasks, preventing premature task termination for small models.
+- **🛡️ GPU VRAM Watchdog**: Proactive monitoring of GPU memory health before starting agent turns to prevent system-wide freezes on low-resource laptop hardware.
+- **🚀 $O(N+M)$ Indexing Optimization**: Refactored the Project Map generation logic to eliminate $O(N^2)$ bottlenecks, drastically reducing CPU spikes during codebase indexing.
+- **🏠 Laptop-Friendly Concurrency**: Hardened background I/O with strict `SemaphoreSlim` throttling (8 concurrent tasks) for maximum IDE responsiveness.
+- **🧹 Architecture Pruning**: Conducted a critical review to remove redundant logic and update stale technical documentation across the service layer.
+- **✅ VSTHRD Hardening**: Resolved all Visual Studio Threading Analyzer warnings (`VSTHRD105`, `VSTHRD110`) in asynchronous extensions to ensure enterprise-grade reliability.
+
+### 🚀 v1.9 - The Persistent Performance Update
 **"Seamless SQLite storage, legacy-free architecture, and hardened stability."**
 
 > [!IMPORTANT]
