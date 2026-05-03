@@ -78,17 +78,7 @@ namespace LocalPilot.Services
                         LocalPilotLogger.Log("[RAG] Starting differential SQLite sync...", LogCategory.Agent);
                         var sw = System.Diagnostics.Stopwatch.StartNew();
                         
-                        List<string> allFiles = new List<string>();
-                        try
-                        {
-                            allFiles = Directory.EnumerateFiles(_solutionRoot, "*.*", SearchOption.AllDirectories)
-                                                .Where(IsRelevantFile).ToList();
-                        }
-                        catch (Exception ex)
-                        {
-                            LocalPilotLogger.Log($"[RAG] Partial file scan due to directory restrictions: {ex.Message}", LogCategory.Agent, LogSeverity.Warning);
-                            // Fallback: search just the root or known subdirs if possible
-                        }
+                        var allFiles = SafeEnumerateFiles(new DirectoryInfo(_solutionRoot)).ToList();
 
                         var filesToUpdate = new List<string>();
                         
@@ -105,9 +95,8 @@ namespace LocalPilot.Services
                                 
                                 if (!dbSnapshot.TryGetValue(key, out var snapshot) || info.LastWriteTime > snapshot.lastMod)
                                 {
-                                    // Deep check: If timestamp is newer, check the actual content hash
-                                    // This prevents re-indexing if git changed the timestamp but not the code
-                                    string currentHash = ComputeHash(File.ReadAllText(f));
+                                    string currentContent = await ReadSafeTextAsync(f);
+                                    string currentHash = ComputeHash(currentContent);
                                     if (snapshot.hash != currentHash)
                                     {
                                         filesToUpdate.Add(f);
@@ -147,19 +136,23 @@ namespace LocalPilot.Services
         private async Task<Dictionary<string, (DateTime lastMod, string hash)>> GetFileHashesFromDbAsync()
         {
             var dict = new Dictionary<string, (DateTime lastMod, string hash)>(StringComparer.OrdinalIgnoreCase);
-            await _storage.GetLock().WaitAsync();
+            await _storage.GetLock().WaitAsync().ConfigureAwait(false);
             try
             {
-                using (var cmd = _storage.GetConnection().CreateCommand())
+                var connection = _storage.GetConnection();
+                if (connection == null) return dict;
+
+                using (var cmd = connection.CreateCommand())
                 {
                     cmd.CommandText = "SELECT Path, LastIndexed, Hash FROM Files";
-                    using (var reader = await cmd.ExecuteReaderAsync())
+                    using (var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false))
                     {
-                        while (await reader.ReadAsync())
+                        while (await reader.ReadAsync().ConfigureAwait(false))
                         {
+                            if (await reader.IsDBNullAsync(0).ConfigureAwait(false)) continue;
                             string path = reader.GetString(0);
-                            DateTime lastMod = reader.GetDateTime(1);
-                            string hash = await reader.IsDBNullAsync(2) ? "" : reader.GetString(2);
+                            DateTime lastMod = await reader.IsDBNullAsync(1).ConfigureAwait(false) ? DateTime.MinValue : reader.GetDateTime(1);
+                            string hash = await reader.IsDBNullAsync(2).ConfigureAwait(false) ? "" : reader.GetString(2);
                             dict[path.ToLowerInvariant()] = (lastMod, hash);
                         }
                     }
@@ -171,6 +164,17 @@ namespace LocalPilot.Services
                 _storage.GetLock().Release();
             }
             return dict;
+        }
+
+        private async Task<string> ReadSafeTextAsync(string path)
+        {
+            try
+            {
+                var info = new FileInfo(path);
+                if (info.Length > 2 * 1024 * 1024) return string.Empty; // Skip files > 2MB for stability
+                return await Task.Run(() => File.ReadAllText(path));
+            }
+            catch { return string.Empty; }
         }
 
         private async Task ParallelUpdateAsync(List<string> files, OllamaService ollama, CancellationToken ct)
@@ -207,7 +211,7 @@ namespace LocalPilot.Services
             var fileInfo = new FileInfo(fullPath);
             if (fileInfo.Length > 1024000) return; // 1MB cap
 
-            string content = await Task.Run(() => File.ReadAllText(fullPath), ct);
+            string content = await ReadSafeTextAsync(fullPath);
             if (string.IsNullOrWhiteSpace(content)) return;
 
             // 1. Semantic Chunking (Roslyn-powered)
@@ -221,27 +225,28 @@ namespace LocalPilot.Services
             var processedChunks = chunks.Zip(vectors, (text, vector) => new { Text = text, Vector = vector }).ToList();
 
             // 2. Persist to SQLite (Quick batch write)
-            await _storage.GetLock().WaitAsync(ct);
+            await _storage.GetLock().WaitAsync(ct).ConfigureAwait(false);
             try
             {
-                using (var transaction = _storage.GetConnection().BeginTransaction())
+                var connection = _storage.GetConnection();
+                using (var transaction = connection.BeginTransaction())
                 {
                     try
                     {
                         // Clear old data for this file
-                        using (var cmd = _storage.GetConnection().CreateCommand())
+                        using (var cmd = connection.CreateCommand())
                         {
                             cmd.Transaction = transaction;
                             cmd.Parameters.AddWithValue("@Path", relativePath);
 
                             cmd.CommandText = "DELETE FROM Files WHERE Path = @Path";
-                            await cmd.ExecuteNonQueryAsync(ct);
+                            await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
 
                             cmd.CommandText = "DELETE FROM SearchIndex WHERE Path = @Path";
-                            await cmd.ExecuteNonQueryAsync(ct);
+                            await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
 
                             cmd.CommandText = "DELETE FROM Chunks WHERE Path = @Path";
-                            await cmd.ExecuteNonQueryAsync(ct);
+                            await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
                         }
 
                         // Insert into Files registry
@@ -249,11 +254,11 @@ namespace LocalPilot.Services
                         {
                             cmd.Transaction = transaction;
                             cmd.CommandText = "INSERT INTO Files (Path, Content, LastIndexed, Hash) VALUES (@Path, @Content, @LastIndexed, @Hash)";
-                            cmd.Parameters.AddWithValue("@Path", relativePath);
-                            cmd.Parameters.AddWithValue("@Content", content);
+                            cmd.Parameters.AddWithValue("@Path", relativePath ?? (object)DBNull.Value);
+                            cmd.Parameters.AddWithValue("@Content", content ?? (object)DBNull.Value);
                             cmd.Parameters.AddWithValue("@LastIndexed", fileInfo.LastWriteTime);
-                            cmd.Parameters.AddWithValue("@Hash", hash);
-                            await cmd.ExecuteNonQueryAsync(ct);
+                            cmd.Parameters.AddWithValue("@Hash", hash ?? (object)DBNull.Value);
+                            await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
                         }
 
                         foreach (var chunk in processedChunks)
@@ -264,10 +269,10 @@ namespace LocalPilot.Services
                             {
                                 cmd.Transaction = transaction;
                                 cmd.CommandText = "INSERT INTO Chunks (Path, Content, Vector) VALUES (@Path, @Content, @Vector); SELECT last_insert_rowid();";
-                                cmd.Parameters.AddWithValue("@Path", relativePath);
-                                cmd.Parameters.AddWithValue("@Content", chunk.Text);
-                                cmd.Parameters.AddWithValue("@Vector", chunk.Vector != null ? GetRawBytes(chunk.Vector) : null);
-                                chunkId = (long)await cmd.ExecuteScalarAsync(ct);
+                                cmd.Parameters.AddWithValue("@Path", relativePath ?? (object)DBNull.Value);
+                                cmd.Parameters.AddWithValue("@Content", chunk.Text ?? (object)DBNull.Value);
+                                cmd.Parameters.AddWithValue("@Vector", chunk.Vector != null ? (object)GetRawBytes(chunk.Vector) : DBNull.Value);
+                                chunkId = (long)await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
                             }
 
                             // 2. Update Search Index (FTS5) with ChunkId reference
@@ -275,10 +280,10 @@ namespace LocalPilot.Services
                             {
                                 cmd.Transaction = transaction;
                                 cmd.CommandText = "INSERT INTO SearchIndex (Content, Path, ChunkId) VALUES (@Content, @Path, @ChunkId)";
-                                cmd.Parameters.AddWithValue("@Content", chunk.Text);
-                                cmd.Parameters.AddWithValue("@Path", relativePath);
+                                cmd.Parameters.AddWithValue("@Content", chunk.Text ?? (object)DBNull.Value);
+                                cmd.Parameters.AddWithValue("@Path", relativePath ?? (object)DBNull.Value);
                                 cmd.Parameters.AddWithValue("@ChunkId", chunkId);
-                                await cmd.ExecuteNonQueryAsync(ct);
+                                await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
                             }
                         }
 
@@ -363,24 +368,33 @@ namespace LocalPilot.Services
             return chunks.Distinct().ToList();
         }
 
-        public async Task<string> SearchContextAsync(OllamaService ollama, string query, int topN = 5)
+        public async Task<string> SearchContextAsync(OllamaService ollama, string query, int topN = 5, CancellationToken ct = default)
         {
+            if (string.IsNullOrWhiteSpace(query)) return string.Empty;
+
+            string embeddingModel = LocalPilotSettings.Instance.EmbeddingModel;
+            Task<float[]> queryVectorTask = null;
+            if (!string.IsNullOrWhiteSpace(embeddingModel) && !ollama.CircuitBreakerTripped)
+            {
+                queryVectorTask = ollama.GetEmbeddingsAsync(embeddingModel, query);
+            }
+
+            // 🚀 EXPERT: Use the global lock even for reads to prevent 'Database is locked' 
+            // during heavy background indexing/renaming.
+            await _storage.GetLock().WaitAsync(ct).ConfigureAwait(false);
             try
             {
-                if (string.IsNullOrWhiteSpace(query)) return string.Empty;
+                var connection = _storage.GetConnection();
+                if (connection == null) return string.Empty;
 
-                // 1. Get Query Embedding (in parallel with FTS fetch)
-                string embeddingModel = LocalPilotSettings.Instance.EmbeddingModel;
-                Task<float[]> queryVectorTask = null;
-                if (!string.IsNullOrWhiteSpace(embeddingModel) && !ollama.CircuitBreakerTripped)
-                {
-                    queryVectorTask = ollama.GetEmbeddingsAsync(embeddingModel, query);
-                }
+                // Clean up the query to prevent FTS5 syntax crashes (e.g. from parentheses or asterisks)
+                string sanitizedQuery = Regex.Replace(query, @"[^\w\s]", " ").Trim();
+                if (string.IsNullOrEmpty(sanitizedQuery)) return string.Empty;
 
                 var candidates = new List<(string path, string content, double bm25Score, float[] vector)>();
 
                 // 2. 🚀 FAST HYBRID FETCH: Keywords (BM25) + Metadata (Vectors)
-                using (var cmd = _storage.GetConnection().CreateCommand())
+                using (var cmd = connection.CreateCommand())
                 {
                     cmd.CommandText = @"
                         SELECT si.Path, si.Content, si.rank, c.Vector 
@@ -389,14 +403,14 @@ namespace LocalPilot.Services
                         WHERE SearchIndex MATCH @query 
                         ORDER BY rank 
                         LIMIT @limit";
-                    cmd.Parameters.AddWithValue("@query", query);
+                    cmd.Parameters.AddWithValue("@query", sanitizedQuery);
                     cmd.Parameters.AddWithValue("@limit", topN * 4); // Over-sample for re-ranking
 
-                    using (var reader = await cmd.ExecuteReaderAsync())
+                    using (var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false))
                     {
-                        while (await reader.ReadAsync())
+                        while (await reader.ReadAsync(ct).ConfigureAwait(false))
                         {
-                            byte[] vectorBytes = await reader.IsDBNullAsync(3) ? null : (byte[])reader.GetValue(3);
+                            byte[] vectorBytes = await reader.IsDBNullAsync(3).ConfigureAwait(false) ? null : (byte[])reader.GetValue(3);
                             float[] vec = ParseRawBytes(vectorBytes);
                             // bm25 rank is negative (lower is better), so we flip it for scoring
                             candidates.Add((reader.GetString(0), reader.GetString(1), -reader.GetDouble(2), vec));
@@ -418,7 +432,7 @@ namespace LocalPilot.Services
                     double vectorScore = (queryVector != null && c.vector != null) ? CosineSimilarity(queryVector, c.vector) : 0;
                     // Weighted Fusion: 80% Semantic, 20% Keyword
                     double score = vectorScore > 0 ? (vectorScore * 0.8) + (Math.Min(0.5, c.bm25Score / 100.0) * 0.2) : c.bm25Score;
-                    return new { c.path, c.content, score };
+                    return new { path = c.path, content = c.content, score };
                 })
                 .OrderByDescending(x => x.score)
                 .Take(topN)
@@ -439,6 +453,10 @@ namespace LocalPilot.Services
             {
                 LocalPilotLogger.LogError("[RAG] SearchContextAsync failed", ex);
                 return string.Empty;
+            }
+            finally
+            {
+                _storage.GetLock().Release();
             }
         }
 
@@ -477,8 +495,6 @@ namespace LocalPilot.Services
                         string content = string.Join("\n", kvp.Value.Select(c => c.Content));
                         DateTime lastMod = kvp.Value.FirstOrDefault()?.LastModified ?? DateTime.Now;
                         
-                        // Fake a process call to insert into DB
-                        // (Optimization: In a real migration we'd do this in a single transaction)
                         await _storage.ExecuteAsync(@"
                             INSERT OR REPLACE INTO Files (Path, Content, LastIndexed, Metadata) 
                             VALUES (@Path, @Content, @LastIndexed, '')", 
@@ -494,6 +510,35 @@ namespace LocalPilot.Services
                 LocalPilotLogger.Log("[RAG] Migration complete. Legacy index deleted.");
             }
             catch (Exception ex) { LocalPilotLogger.LogError("[RAG] Legacy migration failed", ex); }
+        }
+
+        private IEnumerable<string> SafeEnumerateFiles(DirectoryInfo dir)
+        {
+            var files = new List<string>();
+            var queue = new Queue<DirectoryInfo>();
+            queue.Enqueue(dir);
+
+            while (queue.Count > 0)
+            {
+                var currentDir = queue.Dequeue();
+                try
+                {
+                    string name = currentDir.Name;
+                    if (name == "bin" || name == "obj" || name == ".git" || name == "node_modules") continue;
+
+                    foreach (var file in currentDir.GetFiles())
+                    {
+                        var ext = file.Extension.ToLowerInvariant();
+                        if (ext == ".cs" || ext == ".ts" || ext == ".tsx")
+                            files.Add(file.FullName);
+                    }
+
+                    foreach (var subDir in currentDir.GetDirectories())
+                        queue.Enqueue(subDir);
+                }
+                catch { }
+            }
+            return files;
         }
 
         private bool IsRelevantFile(string path)
@@ -520,37 +565,35 @@ namespace LocalPilot.Services
                 _watcher = new FileSystemWatcher(_solutionRoot) { IncludeSubdirectories = true, Filter = "*.*", EnableRaisingEvents = true };
                 _watcher.Changed += (s, e) => { if (IsRelevantFile(e.FullPath)) _pendingFiles.TryAdd(e.FullPath, 0); };
                 _watcher.Created += (s, e) => { if (IsRelevantFile(e.FullPath)) _pendingFiles.TryAdd(e.FullPath, 0); };
-                _watcher.Deleted += (s, e) => 
-                {
-                    _ = Task.Run(async () => {
-                        await _storage.ExecuteAsync("DELETE FROM Files WHERE Path = @Path", new { Path = GetRelativePath(e.FullPath) });
-                        await _storage.ExecuteAsync("DELETE FROM SearchIndex WHERE Path = @Path", new { Path = GetRelativePath(e.FullPath) });
-                    });
+                _watcher.Deleted += (s, e) => { _pendingFiles.TryAdd(e.FullPath, 0); };
+                _watcher.Renamed += (s, e) => {
+                    _pendingFiles.TryAdd(e.OldFullPath, 0);
+                    _pendingFiles.TryAdd(e.FullPath, 0);
                 };
-                _watcher.Renamed += (s, e) =>
-                {
-                    // Clean up old path
-                    _ = Task.Run(async () => {
-                        await _storage.ExecuteAsync("DELETE FROM Files WHERE Path = @Path", new { Path = GetRelativePath(e.OldFullPath) });
-                        await _storage.ExecuteAsync("DELETE FROM SearchIndex WHERE Path = @Path", new { Path = GetRelativePath(e.OldFullPath) });
-                    });
-                    // Queue new path for indexing
-                    if (IsRelevantFile(e.FullPath)) _pendingFiles.TryAdd(e.FullPath, 0);
-                };
+
+                LocalPilotLogger.Log($"[RAG] FileSystemWatcher active on: {_solutionRoot}");
                 
+                // Start the background processing loop for the queue
                 _ = Task.Run(async () => {
-                    while (!_watcherCts.Token.IsCancellationRequested)
+                    while (!_watcherCts.IsCancellationRequested)
                     {
-                        await Task.Delay(5000, _watcherCts.Token);
+                        await Task.Delay(5000); // Process every 5 seconds
                         if (_pendingFiles.IsEmpty) continue;
 
-                        var batch = _pendingFiles.Keys.ToList();
-                        _pendingFiles.Clear();
-                        await ParallelUpdateAsync(batch, ollama, _watcherCts.Token);
+                        while (_pendingFiles.TryRemove(_pendingFiles.Keys.FirstOrDefault() ?? "", out _))
+                        {
+                            // Atomic clear — re-scanning is safer for consistent state after batches
+                        }
+                        
+                        LocalPilotLogger.Log("[RAG] Incremental changes detected. Re-indexing...");
+                        await IndexSolutionAsync(ollama, _watcherCts.Token);
                     }
                 });
             }
-            catch { }
+            catch (Exception ex)
+            {
+                LocalPilotLogger.LogError("[RAG] Failed to setup FileSystemWatcher", ex);
+            }
         }
 
         private static byte[] GetRawBytes(float[] floats)

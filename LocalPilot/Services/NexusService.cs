@@ -59,14 +59,18 @@ namespace LocalPilot.Services
         private async Task RefreshGraphFromDbAsync()
         {
             var newGraph = new NexusGraph();
+            await _storage.GetLock().WaitAsync().ConfigureAwait(false);
             try
             {
-                using (var cmd = _storage.GetConnection().CreateCommand())
+                var connection = _storage.GetConnection();
+                if (connection == null) return;
+
+                using (var cmd = connection.CreateCommand())
                 {
                     cmd.CommandText = "SELECT Id, Label, Type, Metadata FROM NexusNodes";
-                    using (var reader = await cmd.ExecuteReaderAsync())
+                    using (var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false))
                     {
-                        while (await reader.ReadAsync())
+                        while (await reader.ReadAsync().ConfigureAwait(false))
                         {
                             newGraph.Nodes.Add(new NexusNode {
                                 Id = reader.GetString(0),
@@ -78,9 +82,9 @@ namespace LocalPilot.Services
                     }
 
                     cmd.CommandText = "SELECT SourceId, TargetId, Type FROM NexusEdges";
-                    using (var reader = await cmd.ExecuteReaderAsync())
+                    using (var reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false))
                     {
-                        while (await reader.ReadAsync())
+                        while (await reader.ReadAsync().ConfigureAwait(false))
                         {
                             newGraph.Edges.Add(new NexusEdge {
                                 FromId = reader.GetString(0),
@@ -93,6 +97,7 @@ namespace LocalPilot.Services
                 _graph = newGraph;
             }
             catch (Exception ex) { LocalPilotLogger.LogError("[Nexus] RefreshGraphFromDbAsync failed", ex); }
+            finally { _storage.GetLock().Release(); }
         }
 
         private void SetupWatcher(string path)
@@ -159,12 +164,7 @@ namespace LocalPilot.Services
                 // Switch to background thread for the heavy scan
                 await Task.Run(async () => 
                 {
-                    var allFiles = Directory.EnumerateFiles(_workspaceRoot, "*.*", SearchOption.AllDirectories)
-                                            .Where(f => {
-                                                var ext = Path.GetExtension(f).ToLowerInvariant();
-                                                return (ext == ".cs" || ext == ".ts" || ext == ".tsx") &&
-                                                       !f.Contains("\\obj\\") && !f.Contains("\\bin\\") && !f.Contains("\\node_modules\\");
-                                            }).ToList();
+                    var allFiles = SafeEnumerateFiles(new DirectoryInfo(_workspaceRoot)).ToList();
 
                     // Clear tables for rebuild
                     await _storage.ExecuteAsync("DELETE FROM NexusNodes");
@@ -188,8 +188,8 @@ namespace LocalPilot.Services
         private async Task UpdateGraphForFileAsync(string filePath)
         {
             // 1. Clear old data for this file
-            await _storage.ExecuteAsync("DELETE FROM NexusNodes WHERE Metadata = @Path", new { Path = filePath });
-            await _storage.ExecuteAsync("DELETE FROM NexusEdges WHERE SourceId = @Path OR TargetId IN (SELECT Id FROM NexusNodes WHERE Metadata = @Path)", new { Path = filePath });
+            await _storage.ExecuteAsync("DELETE FROM NexusNodes WHERE Metadata = @Path", new { Path = filePath }).ConfigureAwait(false);
+            await _storage.ExecuteAsync("DELETE FROM NexusEdges WHERE SourceId = @Path OR TargetId IN (SELECT Id FROM NexusNodes WHERE Metadata = @Path)", new { Path = filePath }).ConfigureAwait(false);
 
             if (!File.Exists(filePath)) return;
 
@@ -197,14 +197,17 @@ namespace LocalPilot.Services
             var tempGraph = new NexusGraph();
             AnalyzeFile(filePath, tempGraph);
 
-            await _storage.GetLock().WaitAsync();
+            await _storage.GetLock().WaitAsync().ConfigureAwait(false);
             try
             {
-                using (var transaction = _storage.GetConnection().BeginTransaction())
+                var connection = _storage.GetConnection();
+                if (connection == null) return;
+
+                using (var transaction = connection.BeginTransaction())
                 {
                     foreach (var node in tempGraph.Nodes)
                     {
-                        using (var cmd = _storage.GetConnection().CreateCommand())
+                        using (var cmd = connection.CreateCommand())
                         {
                             cmd.Transaction = transaction;
                             cmd.CommandText = "INSERT OR REPLACE INTO NexusNodes (Id, Label, Type, Metadata) VALUES (@Id, @Label, @Type, @Path)";
@@ -212,23 +215,27 @@ namespace LocalPilot.Services
                             cmd.Parameters.AddWithValue("@Label", node.Name);
                             cmd.Parameters.AddWithValue("@Type", node.Type.ToString());
                             cmd.Parameters.AddWithValue("@Path", filePath);
-                            await cmd.ExecuteNonQueryAsync();
+                            await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
                         }
                     }
                     foreach (var edge in tempGraph.Edges)
                     {
-                        using (var cmd = _storage.GetConnection().CreateCommand())
+                        using (var cmd = connection.CreateCommand())
                         {
                             cmd.Transaction = transaction;
                             cmd.CommandText = "INSERT OR REPLACE INTO NexusEdges (SourceId, TargetId, Type) VALUES (@Src, @Tgt, @Type)";
                             cmd.Parameters.AddWithValue("@Src", edge.FromId);
                             cmd.Parameters.AddWithValue("@Tgt", edge.ToId);
                             cmd.Parameters.AddWithValue("@Type", edge.Type.ToString());
-                            await cmd.ExecuteNonQueryAsync();
+                            await cmd.ExecuteNonQueryAsync().ConfigureAwait(false);
                         }
                     }
                     transaction.Commit();
                 }
+            }
+            catch (Exception ex)
+            {
+                LocalPilotLogger.LogError($"[Nexus] Failed to update graph for {filePath}", ex);
             }
             finally
             {
@@ -306,6 +313,35 @@ namespace LocalPilot.Services
                 LocalPilotLogger.Log("[Nexus] Migration complete. Legacy graph deleted.");
             }
             catch { }
+        }
+
+        private IEnumerable<string> SafeEnumerateFiles(DirectoryInfo dir)
+        {
+            var files = new List<string>();
+            var queue = new Queue<DirectoryInfo>();
+            queue.Enqueue(dir);
+
+            while (queue.Count > 0)
+            {
+                var currentDir = queue.Dequeue();
+                try
+                {
+                    string name = currentDir.Name;
+                    if (name == "bin" || name == "obj" || name == ".git" || name == "node_modules") continue;
+
+                    foreach (var file in currentDir.GetFiles())
+                    {
+                        var ext = file.Extension.ToLowerInvariant();
+                        if (ext == ".cs" || ext == ".ts" || ext == ".tsx")
+                            files.Add(file.FullName);
+                    }
+
+                    foreach (var subDir in currentDir.GetDirectories())
+                        queue.Enqueue(subDir);
+                }
+                catch { }
+            }
+            return files;
         }
 
         public void Dispose() { _cts.Cancel(); _watcher?.Dispose(); }

@@ -4,7 +4,7 @@ LocalPilot is a privacy-first, agent-driven AI pair programmer for Visual Studio
 
 ## 🏗️ System Architecture
 
-LocalPilot follows an **Agentic OODA Loop** (Observe, Orient, Decide, Act) architecture, tightly integrated with the Visual Studio SDK and Roslyn.
+LocalPilot follows an **Agentic OODA Loop** (Observe, Orient, Decide, Act) architecture, powered by a high-performance SQLite storage engine.
 
 ```mermaid
 graph TD
@@ -14,15 +14,16 @@ graph TD
     AM --> PC[ProjectContextService]
     AM --> RS[RoslynSemanticProvider]
     
-    PC -- Incremental RAG --> AM
+    PC -- SQLite RAG --> SS[StorageService]
+    AM -- Persistence --> SS
+    NEXUS[NexusService] -- Dependency Graph --> SS
+    
     RS -- Symbols/Refactoring --> AM
     TR -- File/Shell Access --> AM
     OS -- LLM Inference --> AM
     
     SFIX[SmartFixService] -- Error Detection --> AM
     PERF[PerformanceOptimizer] -- Bottleneck Analysis --> AM
-    
-    NEXUS[NexusService] -- Full-Stack Bridge --> AM
 ```
 
 ---
@@ -31,15 +32,16 @@ graph TD
 
 | Service | Responsibility | Key Features |
 | :--- | :--- | :--- |
-| **AgentOrchestrator** | The "Brain". Manages the autonomous loop. | **Performance Shield**, **Context Budgeting**, Nexus summarization, OODA Orientation. |
-| **GlobalPriorityGuard** | Resource Coordinator. | **Yield-on-Action**, 30s Smart Cooldown, immediate background task abortion. |
-| **OllamaService** | LLM Interface. Communicates with local Ollama. | **Keep-Alive Tuning** (5m/10m VRAM), Native Tool Calling, Embedding support. |
-| **ProjectContextService**| RAG Layer. Indexes solution for semantic search. | **Throttled Parallel Indexing**, Incremental Watcher, 256KB File Cap. |
-| **NexusService** | Full-Stack Bridge. Maps dependencies. | **Incremental Graph Updates**, Parallel Initial Scan, C# to TS/TSX Bridge. |
-| **RoslynSemanticProvider**| Semantic Intelligence. Uses MSBuild/Roslyn. | Neighborhood Context, Project-wide Rename, Semantic Diagnostics. |
-| **ToolRegistry** | Capability Layer. Safe interfaces for the agent. | File I/O, Grep, Terminal, Unit Testing, Symbol Renaming. |
-| **SmartFixService** | Self-Heal Watchdog. Monitors build errors. | Real-time "Fix with AI" proposals for compilation errors. |
-| **PerformanceOptimizer** | Proactive Optimization. Analyzes bottlenecks. | Detects O(n²) loops, blocking async, redundant allocations. |
+| **StorageService** | **The Persistence Engine**. | **SQLite WAL Mode**, FTS5 Search, Busy-Timeout (5s), Self-Healing Initialization. |
+| **AgentOrchestrator** | The "Brain". Manages the autonomous loop. | **Performance Shield**, Context Budgeting (2k limit), OODA Orientation. |
+| **GlobalPriorityGuard** | Resource Coordinator. | **Yield-on-Action**, 30s Smart Cooldown, CancellationToken-based abortion. |
+| **OllamaService** | LLM Interface. | **60s Request Timeout**, Circuit Breaker, Native Tool Calling, Text-Only Fallback. |
+| **ProjectContextService**| RAG Layer. Semantic code search. | **Differential SQLite Sync**, Roslyn Chunking, **2MB File Cap**. |
+| **NexusService** | Full-Stack Bridge. Maps dependencies. | **Persistent Graph Storage**, Cross-Stack Trace (C# to TS/TSX). |
+| **RoslynSemanticProvider**| Semantic Intelligence. | Neighborhood Context, Project-wide Rename, Semantic Diagnostics. |
+| **ToolRegistry** | Capability Layer. | File I/O (Safe Overwrite), Grep, Terminal, Unit Testing. |
+| **SmartFixService** | Self-Heal Watchdog. | Real-time "Fix with AI" proposals for compilation errors. |
+| **PerformanceOptimizer** | Proactive Optimization. | Detects O(n²) loops, blocking async, redundant allocations. |
 
 ---
 
@@ -48,7 +50,7 @@ graph TD
 The agent has access to several native tools via the `ToolRegistry`:
 
 *   **FileSystem**: `read_file`, `write_file`, `list_directory`, `delete_file`.
-*   **Search**: `grep_search` (High-perf parallel scan), `SearchContextAsync` (Vector RAG).
+*   **Search**: `grep_search` (High-perf parallel scan), `SearchContextAsync` (Hybrid BM25 + Vector Search).
 *   **Editing**: `replace_text` (Precise block replacement with CRLF/LF normalization).
 *   **Development**: `run_terminal` (cmd.exe commands), `run_tests` (auto-detects toolchain).
 *   **Nexus**: `trace_dependency` (Cross-stack path tracing), `analyze_impact` (Full-stack change impact analysis).
@@ -61,11 +63,11 @@ The agent has access to several native tools via the `ToolRegistry`:
 The UI is built using **WPF** and adheres to the "Ghost UI" design mandate: minimalist, responsive, and natively theme-aware.
 
 *   **ChatControl**: The primary container. Manages streaming narrative and activity logs.
-*   **Full UI Virtualization**: The entire message container and activity log utilize `VirtualizingStackPanel` with recycling. This enables **O(1) responsiveness** regardless of conversation length.
-*   **Batched Token Pipeline**: Fragments are buffered in a background thread and flushed to the UI at **30 FPS** via a `DispatcherTimer`, eliminating thread-marshal overhead.
-*   **Incremental Markdown**: A structural additive parser (O(1) per frame) replaces the legacy clear-and-rebuild pattern, ensuring smooth text flow during streaming.
+*   **Full UI Virtualization**: The entire message container and activity log utilize `VirtualizingStackPanel` with recycling.
+*   **Batched Token Pipeline**: Fragments are buffered and flushed at **30 FPS** via a `DispatcherTimer`.
+*   **Incremental Markdown**: A structural additive parser (O(1) per frame) ensures smooth text flow during streaming.
 *   **AgentTurnLayout**: Separates the **Narrative** (LLM text) from the **Activity** (Tool execution timeline).
-*   **Human-in-the-Loop (HIL)**: A security layer requiring user approval for "risky" tools.
+*   **Human-in-the-Loop (HIL)**: A security layer requiring user approval for "risky" tools (e.g., file overwrite).
 *   **Staged Review**: Custom diff view for multi-file changes before final acceptance.
 
 ---
@@ -73,20 +75,20 @@ The UI is built using **WPF** and adheres to the "Ghost UI" design mandate: mini
 ## ⚡ Performance & Resource Management
 
 1.  **VRAM Management**: Models are automatically unloaded from VRAM after 5-10 minutes of inactivity using `keep_alive` tuning.
-2.  **I/O Efficiency**: **Incremental Syncing** via `FileSystemWatcher` ensures that only changed files are re-indexed for Nexus and RAG.
-3.  **Parallelization**: Solution-wide scans utilize all available CPU cores via throttled `Parallel.ForEach` to avoid system lag.
-4.  **UI Lifecycle Management**: Background tasks (like performance scans) use **CancellationTokenSource** tied to panel visibility, preventing resource leaks.
-5.  **Graphics Optimization**: Brushes are **frozen** and **cached** on first creation; animations are offloaded to the hardware compositor via explicit `RenderTransform` definitions.
-6.  **Layout Debouncing**: Scroll operations are throttled to **~25 FPS** to prevent layout thrashing during rapid agentic turns.
-7.  **Inference Limits**: User-configurable **NumCtx** (Context Window) and **NumPredict** (Max Tokens) allow for hardware-specific VRAM/RAM optimization.
-8.  **Quantization Recommendation**: Optimized for **q4_K_M** or **q5_K_M** GGUF models on local laptop hardware.
-9.  **Priority Guard**: All background services (RAG, Nexus) yield CPU/GPU resources immediately when an agent turn starts and for 30s after completion.
+2.  **Persistent Caching**: Embeddings and FTS5 indices are stored in SQLite, eliminating re-indexing stutters.
+3.  **Busy-Timeout Protection**: SQLite utilizes a **5000ms busy timeout** to prevent deadlocks during high-concurrency renames.
+4.  **Priority Guard**: All background services yield CPU/GPU resources immediately when an agent turn starts.
+5.  **I/O Throttling**: RAG indexing is limited to **2 concurrent files** to preserve disk bandwidth.
+6.  **Context Budgeting**: Tool outputs are capped at **2,000 characters** to preserve LLM reasoning quality.
+7.  **Solution Visibility**: Project Map generation is capped at **1,000 files** to ensure O(1) snapshot time.
+8.  **Layout Debouncing**: Scroll operations are throttled to **~25 FPS** to prevent layout thrashing.
+9.  **Self-Healing**: The storage engine automatically resets if the database becomes corrupted.
 
 ---
 
 ## 📂 Project Metadata (Internal)
 
-*   **Directory**: `.localpilot/` (solution root)
-*   **Nexus Graph**: `nexus.json` (Cross-language dependency map)
-*   **Vector Index**: `index.json` (Semantic embeddings)
+*   **App Data Directory**: `%AppData%\LocalPilot\`
+*   **Persistent Database**: `localpilot_v2.db` (All files, vectors, and graph nodes)
 *   **Rules**: `LOCALPILOT.md` (Project-specific instructions)
+*   **Logs**: `%AppData%\LocalPilot\logs\`

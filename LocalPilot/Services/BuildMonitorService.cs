@@ -59,36 +59,45 @@ namespace LocalPilot.Services
                 if (dte == null) return;
 
                 var items = dte.ToolWindows.ErrorList.ErrorItems;
-                if (items == null || items.Count == 0) return;
+                if (items == null) return;
 
                 ErrorItem firstError = null;
-                for (int i = 1; i <= items.Count; i++)
+                // 🚀 EXPERT: Use try-catch inside loop and safe indexing as the list can change during iteration
+                try
                 {
-                    var item = items.Item(i);
-                    // Filter for actual errors (not warnings/info)
-                    if (item.ErrorLevel == vsBuildErrorLevel.vsBuildErrorLevelHigh)
+                    int count = items.Count;
+                    for (int i = 1; i <= count; i++)
                     {
-                        firstError = item;
-                        break;
+                        var item = items.Item(i);
+                        if (item == null) continue;
+
+                        if (item.ErrorLevel == vsBuildErrorLevel.vsBuildErrorLevelHigh)
+                        {
+                            firstError = item;
+                            break;
+                        }
                     }
                 }
+                catch { /* Error list changed during scan, skip this turn */ }
 
                 if (firstError != null)
                 {
                     LocalPilotLogger.Log($"[BuildMonitor] Build failed: {firstError.Description} in {firstError.FileName}", LogCategory.General);
                     
-                    // Show the tool window
                     await VS.Windows.ShowToolWindowAsync(new Guid(LocalPilotChatWindow.WindowGuidString));
                     
-                    // Access the window content via DTE for maximum compatibility
-                    var win = dte.Windows.Item("{D7A8B1C2-E3F4-4D5E-B6C7-D8E9F0A1B2C3}");
-                    if (win != null && win.Object is LocalPilotChatWindow lpWindow)
+                    try
                     {
-                        if (lpWindow.Content is LocalPilotChatControl chatControl)
+                        var win = dte.Windows.Item(LocalPilotChatWindow.WindowGuidString);
+                        if (win != null && win.Object is LocalPilotChatWindow lpWindow)
                         {
-                            chatControl.NotifyBuildError(firstError.Description, firstError.FileName, firstError.Line, 0);
+                            if (lpWindow.Content is LocalPilotChatControl chatControl)
+                            {
+                                chatControl.NotifyBuildError(firstError.Description, firstError.FileName, firstError.Line, 0);
+                            }
                         }
                     }
+                    catch { /* Window might not be fully initialized yet */ }
                 }
             }
             catch (Exception ex)

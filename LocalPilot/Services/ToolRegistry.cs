@@ -359,10 +359,10 @@ namespace LocalPilot.Services
                     var outputTask = process.StandardOutput.ReadToEndAsync();
                     var errorTask = process.StandardError.ReadToEndAsync();
 
-                    // 60-second timeout to prevent hung processes from blocking the agent
+                    // 300-second timeout to prevent hung processes from blocking the agent
                     using (var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
                     {
-                        timeoutCts.CancelAfter(TimeSpan.FromSeconds(60));
+                        timeoutCts.CancelAfter(TimeSpan.FromSeconds(300));
                         var completedTask = await Task.WhenAny(
                             Task.WhenAll(outputTask, errorTask),
                             Task.Delay(Timeout.Infinite, timeoutCts.Token)
@@ -372,7 +372,7 @@ namespace LocalPilot.Services
                     if (!process.HasExited)
                     {
                         try { process.Kill(); } catch { }
-                        return new ToolResponse { IsError = true, Output = $"Command timed out after 60 seconds and was killed." };
+                        return new ToolResponse { IsError = true, Output = $"Command timed out after 300 seconds and was killed." };
                     }
 
                     string output = await outputTask;
@@ -750,13 +750,13 @@ namespace LocalPilot.Services
                     string output = await proc.StandardOutput.ReadToEndAsync();
                     string error = await proc.StandardError.ReadToEndAsync();
                     
-                    var waitTask = Task.Run(() => proc.WaitForExit(60000)); // 60s timeout
+                    var waitTask = Task.Run(() => proc.WaitForExit(300000)); // 300s timeout
                     await waitTask;
 
                     if (!proc.HasExited)
                     {
                         proc.Kill();
-                        return new ToolResponse { IsError = true, Output = $"{cmd} timed out after 60 seconds." };
+                        return new ToolResponse { IsError = true, Output = $"{cmd} timed out after 300 seconds." };
                     }
 
                     if (proc.ExitCode != 0)

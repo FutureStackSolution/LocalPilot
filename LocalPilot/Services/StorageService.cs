@@ -31,81 +31,98 @@ namespace LocalPilot.Services
             }
         }
 
+        private readonly object _initLock = new object();
+        private bool _isInitialized = false;
+
         private StorageService()
         {
             string appData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LocalPilot");
             if (!Directory.Exists(appData)) Directory.CreateDirectory(appData);
             _dbPath = Path.Combine(appData, "localpilot_v2.db");
             
-            LocalPilotLogger.Log($"[Storage] Initializing persistent engine at: {_dbPath}", LogCategory.Storage);
-            InitializeDatabase();
+            LocalPilotLogger.Log($"[Storage] Initializing persistent engine instance at: {_dbPath}", LogCategory.Storage);
+            // 🚀 EXPERT: We no longer initialize in the constructor to avoid UI blocking.
+            // Initialization happens lazily on the first request.
         }
 
         private void InitializeDatabase()
         {
-            int retryCount = 0;
-            const int MaxRetries = 1;
-
-            while (retryCount <= MaxRetries)
+            lock (_initLock)
             {
-                try
+                if (_isInitialized && _connection != null && _connection.State == System.Data.ConnectionState.Open) return;
+
+                int retryCount = 0;
+                const int MaxRetries = 1;
+
+                while (retryCount <= MaxRetries)
                 {
-                    if (_connection == null)
+                    try
                     {
-                        _connection = new SqliteConnection($"Data Source={_dbPath}");
-                        _connection.Open();
-                    }
+                        if (_connection == null)
+                        {
+                            _connection = new SqliteConnection($"Data Source={_dbPath}");
+                        }
 
-                    // 1. Core Performance Tuning
-                    using (var cmd = _connection.CreateCommand())
-                    {
-                        cmd.CommandText = @"
-                            PRAGMA journal_mode=WAL; 
-                            PRAGMA synchronous=NORMAL; 
-                            PRAGMA mmap_size=268435456; 
-                            PRAGMA cache_size=-20000;
-                            PRAGMA page_size=4096;";
-                        cmd.ExecuteNonQuery();
-                    }
+                        if (_connection.State != System.Data.ConnectionState.Open)
+                        {
+                            _connection.Open();
+                        }
 
-                    // 2. Schema Version Check
-                    int version = 0;
-                    using (var cmd = _connection.CreateCommand())
-                    {
-                        cmd.CommandText = "PRAGMA user_version;";
-                        version = Convert.ToInt32(cmd.ExecuteScalar());
-                    }
+                        // 1. Core Performance Tuning
+                        using (var cmd = _connection.CreateCommand())
+                        {
+                            cmd.CommandText = @"
+                                PRAGMA journal_mode=WAL; 
+                                PRAGMA synchronous=NORMAL; 
+                                PRAGMA busy_timeout=5000;
+                                PRAGMA foreign_keys=ON;
+                                PRAGMA mmap_size=268435456; 
+                                PRAGMA cache_size=-20000;
+                                PRAGMA page_size=4096;";
+                            cmd.ExecuteNonQuery();
+                        }
 
-                    if (version < CurrentSchemaVersion)
-                    {
-                        LocalPilotLogger.Log($"[Storage] Database schema outdated (v{version} -> v{CurrentSchemaVersion}). Applying migrations...", LogCategory.Storage);
-                        ApplyMigrations(version);
-                    }
+                        // 2. Schema Version Check
+                        int version = 0;
+                        using (var cmd = _connection.CreateCommand())
+                        {
+                            cmd.CommandText = "PRAGMA user_version;";
+                            version = Convert.ToInt32(cmd.ExecuteScalar());
+                        }
 
-                    // 3. Final Verification: Ensure critical tables exist
-                    using (var cmd = _connection.CreateCommand())
-                    {
-                        cmd.CommandText = "CREATE TABLE IF NOT EXISTS Files (Path TEXT PRIMARY KEY, Hash TEXT, Content TEXT, LastIndexed DATETIME, Metadata TEXT);";
-                        cmd.ExecuteNonQuery();
-                    }
+                        if (version < CurrentSchemaVersion)
+                        {
+                            LocalPilotLogger.Log($"[Storage] Database schema outdated (v{version} -> v{CurrentSchemaVersion}). Applying migrations...", LogCategory.Storage);
+                            ApplyMigrations(version);
+                        }
 
-                    return; // Success!
-                }
-                catch (Exception ex)
-                {
-                    LocalPilotLogger.LogError($"[Storage] Database initialization attempt {retryCount + 1} failed", ex);
-                    
-                    if (retryCount < MaxRetries)
-                    {
-                        // 🚀 SELF-HEALING: If DB is corrupted or migrations fail, wipe and restart.
-                        // Since this is a cache, data loss is better than a broken system.
-                        ResetDatabase();
-                        retryCount++;
+                        // 3. Final Verification: Ensure critical tables exist
+                        using (var cmd = _connection.CreateCommand())
+                        {
+                            cmd.CommandText = "CREATE TABLE IF NOT EXISTS Files (Path TEXT PRIMARY KEY, Hash TEXT, Content TEXT, LastIndexed DATETIME, Metadata TEXT);";
+                            cmd.ExecuteNonQuery();
+                        }
+
+                        _isInitialized = true;
+                        return; // Success!
                     }
-                    else
+                    catch (Exception ex)
                     {
-                        LocalPilotLogger.Log("[Storage] CRITICAL: Self-healing failed. LocalPilot will proceed in memory-only mode where possible.", LogCategory.Storage, LogSeverity.Error);
-                        break;
+                        LocalPilotLogger.LogError($"[Storage] Database initialization attempt {retryCount + 1} failed", ex);
+                        
+                        try { _connection?.Close(); _connection?.Dispose(); _connection = null; } catch { }
+
+                        if (retryCount < MaxRetries)
+                        {
+                            ResetDatabase();
+                            retryCount++;
+                        }
+                        else
+                        {
+                            LocalPilotLogger.Log("[Storage] CRITICAL: Self-healing failed. LocalPilot will proceed in memory-only mode where possible.", LogCategory.Storage, LogSeverity.Error);
+                            _isInitialized = true; // Mark as 'attempted' to prevent infinite retry loops
+                            break;
+                        }
                     }
                 }
             }
@@ -120,7 +137,11 @@ namespace LocalPilot.Services
 
                 if (File.Exists(_dbPath))
                 {
-                    File.Delete(_dbPath);
+                    try { File.Delete(_dbPath); }
+                    catch (IOException ioEx) 
+                    { 
+                        LocalPilotLogger.Log($"[Storage] Could not delete database file (locked by another process). Proceeding with current file: {ioEx.Message}", LogCategory.Storage, LogSeverity.Warning); 
+                    }
                     LocalPilotLogger.Log("[Storage] Corrupt database file deleted to allow clean re-initialization.", LogCategory.Storage, LogSeverity.Warning);
                 }
             }
@@ -190,7 +211,20 @@ namespace LocalPilot.Services
             }
         }
 
-        public SqliteConnection GetConnection() => _connection;
+        public SqliteConnection GetConnection()
+        {
+            if (!_isInitialized || _connection == null || _connection.State != System.Data.ConnectionState.Open)
+            {
+                InitializeDatabase();
+            }
+
+            if (_connection == null)
+            {
+                throw new InvalidOperationException("LocalPilot Storage Engine failed to initialize. Please check the logs.");
+            }
+
+            return _connection;
+        }
         public System.Threading.SemaphoreSlim GetLock() => _dbLock;
 
         public async Task<float[]> GetCachedEmbeddingAsync(string key)
@@ -198,7 +232,7 @@ namespace LocalPilot.Services
             await _dbLock.WaitAsync();
             try
             {
-                using (var cmd = _connection.CreateCommand())
+                using (var cmd = GetConnection().CreateCommand())
                 {
                     cmd.CommandText = "SELECT Vector FROM EmbeddingCache WHERE Key = @Key";
                     cmd.Parameters.AddWithValue("@Key", key);
@@ -230,7 +264,7 @@ namespace LocalPilot.Services
                 byte[] blob = new byte[vector.Length * 4];
                 Buffer.BlockCopy(vector, 0, blob, 0, blob.Length);
 
-                using (var cmd = _connection.CreateCommand())
+                using (var cmd = GetConnection().CreateCommand())
                 {
                     cmd.CommandText = "INSERT OR REPLACE INTO EmbeddingCache (Key, Vector) VALUES (@Key, @Vector)";
                     cmd.Parameters.AddWithValue("@Key", key);
@@ -247,7 +281,7 @@ namespace LocalPilot.Services
             await _dbLock.WaitAsync();
             try
             {
-                using (var cmd = _connection.CreateCommand())
+                using (var cmd = GetConnection().CreateCommand())
                 {
                     cmd.CommandText = sql;
                     AddParameters(cmd, parameters);

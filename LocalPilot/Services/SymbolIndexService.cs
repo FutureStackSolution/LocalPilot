@@ -93,7 +93,7 @@ namespace LocalPilot.Services
             // 🛡️ CIRCUIT BREAKER: Tiered Execution with Diagnostic Aggregation
             using (var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(ct))
             {
-                timeoutSource.CancelAfter(60000); // 60s timeout for deep semantic analysis
+                timeoutSource.CancelAfter(300000); // 300s timeout for deep semantic analysis
                 
                 foreach (var provider in GetOrderedProviders(filePath))
                 {
@@ -107,7 +107,7 @@ namespace LocalPilot.Services
                     }
                     catch (OperationCanceledException) 
                     { 
-                        reports.Add($"{tierName}: Timed out (>60000ms)");
+                        reports.Add($"{tierName}: Timed out (>300000ms)");
                         break; 
                     }
                     catch (Exception ex) 

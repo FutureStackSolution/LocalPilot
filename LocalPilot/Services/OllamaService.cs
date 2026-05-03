@@ -168,7 +168,7 @@ namespace LocalPilot.Services
 
                 using (var requestCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
                 {
-                    requestCts.CancelAfter(TimeSpan.FromSeconds(60)); // Longer timeout for batch
+                    requestCts.CancelAfter(TimeSpan.FromSeconds(300)); // 5-minute timeout for batch
                     var response = await _backgroundHttpClient.PostAsync($"{_baseUrl}/api/embed", content, requestCts.Token).ConfigureAwait(false);
 
                     if (response.IsSuccessStatusCode)
@@ -290,6 +290,7 @@ namespace LocalPilot.Services
 
             HttpResponseMessage response = null;
             string errorMessage = null;
+            bool isCancelled = false;
             try
             {
                 response = await _httpClient.PostAsync($"{_baseUrl}/api/generate", content, ct);
@@ -297,13 +298,15 @@ namespace LocalPilot.Services
             }
             catch (OperationCanceledException)
             {
-                yield break;
+                isCancelled = true;
             }
             catch (Exception ex)
             {
                 errorMessage = $"\n[LocalPilot Error] Could not reach Ollama: {ex.Message}";
                 HandleFailure();
             }
+
+            if (isCancelled) yield break;
 
             if (errorMessage != null)
             {
@@ -350,14 +353,6 @@ namespace LocalPilot.Services
         // ── Chat completion WITH NATIVE TOOL CALLING ──────────────────────────
         /// <summary>
         /// Streams chat responses and returns structured tool calls from Ollama's native API.
-        /// This is the core method that eliminates text-based JSON parsing of tool calls.
-        /// 
-        /// When tools are provided, Ollama's API will return either:
-        ///   1. A normal text response (streamed token by token)
-        ///   2. A tool_calls array in the response (structured, not embedded in text)
-        /// 
-        /// The caller receives ChatStreamResult objects that clearly distinguish between
-        /// text tokens and tool call requests.
         /// </summary>
         public async IAsyncEnumerable<ChatStreamResult> StreamChatWithToolsAsync(
             string model,
@@ -371,201 +366,162 @@ namespace LocalPilot.Services
                 yield return ChatStreamResult.Text("\n⚠️ **LocalPilot Error:** Ollama is currently unreachable. The circuit breaker is tripped due to multiple connection failures.\n\nPlease ensure Ollama is running and accessible at " + _baseUrl);
                 yield break;
             }
+
             // ── GUARD: Detect embedding-only models early ─────────────────────────
-            // Models like nomic-embed-text, bge-*, e5-* do NOT support /api/chat.
-            // Ollama returns HTTP 400 for these. Surface a clear error instead.
             if (!string.IsNullOrEmpty(model) &&
                 (model.IndexOf("embed", StringComparison.OrdinalIgnoreCase) >= 0 ||
                  model.IndexOf("nomic", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                 model.IndexOf("bge-",  StringComparison.OrdinalIgnoreCase) >= 0 ||
-                 model.IndexOf("e5-",   StringComparison.OrdinalIgnoreCase) >= 0))
+                 model.IndexOf("bge-", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                 model.IndexOf("e5-", StringComparison.OrdinalIgnoreCase) >= 0))
             {
-                LocalPilotLogger.LogError($"[Ollama] Misconfiguration: '{model}' is an embedding model and cannot be used for chat. Go to LocalPilot Settings and set a chat-capable model (e.g. llama3).", null, LogCategory.Ollama);
-                yield return ChatStreamResult.Text($"\n⚠️ **LocalPilot Configuration Error:** The selected Chat Model (`{model}`) is an embedding-only model and does not support chat or tool calls.\n\nPlease open **Tools → Options → LocalPilot** and change the **Chat Model** to a chat-capable model (e.g. `llama3` or `gemma2`).");
+                LocalPilotLogger.LogError($"[Ollama] Misconfiguration: '{model}' is an embedding model.", null, LogCategory.Ollama);
+                yield return ChatStreamResult.Text($"\n⚠️ **LocalPilot Configuration Error:** The selected Chat Model (`{model}`) is an embedding-only model.");
                 yield break;
             }
 
-            // Build payload — include tools if provided
-            object payload;
-            if (tools != null && tools.Count > 0)
+            // 🚀 DYNAMIC TIMEOUT ENGINE: Set a total timeout for chat requests based on task complexity
+            using (var requestCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
             {
-                payload = new
+                requestCts.CancelAfter(TimeSpan.FromSeconds(options?.RequestTimeoutSeconds ?? 60));
+
+                // Build payload
+                var payload = new
                 {
                     model,
                     messages,
                     tools,
                     stream = true,
-                    options = options ?? new OllamaOptions()
-                };
-            }
-            else
-            {
-                payload = new
-                {
-                    model,
-                    messages,
-                    stream = true,
                     options = options ?? new OllamaOptions(),
                     keep_alive = "5m"
                 };
-            }
 
-            string jsonPayload = JsonConvert.SerializeObject(payload, new JsonSerializerSettings 
-            { 
-                NullValueHandling = NullValueHandling.Ignore 
-            });
-            
-            LocalPilotLogger.Log($"POST /api/chat payload:\n{jsonPayload}", LogCategory.Ollama);
-
-            HttpResponseMessage response = null;
-            string errorDetails = null;
-            bool toolSupportFailed = false;
-
-            try
-            {
-                var request = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/api/chat");
-                request.Content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
-
-                response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+                string jsonPayload = JsonConvert.SerializeObject(payload, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore });
                 
-                if (response.StatusCode == System.Net.HttpStatusCode.BadRequest)
+                HttpResponseMessage response = null;
+                string errorDetails = null;
+                bool toolSupportFailed = false;
+                bool isCancelled = false;
+
+                try
                 {
-                    var errorBody = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                    var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
+                    response = await _httpClient.PostAsync($"{_baseUrl}/api/chat", content, requestCts.Token).ConfigureAwait(false);
                     
-                    // 🚀 AGGRESSIVE FALLBACK: If tools were provided and we got a 400, it's almost certainly
-                    // a tool-related protocol error (e.g. Ollama < 0.3.0 or incompatible model).
-                    if (tools != null && tools.Count > 0)
+                    if (response.StatusCode == System.Net.HttpStatusCode.BadRequest)
                     {
-                        toolSupportFailed = true;
-                        LocalPilotLogger.Log($"[Ollama] Model '{model}' or Ollama version does not support native tool calling (400 Bad Request). Falling back to text-only mode.", LogCategory.Ollama, LogSeverity.Warning);
+                        if (tools != null && tools.Count > 0)
+                        {
+                            toolSupportFailed = true;
+                            LocalPilotLogger.Log($"[Ollama] Model '{model}' does not support native tool calling. Falling back.", LogCategory.Ollama, LogSeverity.Warning);
+                        }
                     }
                     else
                     {
-                        errorDetails = $"Bad Request (400): {errorBody}";
+                        response.EnsureSuccessStatusCode();
                     }
                 }
-                else
-                {
-                    response.EnsureSuccessStatusCode();
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                yield break;
-            }
-            catch (Exception ex)
-            {
-                errorDetails = ex.Message;
-                LocalPilotLogger.LogError("[Ollama] Core Network Error", ex, LogCategory.Ollama);
-                HandleFailure();
-            }
-
-            // 🚀 FALLBACK: If tools caused a 400, retry without tools
-            if (toolSupportFailed)
-            {
-                // Warn the user that tool calling might be degraded
-                yield return ChatStreamResult.Text("\n> [!NOTE]\n> The selected model (`" + model + "`) does not support native tool calling. LocalPilot is falling back to text-based tool parsing, which may be less reliable.\n\n");
-
-                var fallbackPayload = new
-                {
-                    model,
-                    messages,
-                    stream = true,
-                    options = options ?? new OllamaOptions(),
-                    keep_alive = "5m"
-                };
-                string fallbackJson = JsonConvert.SerializeObject(fallbackPayload, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore });
-                
-                try
-                {
-                    var request = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/api/chat");
-                    request.Content = new StringContent(fallbackJson, Encoding.UTF8, "application/json");
-                    response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
-                    response.EnsureSuccessStatusCode();
-                    errorDetails = null; // Clear any previous error
-                }
+                catch (OperationCanceledException) { isCancelled = true; }
                 catch (Exception ex)
                 {
-                    errorDetails = $"Fallback failed: {ex.Message}";
+                    errorDetails = ex.Message;
+                    HandleFailure();
                 }
-            }
 
-            if (errorDetails != null)
-            {
-                yield return ChatStreamResult.Text($"\n[LocalPilot Error] Could not reach Ollama: {errorDetails}");
-                yield break;
-            }
+                if (isCancelled)
+                {
+                    int timeout = options?.RequestTimeoutSeconds ?? 60;
+                    yield return ChatStreamResult.Text($"\n⚠️ **LocalPilot Error:** The request to Ollama timed out after {timeout} seconds. Your hardware might be under heavy load or the context is too large. Try reducing the amount of context (e.g. closing unnecessary files) or selecting a smaller model.");
+                    yield break;
+                }
 
-            var fullResponse = new StringBuilder();
-            using (response)
-            {
-                using (var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false))
+                if (errorDetails != null)
+                {
+                    yield return ChatStreamResult.Text($"\n⚠️ **LocalPilot Error:** {errorDetails}\n\nPlease check if Ollama is running correctly.");
+                    yield break;
+                }
+
+                // 🚀 FALLBACK: If tools caused a 400, retry without tools
+                if (toolSupportFailed)
+                {
+                    yield return ChatStreamResult.Text("\n> [!NOTE]\n> The selected model does not support native tool calling. Falling back to text parsing.\n\n");
+                    var fallbackPayload = new { model, messages, stream = true, options = options ?? new OllamaOptions(), keep_alive = "5m" };
+                    var fallbackContent = new StringContent(JsonConvert.SerializeObject(fallbackPayload), Encoding.UTF8, "application/json");
+                    response = await _httpClient.PostAsync($"{_baseUrl}/api/chat", fallbackContent, requestCts.Token).ConfigureAwait(false);
+                    response.EnsureSuccessStatusCode();
+                }
+
+                using (var stream = await response.Content.ReadAsStreamAsync())
                 using (var reader = new StreamReader(stream))
                 using (var jsonReader = new JsonTextReader(reader) { SupportMultipleContent = true })
                 {
-                    while (await jsonReader.ReadAsync(ct).ConfigureAwait(false))
+                    bool isDone = false;
+                    while (!isDone)
                     {
-                        if (jsonReader.TokenType != JsonToken.StartObject) continue;
-                        var obj = await JObject.LoadAsync(jsonReader, ct).ConfigureAwait(false);
-                        
-                        // Check for text content
-                        var token = obj["message"]?["content"]?.ToString() ?? string.Empty;
-                        if (!string.IsNullOrEmpty(token))
-                        {
-                            fullResponse.Append(token);
-                            yield return ChatStreamResult.Text(token);
-                        }
+                        JObject obj = null;
+                        string streamError = null;
 
-                        // ═══════════════════════════════════════════════════════
-                        // NATIVE TOOL CALLING: Check for tool_calls in the response
-                        // Ollama returns these as structured JSON, NOT embedded in text.
-                        // This is the key architectural improvement over parsing ```json blocks.
-                        // ═══════════════════════════════════════════════════════
-                        var toolCalls = obj["message"]?["tool_calls"] as JArray;
-                        if (toolCalls != null && toolCalls.Count > 0)
+                        try
                         {
-                            LocalPilotLogger.Log($"[Ollama] Received {toolCalls.Count} native tool call(s)");
-                            foreach (var tc in toolCalls)
+                            if (await jsonReader.ReadAsync(requestCts.Token))
                             {
-                                var funcObj = tc["function"];
-                                if (funcObj == null) continue;
-
-                                string toolName = funcObj["name"]?.ToString();
-                                var argsObj = funcObj["arguments"];
-                                
-                                Dictionary<string, object> args = null;
-                                if (argsObj != null)
-                                {
-                                    try
-                                    {
-                                        args = argsObj.ToObject<Dictionary<string, object>>();
-                                    }
-                                    catch
-                                    {
-                                        args = new Dictionary<string, object>();
-                                    }
-                                }
-
-                                if (!string.IsNullOrEmpty(toolName))
-                                {
-                                    LocalPilotLogger.Log($"[Ollama] Tool call: {toolName}({JsonConvert.SerializeObject(args)})");
-                                    yield return ChatStreamResult.ToolCall(toolName, args ?? new Dictionary<string, object>());
-                                }
+                                if (jsonReader.TokenType != JsonToken.StartObject) continue;
+                                obj = await JObject.LoadAsync(jsonReader, requestCts.Token);
+                            }
+                            else
+                            {
+                                isDone = true;
                             }
                         }
-
-                        if (obj["done"]?.Value<bool>() == true)
+                        catch (JsonException ex)
                         {
-                            var totalDuration = obj["total_duration"]?.ToString();
-                            LocalPilotLogger.Log($"[Ollama] Finished streaming from model: {model} (Duration: {totalDuration}ns)", LogCategory.Ollama);
+                            LocalPilotLogger.LogError("[Ollama] Stream JSON parsing failed", ex, LogCategory.Ollama);
+                            streamError = "Failed to parse Ollama response. The connection may have been interrupted.";
+                            isDone = true;
+                        }
+                        catch (Exception ex) when (!(ex is OperationCanceledException))
+                        {
+                            LocalPilotLogger.LogError("[Ollama] Stream reading failed", ex, LogCategory.Ollama);
+                            streamError = ex.Message;
+                            isDone = true;
+                        }
+
+                        if (streamError != null)
+                        {
+                            yield return ChatStreamResult.Text($"\n⚠️ **LocalPilot Error:** {streamError}");
                             break;
+                        }
+
+                        if (obj != null)
+                        {
+                            var message = obj["message"];
+                            if (message != null)
+                            {
+                                var token = message["content"]?.ToString();
+                                if (!string.IsNullOrEmpty(token)) yield return ChatStreamResult.Text(token);
+
+                                var toolCalls = message["tool_calls"] as JArray;
+                                if (toolCalls != null)
+                                {
+                                    foreach (var tc in toolCalls)
+                                    {
+                                        var func = tc["function"];
+                                        if (func == null) continue;
+
+                                        yield return ChatStreamResult.ToolCall(
+                                            func["name"]?.ToString(),
+                                            func["arguments"]?.ToObject<Dictionary<string, object>>() ?? new Dictionary<string, object>()
+                                        );
+                                    }
+                                }
+                            }
+                            if (obj["done"]?.Value<bool>() == true) isDone = true;
                         }
                     }
                 }
             }
         }
 
-        // ── Non-streaming chat (convenience) ───────────────────────────────────
+    // ── Non-streaming chat (convenience) ───────────────────────────────────
         public async Task<string> ChatAsync(
             string model,
             List<ChatMessage> messages,
@@ -716,6 +672,10 @@ namespace LocalPilot.Services
 
         [JsonProperty("keep_alive")]
         public string KeepAlive { get; set; } = "5m";
+
+        /// <summary>Internal: Total time to wait for the request to complete.</summary>
+        [JsonIgnore]
+        public int RequestTimeoutSeconds { get; set; } = 60;
     }
 
     public class ChatMessage
