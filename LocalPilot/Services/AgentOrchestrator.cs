@@ -76,6 +76,14 @@ namespace LocalPilot.Services
             GlobalPriorityGuard.StartAgentTurn();
             try
             {
+                // 🛡️ GPU VRAM WATCHDOG: Check for resource pressure before starting
+                var vram = await _ollama.GetVramStatusAsync(ct);
+                if (!vram.IsHealthy)
+                {
+                    LocalPilotLogger.Log($"[Agent] High GPU VRAM usage detected ({vram.TotalVramUsedMb}MB). Model loading may be slow.", LogCategory.Ollama, LogSeverity.Warning);
+                    OnStatusUpdate?.Invoke(AgentStatus.Thinking, "GPU VRAM pressure detected. Models may load slowly...");
+                }
+
                 string solutionPath = "unknown";
                 try
                 {
