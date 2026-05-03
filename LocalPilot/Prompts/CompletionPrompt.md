@@ -9,6 +9,7 @@ Instructions:
 3. Do NOT include explanations or preamble.
 4. Maintain the exact indentation and coding style of the prefix.
 5. If the code is already complete, return an empty response.
+6. Strictly adhere to {Language} syntax; do NOT suggest syntax from other languages (e.g. no HTML in C#).
 
 <PRE>
 {Prefix}</PRE>

@@ -5,8 +5,10 @@ using Microsoft.VisualStudio.Text.Editor;
 using Microsoft.VisualStudio.Utilities;
 using System;
 using System.ComponentModel.Composition;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.VisualStudio.Language.Intellisense;
 
 namespace LocalPilot.Completion
 {
@@ -21,10 +23,13 @@ namespace LocalPilot.Completion
     internal sealed class InlineCompletionController : IWpfTextViewCreationListener
     {
         [Import] internal ITextDocumentFactoryService TextDocumentFactory { get; set; }
+        [Import] internal ICompletionBroker CompletionBroker { get; set; }
+
+        // Shared OllamaService instance across all editor tabs to unify circuit breaker state
+        private static readonly OllamaService _sharedOllama = new OllamaService(LocalPilotSettings.Instance.OllamaBaseUrl);
 
         private IWpfTextView _view;
         private ITextDocument _document;
-        private OllamaService _ollama;
         private CompletionPromptBuilder _promptBuilder;
         private GhostTextAdornment _ghostAdornment;
         private CancellationTokenSource _cts;
@@ -36,7 +41,6 @@ namespace LocalPilot.Completion
             if (!LocalPilotSettings.Instance.EnableInlineCompletion) return;
 
             _view = textView;
-            _ollama = new OllamaService(LocalPilotSettings.Instance.OllamaBaseUrl);
             _promptBuilder = new CompletionPromptBuilder(LocalPilotSettings.Instance);
             _ghostAdornment = new GhostTextAdornment(textView);
 
@@ -49,10 +53,11 @@ namespace LocalPilot.Completion
 
         private void OnTextBufferChanged(object sender, TextContentChangedEventArgs e)
         {
+            if (!LocalPilotSettings.Instance.EnableInlineCompletion) return;
+
             // Dismiss existing ghost text on any edit
             _ghostAdornment?.HideGhost();
 
-            // 🚀 AUTONOMOUS DEBOUNCE: Derived from Intelligence Mode
             var mode = LocalPilotSettings.Instance.Mode;
             var delay = mode switch
             {
@@ -65,13 +70,26 @@ namespace LocalPilot.Completion
             {
                 _debounceTimer?.Dispose();
                 _debounceTimer = new Timer(
-                    _ => _ = TriggerCompletionAsync(),
+                    _ => { var t = TriggerCompletionSafeAsync(); },
                     null, delay, Timeout.Infinite);
             }
         }
 
+        /// <summary>
+        /// Safely wraps the async completion call from timer callbacks
+        /// to prevent unhandled exceptions from crashing the process.
+        /// </summary>
+        private async Task TriggerCompletionSafeAsync()
+        {
+            try { await TriggerCompletionAsync().ConfigureAwait(false); }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[LocalPilot] Timer callback error: {ex.Message}"); }
+        }
+
         private void OnCaretPositionChanged(object sender, CaretPositionChangedEventArgs e)
         {
+            if (!LocalPilotSettings.Instance.EnableInlineCompletion) return;
+
             // Cancel any pending completion when user moves caret
             _cts?.Cancel();
             _ghostAdornment?.HideGhost();
@@ -79,9 +97,13 @@ namespace LocalPilot.Completion
 
         private async Task TriggerCompletionAsync()
         {
-            _cts?.Cancel();
-            _cts = new CancellationTokenSource();
-            var token = _cts.Token;
+            CancellationToken token;
+            lock (_lock)
+            {
+                _cts?.Cancel();
+                _cts = new CancellationTokenSource();
+                token = _cts.Token;
+            }
 
             try
             {
@@ -89,7 +111,13 @@ namespace LocalPilot.Completion
                 await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory
                       .SwitchToMainThreadAsync(token);
 
-                // 🚀 DEBUG GUARD: Silence completions during debugging sessions to prevent clashing with Watchdog/Copilot
+                // 🛡️ INTELLI-FIRST: Don't show ghost text if VS IntelliSense is active
+                if (CompletionBroker.IsCompletionActive(_view))
+                {
+                    return;
+                }
+
+                // Debug guard: silence completions during debugging sessions
                 var shellDebugger = await Community.VisualStudio.Toolkit.VS.GetRequiredServiceAsync<Microsoft.VisualStudio.Shell.Interop.SVsShellDebugger, Microsoft.VisualStudio.Shell.Interop.IVsDebugger>();
                 if (shellDebugger != null)
                 {
@@ -103,38 +131,38 @@ namespace LocalPilot.Completion
 
                 var snapshot = _view.TextBuffer.CurrentSnapshot;
                 var caretPos = _view.Caret.Position.BufferPosition.Position;
-                
-                // 🚀 AUTONOMOUS CONTEXT: Using 'Golden Ratio' for optimized FIM completion
-                const int beforeLines = 64;
-                const int afterLines = 16;
-
-                int startPos = Math.Max(0, caretPos);
-                int linesFound = 0;
-                while (startPos > 0 && linesFound < beforeLines)
-                {
-                    startPos--;
-                    if (snapshot[startPos] == '\n') linesFound++;
-                }
-
-                int endPos = caretPos;
-                linesFound = 0;
-                while (endPos < snapshot.Length && linesFound < afterLines)
-                {
-                    if (snapshot[endPos] == '\n') linesFound++;
-                    endPos++;
-                }
-
-                var prefix = snapshot.GetText(startPos, caretPos - startPos);
-                var suffix = snapshot.GetText(caretPos, endPos - caretPos);
                 var fileExt = System.IO.Path.GetExtension(_document?.FilePath ?? ".cs");
                 var filePath = _document?.FilePath ?? "untitled";
 
-                // 2. Offload network request and processing to a background thread
+                // 2. Offload network request and heavy text processing to background thread
                 var completionText = await Task.Run(async () =>
                 {
+                    // Context window: 64 lines before, 16 after cursor
+                    const int beforeLines = 64;
+                    const int afterLines = 16;
+
+                    int startPos = Math.Max(0, caretPos);
+                    int linesFound = 0;
+                    while (startPos > 0 && linesFound < beforeLines)
+                    {
+                        startPos--;
+                        if (snapshot[startPos] == '\n') linesFound++;
+                    }
+
+                    int endPos = caretPos;
+                    linesFound = 0;
+                    while (endPos < snapshot.Length && linesFound < afterLines)
+                    {
+                        if (snapshot[endPos] == '\n') linesFound++;
+                        endPos++;
+                    }
+
+                    var prefix = snapshot.GetText(startPos, caretPos - startPos);
+                    var suffix = snapshot.GetText(caretPos, endPos - caretPos);
+
                     var prompt = _promptBuilder.Build(fileExt, prefix, suffix, filePath);
-                    var mode = LocalPilotSettings.Instance.Mode;
-                    var maxTokens = mode switch
+                    var perfMode = LocalPilotSettings.Instance.Mode;
+                    var maxTokens = perfMode switch
                     {
                         PerformanceMode.Fast => 128,
                         PerformanceMode.HighAccuracy => 512,
@@ -143,20 +171,21 @@ namespace LocalPilot.Completion
 
                     var opts = new OllamaOptions
                     {
-                        Temperature = mode == PerformanceMode.Fast ? 0.4 : (mode == PerformanceMode.HighAccuracy ? 0.1 : 0.2),
+                        Temperature = perfMode == PerformanceMode.Fast ? 0.4 : (perfMode == PerformanceMode.HighAccuracy ? 0.1 : 0.2),
                         NumPredict = maxTokens,
                         Stop = new System.Collections.Generic.List<string> { "\n\n\n", "</MID>" }
                     };
 
-                    _ollama.UpdateBaseUrl(LocalPilotSettings.Instance.OllamaBaseUrl);
-                    string result = string.Empty;
-                    await foreach (var chunk in _ollama.StreamCompletionAsync(
+                    _sharedOllama.UpdateBaseUrl(LocalPilotSettings.Instance.OllamaBaseUrl);
+
+                    var sb = new StringBuilder(256);
+                    await foreach (var chunk in _sharedOllama.StreamCompletionAsync(
                         LocalPilotSettings.Instance.CompletionModel, prompt, opts, token).ConfigureAwait(false))
                     {
-                        result += chunk;
+                        sb.Append(chunk);
                         if (token.IsCancellationRequested) break;
                     }
-                    return result.Trim();
+                    return sb.ToString().Trim();
                 }, token);
 
                 if (!LocalPilotSettings.Instance.EnableInlineCompletion || token.IsCancellationRequested) return;
@@ -182,9 +211,11 @@ namespace LocalPilot.Completion
             _view.Closed -= OnViewClosed;
 
             _cts?.Cancel();
-            _debounceTimer?.Dispose();
+            lock (_lock)
+            {
+                _debounceTimer?.Dispose();
+                _debounceTimer = null;
+            }
         }
-
-
     }
 }

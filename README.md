@@ -96,9 +96,9 @@
 ### 1️⃣ Prerequisites
 You must have **Ollama** installed and running on your machine.
 - **Download**: [ollama.com](https://ollama.com)
-- **Launch a Model**: We recommend code-centric models like `llama3`, `codellama`, or `phi3`.
+- **Launch a Model**: We recommend agentic, code-centric models like `qwen2.5-coder` or `llama3.1`.
   ```bash
-  ollama run llama3
+  ollama run qwen2.5-coder:7b
   ```
 
 ### 2️⃣ Installation
@@ -113,7 +113,7 @@ Navigate to **Tools > Options > LocalPilot > Settings**.
 2. **Model Assignments**: Assign preferred models for **Chat** and **Inline Completions**.
 
 > [!TIP]
-> For the best experience in **v1.8**, we recommend:
+> For the best experience in **v1.9**, we recommend:
 > - **Chat/Logic**: `qwen2.5-coder:7b` or `llama3.1:8b` (Excellent reasoning & tool use).
 > - **Inline Completions**: `starcoder2:3b` or `phi3:mini` (Lowest latency).
 > - **Embedding / RAG**: `nomic-embed-text` or `mxbai-embed-large` **(CRITICAL: You MUST configure an embedding model here to unlock powerful AI-driven semantic codebase search. If left blank, LocalPilot falls back to basic keyword search.)**
@@ -183,13 +183,26 @@ Since **LocalPilot** runs Large Language Models (LLMs) **entirely on your local 
 *   **NVIDIA CUDA**: Ensure latest drivers are installed for GPU acceleration.
 
 > [!IMPORTANT]
-> LocalPilot is designed for efficiency, but because it performs all AI processing locally, it requires capable hardware. If suggestions feel slow, consider using a smaller, quantized model (e.g., `qwen-coder` or `codellama` or `phi3`) in the settings.
+> LocalPilot is designed for efficiency, but because it performs all AI processing locally, it requires capable hardware. If suggestions feel slow, consider using a smaller, quantized model (e.g., `qwen2.5-coder:1.5b` or `llama3.1:8b`) in the settings.
 
 ---
 
 ## 📜 Release History
 
-### 🚀 v1.8 - The Resilience & Architecture Update (latest)
+### 🚀 v1.9 - The Persistent Performance Update (latest)
+**"Seamless SQLite storage, legacy-free architecture, and hardened stability."**
+
+> [!IMPORTANT]
+> **Breaking Architectural Change**: v1.9 completely replaces the legacy JSON-based indexing system with a high-performance **SQLite Persistent Storage Engine**. 
+> - **Automatic Migration**: Upon first launch, LocalPilot will automatically migrate your `.localpilot/index.json` and `nexus.json` data into the new SQLite database and delete the old files.
+> - **Zero Latency**: This move eliminates IDE "stutters" during saves and allows LocalPilot to handle massive codebases with near-zero memory overhead.
+
+- **🗄️ Persistent SQLite Storage**: Transitioned from memory-resident JSON indexing to a high-performance, asynchronous SQLite backend. This eliminates IDE freezes and significantly reduces RAM usage for large solutions.
+- **🧹 Legacy Migration Engine**: Implemented a robust, self-healing migration layer that automatically ports old `index.json` and `nexus.json` data into the SQLite engine and cleans up legacy files.
+- **🛡️ Serialization Hardening**: Resolved critical JSON deserialization errors during codebase migrations, ensuring a smooth transition for existing users.
+- **📦 Workspace Integrity**: Added `.localpilot/` to default `.gitignore` templates to prevent local index databases from being accidentally committed to source control.
+
+### 🚀 v1.8 - The Resilience & Architecture Update
 **"Rock-solid background indexing, intelligent fallbacks, and user-configurable stability."**
 
 - **🧹 Architectural Streamlining**: Conducted a comprehensive codebase audit to remove orphaned services and dead code, including the legacy `LocalParserProvider` in favor of the high-performance `UniversalSemanticProvider`.
@@ -203,7 +216,7 @@ Since **LocalPilot** runs Large Language Models (LLMs) **entirely on your local 
 ### 🚀 v1.7 - The Connectivity & Reliability Update
 **"Smarter defaults, proactive error handling, and seamless first-run setup."**
 
-- **🛠️ First-Run Auto-Discovery ([#25](https://github.com/FutureStackSolution/LocalPilot/issues/25))**: Automatically detects available Ollama models upon first installation and configures the extension defaults (e.g., Gemma, Llama), resolving the common `404 Not Found` error for new users.
+- **🛠️ First-Run Auto-Discovery ([#25](https://github.com/FutureStackSolution/LocalPilot/issues/25))**: Automatically detects available Ollama models upon first installation and configures the extension defaults (e.g., `qwen2.5-coder`, `llama3.1`), resolving the common `404 Not Found` error for new users.
 - **🛡️ Chat Connection Heartbeat**: The chat window now proactively validates the Ollama service and model selection, providing clear troubleshooting steps if the backend is unreachable or misconfigured.
 
 ### 🚀 v1.6 - The Polyglot Reliability Update

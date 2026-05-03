@@ -33,10 +33,9 @@ namespace LocalPilot.Services
 
         private DTE2 _dte;
         public event Action<SmartFixSuggestion> OnFixReady;
+        private volatile bool _isAnalyzing = false;
 
-        private SmartFixService()
-        {
-        }
+        private SmartFixService() { }
 
         public void Initialize(AgentOrchestrator orchestrator)
         {
@@ -46,18 +45,24 @@ namespace LocalPilot.Services
                 _dte = await VS.GetRequiredServiceAsync<SDTE, DTE2>();
                 if (_dte != null)
                 {
-                    // 🛡️ STATIC HEALING: Monitor Build Errors via DTE
+                    // Monitor Build Errors via DTE (isolated with try-catch)
                     _dte.Events.BuildEvents.OnBuildDone += (scope, action) => {
-                        _ = AnalyzeErrorsInBackgroundAsync();
+                        try { _ = AnalyzeErrorsInBackgroundAsync(); }
+                        catch (Exception ex) { LocalPilotLogger.LogError("[SmartFix] Build handler failed", ex); }
                     };
 
-                    // 🛡️ DYNAMIC HEALING: Monitor Runtime Exceptions via DTE
+                    // Monitor Runtime Exceptions via DTE (with recursion guard)
                     _dte.Events.DebuggerEvents.OnExceptionThrown += (string exceptionType, string exceptionName, int code, string description, ref dbgExceptionAction action) => {
-                        HandleRuntimeExceptionAsync(exceptionType, description, "Thrown").FireAndForget();
+                        // Skip LocalPilot's own exceptions to prevent infinite recursion
+                        if (exceptionType?.Contains("LocalPilot") == true || _isAnalyzing) return;
+                        try { HandleRuntimeExceptionAsync(exceptionType, description, "Thrown").FireAndForget(); }
+                        catch { }
                     };
 
                     _dte.Events.DebuggerEvents.OnExceptionNotHandled += (string exceptionType, string exceptionName, int code, string description, ref dbgExceptionAction action) => {
-                        HandleRuntimeExceptionAsync(exceptionType, description, "UnHandled").FireAndForget();
+                        if (exceptionType?.Contains("LocalPilot") == true || _isAnalyzing) return;
+                        try { HandleRuntimeExceptionAsync(exceptionType, description, "UnHandled").FireAndForget(); }
+                        catch { }
                     };
                 }
 
@@ -67,27 +72,34 @@ namespace LocalPilot.Services
 
         private async Task HandleRuntimeExceptionAsync(string type, string message, string mode)
         {
-            LocalPilotLogger.Log($"[SmartFix] Runtime crash detected ({mode}): {type}. Analyzing state...", category: LogCategory.Context);
-
-            var suggestion = new SmartFixSuggestion
+            _isAnalyzing = true;
+            try
             {
-                ErrorCode = type,
-                ErrorMessage = message,
-                IsReady = false
-            };
+                LocalPilotLogger.Log($"[SmartFix] Runtime crash detected ({mode}): {type}. Analyzing state...", category: LogCategory.Context);
 
-            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-            var activeDoc = await VS.Documents.GetActiveDocumentViewAsync();
-            if (activeDoc != null)
-            {
-                suggestion.FilePath = activeDoc.FilePath;
+                var suggestion = new SmartFixSuggestion
+                {
+                    ErrorCode = type,
+                    ErrorMessage = message,
+                    IsReady = false
+                };
+
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                var activeDoc = await VS.Documents.GetActiveDocumentViewAsync();
+                if (activeDoc != null)
+                {
+                    suggestion.FilePath = activeDoc.FilePath;
+                }
+
+                OnFixReady?.Invoke(suggestion);
             }
-
-            OnFixReady?.Invoke(suggestion);
+            finally { _isAnalyzing = false; }
         }
 
         private async Task AnalyzeErrorsInBackgroundAsync()
         {
+            if (_isAnalyzing) return;
+            _isAnalyzing = true;
             try
             {
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
@@ -126,6 +138,7 @@ namespace LocalPilot.Services
             {
                 LocalPilotLogger.LogError("[SmartFix] Error analysis failed", ex, category: LogCategory.Build);
             }
+            finally { _isAnalyzing = false; }
         }
 
         public async Task<string> GenerateDraftFixAsync(AgentOrchestrator orchestrator, SmartFixSuggestion suggestion, CancellationToken ct)

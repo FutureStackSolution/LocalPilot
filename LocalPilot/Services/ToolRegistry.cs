@@ -355,15 +355,38 @@ namespace LocalPilot.Services
 
                 using (var process = System.Diagnostics.Process.Start(psi))
                 {
-                    string output = await process.StandardOutput.ReadToEndAsync();
-                    string error = await process.StandardError.ReadToEndAsync();
-                    process.WaitForExit();
+                    // Read stdout and stderr concurrently to avoid pipe deadlock
+                    var outputTask = process.StandardOutput.ReadToEndAsync();
+                    var errorTask = process.StandardError.ReadToEndAsync();
+
+                    // 60-second timeout to prevent hung processes from blocking the agent
+                    using (var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
+                    {
+                        timeoutCts.CancelAfter(TimeSpan.FromSeconds(60));
+                        var completedTask = await Task.WhenAny(
+                            Task.WhenAll(outputTask, errorTask),
+                            Task.Delay(Timeout.Infinite, timeoutCts.Token)
+                        );
+                    }
+
+                    if (!process.HasExited)
+                    {
+                        try { process.Kill(); } catch { }
+                        return new ToolResponse { IsError = true, Output = $"Command timed out after 60 seconds and was killed." };
+                    }
+
+                    string output = await outputTask;
+                    string error = await errorTask;
 
                     return new ToolResponse 
                     { 
                         Output = string.IsNullOrEmpty(error) ? output : $"Output:\n{output}\nErrors:\n{error}" 
                     };
                 }
+            }
+            catch (OperationCanceledException)
+            {
+                return new ToolResponse { IsError = true, Output = "Command was cancelled." };
             }
             catch (Exception ex)
             {
@@ -401,14 +424,19 @@ namespace LocalPilot.Services
                                .Where(f => !excludedFolders.Any(e => f.Contains(Path.DirectorySeparatorChar + e + Path.DirectorySeparatorChar)))
                                .ToList();
 
-                // 🚀 HIGH PERFORMANCE PARALLEL SCAN
-                Parallel.ForEach(fileList, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount }, file =>
+                // Cap results to prevent unbounded memory usage
+                const int MaxMatches = 200;
+                const long MaxFileSizeBytes = 2 * 1024 * 1024; // 2MB cap per file
+
+                Parallel.ForEach(fileList, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount, CancellationToken = ct }, file =>
                 {
-                    if (ct.IsCancellationRequested) return;
+                    if (ct.IsCancellationRequested || matches.Count >= MaxMatches) return;
                     try
                     {
-                        // We avoid SwitchToMainThreadAsync inside the loop for speed.
-                        // We only read from disk for grep. The 'read_file' tool handles live buffers.
+                        // Skip very large files to avoid OOM
+                        var fileInfo = new FileInfo(file);
+                        if (fileInfo.Length > MaxFileSizeBytes) return;
+
                         var lines = File.ReadAllLines(file);
 
                         for (int i = 0; i < lines.Length; i++)
@@ -417,6 +445,7 @@ namespace LocalPilot.Services
                             {
                                 lock (matches)
                                 {
+                                    if (matches.Count >= MaxMatches) return;
                                     matches.Add($"{file}:{i + 1}: {lines[i].Trim()}");
                                 }
                             }

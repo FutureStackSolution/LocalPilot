@@ -75,15 +75,15 @@ namespace LocalPilot.Services
 
         public async Task<string> GetDiagnosticsAsync(CancellationToken ct)
         {
-            var sb = new System.Text.StringBuilder();
+            // Short-circuit: first provider with diagnostics wins
+            // (Avoids duplicate DTE ErrorList reads from LSP + Universal providers)
             foreach (var p in _providers)
             {
                 if (ct.IsCancellationRequested) break;
                 string diag = await p.GetDiagnosticsAsync(ct);
-                if (!string.IsNullOrEmpty(diag)) sb.Append(diag);
+                if (!string.IsNullOrEmpty(diag)) return diag.Trim();
             }
-            string result = sb.ToString().Trim();
-            return string.IsNullOrEmpty(result) ? null : result;
+            return null;
         }
 
         public async Task<string> RenameSymbolAsync(string filePath, int line, int column, string newName, CancellationToken ct)

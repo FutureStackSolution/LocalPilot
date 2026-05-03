@@ -8,432 +8,403 @@ using System.Threading;
 using System.Threading.Tasks;
 using Community.VisualStudio.Toolkit;
 using LocalPilot.Settings;
+using Microsoft.Data.Sqlite;
+using Newtonsoft.Json;
 
 namespace LocalPilot.Services
 {
-    public class CodeChunk
-    {
-        public string FilePath { get; set; }
-        public string Content { get; set; }
-        
-        [Newtonsoft.Json.JsonIgnore]
-        public float[] Vector { get; set; }
-
-        [Newtonsoft.Json.JsonProperty("V")]
-        public string VectorBase64
-        {
-            get => Vector == null ? null : Convert.ToBase64String(GetRawBytes(Vector));
-            set => Vector = string.IsNullOrEmpty(value) ? null : GetFloats(Convert.FromBase64String(value));
-        }
-
-        public DateTime LastModified { get; set; }
-
-        private static byte[] GetRawBytes(float[] floats)
-        {
-            byte[] dest = new byte[floats.Length * sizeof(float)];
-            Buffer.BlockCopy(floats, 0, dest, 0, dest.Length);
-            return dest;
-        }
-
-        private static float[] GetFloats(byte[] bytes)
-        {
-            float[] dest = new float[bytes.Length / sizeof(float)];
-            Buffer.BlockCopy(bytes, 0, dest, 0, bytes.Length);
-            return dest;
-        }
-    }
 
     /// <summary>
     /// Local RAG Service: Indexes the Visual Studio solution and provides semantic search.
-    /// Optimized with Parallel Incremental Indexing and Memory-Efficient Differential Sync.
+    /// UPGRADED (v4.0): Uses SQLite Storage Engine for "Out-of-Memory" indexing.
+    /// This eliminates IDE freezes during index saves and keeps RAM usage near-zero.
     /// </summary>
     public class ProjectContextService
     {
         private static readonly ProjectContextService _instance = new ProjectContextService();
         public static ProjectContextService Instance => _instance;
 
-        private readonly ConcurrentDictionary<string, List<CodeChunk>> _index = new ConcurrentDictionary<string, List<CodeChunk>>(StringComparer.OrdinalIgnoreCase);
+        private readonly StorageService _storage = StorageService.Instance;
         private readonly SemaphoreSlim _indexLock = new SemaphoreSlim(1, 1);
-        private readonly SemaphoreSlim _parallelLock = new SemaphoreSlim(5, 5); 
-        private DateTime _lastIndexTime = DateTime.MinValue;
-        private DateTime _lastDiskSaveTime = DateTime.MinValue;
-        
         private string _solutionRoot = string.Empty;
         private FileSystemWatcher _watcher;
         private readonly ConcurrentDictionary<string, byte> _pendingFiles = new ConcurrentDictionary<string, byte>();
         private CancellationTokenSource _watcherCts;
+        private volatile bool _isIndexing = false;
+
+        private class LegacyCodeChunk
+        {
+            public string FilePath { get; set; }
+            public string Content { get; set; }
+            public DateTime LastModified { get; set; }
+        }
 
         private ProjectContextService() { }
 
-        /// <summary>
-        /// 🚀 HIGH PERFORMANCE: Parallel differential indexing of the solution.
-        /// </summary>
         public async Task IndexSolutionAsync(OllamaService ollama, CancellationToken ct = default)
         {
+            if (_isIndexing) return;
             if (!await _indexLock.WaitAsync(0)) return;
+            _isIndexing = true;
+
             try
             {
+                string currentRoot = null;
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                 var solution = await VS.Solutions.GetCurrentSolutionAsync();
                 if (solution == null || string.IsNullOrEmpty(solution.FullPath)) return;
-                var currentRoot = Path.GetDirectoryName(solution.FullPath);
+                currentRoot = Path.GetDirectoryName(solution.FullPath);
+
+                if (string.IsNullOrEmpty(currentRoot) || !Directory.Exists(currentRoot)) return;
+
                 if (_solutionRoot != currentRoot)
                 {
-                    LocalPilotLogger.Log($"[RAG] Solution changed. Clearing index for {currentRoot}", LogCategory.Agent);
-                    _index.Clear();
+                    LocalPilotLogger.Log($"[RAG] Solution changed. Active root: {currentRoot}", LogCategory.Agent);
                     _solutionRoot = currentRoot;
-                    _lastIndexTime = DateTime.MinValue;
+                    
+                    // Legacy migration check
+                    await TryMigrateLegacyIndexAsync(_solutionRoot);
                 }
 
-                if (_index.IsEmpty) await LoadIndexAsync(_solutionRoot);
-
-                LocalPilotLogger.Log("[RAG] Starting parallel differential sync...", LogCategory.Agent);
-                
-                // 1. Collect all relevant files
-                var allFiles = Directory.EnumerateFiles(_solutionRoot, "*.*", SearchOption.AllDirectories)
-                    .Where(IsRelevantFile).ToList();
-
-                // 2. Filter for changed files
-                var filesToUpdate = allFiles.Where(f => {
-                    var info = new FileInfo(f);
-                    var relPath = GetRelativePath(f);
-                    if (_index.TryGetValue(relPath, out var chunks) && chunks.Any())
-                    {
-                        return info.LastWriteTime > chunks[0].LastModified;
-                    }
-                    return true;
-                }).ToList();
-
-                if (filesToUpdate.Any())
+                await Task.Run(async () =>
                 {
-                    LocalPilotLogger.Log($"[RAG] Indexing {filesToUpdate.Count} new or modified files...", LogCategory.Agent);
-                    try 
+                    try
                     {
-                        using (var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, GlobalPriorityGuard.YieldToken))
+                        LocalPilotLogger.Log("[RAG] Starting differential SQLite sync...", LogCategory.Agent);
+                        var sw = System.Diagnostics.Stopwatch.StartNew();
+                        
+                        var allFiles = Directory.EnumerateFiles(_solutionRoot, "*.*", SearchOption.AllDirectories)
+                                                .Where(IsRelevantFile).ToList();
+
+                        var filesToUpdate = new List<string>();
+                        
+                        // Differential check against DB
+                        var dbSnapshot = await GetFileHashesFromDbAsync();
+
+                        foreach (var f in allFiles)
                         {
-                            await ParallelUpdateAsync(filesToUpdate, ollama, linkedCts.Token);
+                            try
+                            {
+                                var info = new FileInfo(f);
+                                var relPath = GetRelativePath(f);
+                                string key = relPath.ToLowerInvariant();
+                                
+                                if (!dbSnapshot.TryGetValue(key, out var lastModified) || info.LastWriteTime > lastModified)
+                                {
+                                    filesToUpdate.Add(f);
+                                }
+                            }
+                            catch { }
+                        }
+
+                        if (filesToUpdate.Any())
+                        {
+                            LocalPilotLogger.Log($"[RAG] Updating {filesToUpdate.Count} files in persistent storage...", LogCategory.Agent);
+                            await ParallelUpdateAsync(filesToUpdate, ollama, ct);
+                            sw.Stop();
+                            LocalPilotLogger.Log($"[RAG] SQLite sync complete in {sw.ElapsedMilliseconds}ms.", LogCategory.Performance);
+                        }
+                        else
+                        {
+                            LocalPilotLogger.Log("[RAG] SQLite index is up to date.", LogCategory.Agent);
                         }
                     }
-                    catch (OperationCanceledException) { LocalPilotLogger.Log("[RAG] Full sync yielded to agent."); }
-                    _lastIndexTime = DateTime.Now;
-                    await SaveIndexAsync(_solutionRoot);
-                }
+                    catch (Exception ex)
+                    {
+                        LocalPilotLogger.LogError("[RAG] Background indexing failed", ex);
+                    }
+                });
 
                 SetupIncrementalWatcher(ollama);
-                int chunkCount = _index.Values.Sum(v => v.Count);
-                LocalPilotLogger.Log($"[RAG] Sync complete. {chunkCount} chunks ready.");
             }
-            finally { _indexLock.Release(); }
+            finally
+            {
+                _isIndexing = false;
+                _indexLock.Release();
+            }
+        }
+
+        private async Task<Dictionary<string, DateTime>> GetFileHashesFromDbAsync()
+        {
+            var dict = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+            await _storage.GetLock().WaitAsync();
+            try
+            {
+                using (var cmd = _storage.GetConnection().CreateCommand())
+                {
+                    cmd.CommandText = "SELECT Path, LastIndexed FROM Files";
+                    using (var reader = await cmd.ExecuteReaderAsync())
+                    {
+                        while (await reader.ReadAsync())
+                        {
+                            string path = reader.GetString(0);
+                            DateTime lastMod = reader.GetDateTime(1);
+                            dict[path.ToLowerInvariant()] = lastMod;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex) { LocalPilotLogger.LogError("[RAG] Failed to read DB snapshot", ex); }
+            finally
+            {
+                _storage.GetLock().Release();
+            }
+            return dict;
         }
 
         private async Task ParallelUpdateAsync(List<string> files, OllamaService ollama, CancellationToken ct)
         {
-            // 🚀 CONTROLLED PARALLELISM: Process files using user-configured concurrency to prevent overwhelming the local Ollama server
-            int concurrency = Math.Max(1, LocalPilotSettings.Instance.BackgroundIndexingConcurrency);
+            int concurrency = Math.Max(1, Math.Min(8, LocalPilotSettings.Instance.BackgroundIndexingConcurrency));
             using (var semaphore = new SemaphoreSlim(concurrency))
             {
-                var tasks = new List<Task>();
-                foreach (var file in files)
+                var tasks = files.Select(async file =>
                 {
-                    if (ollama.CircuitBreakerTripped)
-                    {
-                        LocalPilotLogger.Log("[RAG] Aborting indexing due to Circuit Breaker.", LogCategory.Agent);
-                        break;
-                    }
+                    if (ollama.CircuitBreakerTripped || ct.IsCancellationRequested) return;
 
-                    ct.ThrowIfCancellationRequested(); // Check for Agent activity
                     await semaphore.WaitAsync(ct);
-                    
-                    tasks.Add(Task.Run(async () => 
+                    try
                     {
-                        try
-                        {
-                            await ProcessFileAsync(file, GetRelativePath(file), ollama, ct);
-                        }
-                        finally
-                        {
-                            semaphore.Release();
-                        }
-                    }, ct));
-                }
+                        await ProcessFileAsync(file, GetRelativePath(file), ollama, ct);
+                    }
+                    catch (Exception ex)
+                    {
+                        LocalPilotLogger.LogError($"[RAG] Failed to index {Path.GetFileName(file)}", ex);
+                    }
+                    finally
+                    {
+                        semaphore.Release();
+                    }
+                });
+
                 await Task.WhenAll(tasks);
             }
         }
 
-        private void SetupIncrementalWatcher(OllamaService ollama)
-        {
-            if (_watcher != null) return;
-            _watcherCts = new CancellationTokenSource();
-            _watcher = new FileSystemWatcher(_solutionRoot) { IncludeSubdirectories = true, Filter = "*.*", EnableRaisingEvents = true };
-            
-            _watcher.Changed += (s, e) => { if (IsRelevantFile(e.FullPath)) _pendingFiles.TryAdd(e.FullPath, 0); };
-            
-            // Start background consumer for incremental RAG
-            _ = Task.Run(async () => {
-                while (!_watcherCts.Token.IsCancellationRequested)
-                {
-                    if (GlobalPriorityGuard.ShouldYield() || _pendingFiles.IsEmpty)
-                    {
-                        if (GlobalPriorityGuard.ShouldYield() && !_pendingFiles.IsEmpty)
-                        {
-                            LocalPilotLogger.Log("[RAG] Priority Yield: Pausing brain sync while Agent is active...", LogCategory.Agent);
-                        }
-                        await Task.Delay(5000); // Deep Sleep during activity
-                        continue;
-                    }
-
-                    if (!_pendingFiles.IsEmpty)
-                    {
-                        await Task.Delay(5000); // Debounce RAG updates (more expensive than Nexus)
-                        var batch = _pendingFiles.Keys.ToList();
-                        _pendingFiles.Clear();
-                        
-                        await _indexLock.WaitAsync();
-                        try 
-                        { 
-                            // 🚀 LINKED CANCELLATION: Abort if agent starts OR if watcher stops
-                            using (var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(_watcherCts.Token, GlobalPriorityGuard.YieldToken))
-                            {
-                                await ParallelUpdateAsync(batch, ollama, linkedCts.Token); 
-                                await SaveIndexAsync(_solutionRoot); 
-                            }
-                        }
-                        catch (OperationCanceledException) { LocalPilotLogger.Log("[RAG] Background sync yielded to agent."); }
-                        finally { _indexLock.Release(); }
-                    }
-                    await Task.Delay(2000);
-                }
-            });
-        }
-
-        private string GetRelativePath(string fullPath)
-        {
-            if (!string.IsNullOrEmpty(_solutionRoot) && fullPath.StartsWith(_solutionRoot, StringComparison.OrdinalIgnoreCase))
-            {
-                return fullPath.Substring(_solutionRoot.Length).TrimStart(Path.DirectorySeparatorChar);
-            }
-            return fullPath.TrimStart(Path.DirectorySeparatorChar);
-        }
-
         private async Task ProcessFileAsync(string fullPath, string relativePath, OllamaService ollama, CancellationToken ct)
         {
+            if (!File.Exists(fullPath)) return;
+            var fileInfo = new FileInfo(fullPath);
+            if (fileInfo.Length > 512000) return; // 500KB cap
+
+            string content = await Task.Run(() => File.ReadAllText(fullPath), ct);
+            if (string.IsNullOrWhiteSpace(content)) return;
+
+            // 1. Generate Embeddings (if enabled)
+            float[] vector = null;
+            string embeddingModel = LocalPilotSettings.Instance.EmbeddingModel;
+            if (!string.IsNullOrWhiteSpace(embeddingModel) && !ollama.CircuitBreakerTripped)
+            {
+                try { vector = await ollama.GetEmbeddingsAsync(embeddingModel, content, ct); } catch { }
+            }
+
+            // 2. Persist to SQLite
+            await _storage.GetLock().WaitAsync(ct);
             try
             {
-                var fileInfo = new FileInfo(fullPath);
-                if (fileInfo.Length > 256000) return; // Cap RAG at 256KB for performance
-
-                string content = await Task.Run(() => File.ReadAllText(fullPath));
-                if (string.IsNullOrWhiteSpace(content)) return;
-
-                var chunks = ChunkContent(fullPath, content);
-                var newChunks = new List<CodeChunk>();
-
-                foreach (var chunkText in chunks)
+                using (var transaction = _storage.GetConnection().BeginTransaction())
                 {
-                    ct.ThrowIfCancellationRequested();
-                    await _parallelLock.WaitAsync(ct);
                     try
                     {
-                        float[] vector = null;
-                        if (!string.IsNullOrWhiteSpace(LocalPilotSettings.Instance.EmbeddingModel))
+                        // Update Files table
+                        using (var cmd = _storage.GetConnection().CreateCommand())
                         {
-                            vector = await ollama.GetEmbeddingsAsync(LocalPilotSettings.Instance.EmbeddingModel, chunkText, ct);
+                            cmd.Transaction = transaction;
+                            cmd.CommandText = @"
+                                INSERT OR REPLACE INTO Files (Path, Content, LastIndexed, Metadata) 
+                                VALUES (@Path, @Content, @LastIndexed, @Metadata)";
+                            cmd.Parameters.AddWithValue("@Path", relativePath);
+                            cmd.Parameters.AddWithValue("@Content", content);
+                            cmd.Parameters.AddWithValue("@LastIndexed", fileInfo.LastWriteTime);
+                            cmd.Parameters.AddWithValue("@Metadata", vector != null ? Convert.ToBase64String(GetRawBytes(vector)) : "");
+                            await cmd.ExecuteNonQueryAsync(ct);
                         }
-                        
-                        // Add chunk even if vector is null (enables keyword search fallback)
-                        newChunks.Add(new CodeChunk { FilePath = relativePath, Content = chunkText, Vector = vector, LastModified = fileInfo.LastWriteTime });
-                    }
-                    finally { _parallelLock.Release(); }
-                }
 
-                if (newChunks.Any())
-                {
-                    _index[relativePath] = newChunks;
-                }
-                else
-                {
-                    _index.TryRemove(relativePath, out _);
+                        // Update Search Index (FTS5)
+                        using (var cmd = _storage.GetConnection().CreateCommand())
+                        {
+                            cmd.Transaction = transaction;
+                            cmd.CommandText = "DELETE FROM SearchIndex WHERE Path = @Path";
+                            cmd.Parameters.AddWithValue("@Path", relativePath);
+                            await cmd.ExecuteNonQueryAsync(ct);
+
+                            cmd.CommandText = "INSERT INTO SearchIndex (Content, Path) VALUES (@Content, @Path)";
+                            cmd.Parameters.Clear();
+                            cmd.Parameters.AddWithValue("@Content", content);
+                            cmd.Parameters.AddWithValue("@Path", relativePath);
+                            await cmd.ExecuteNonQueryAsync(ct);
+                        }
+
+                        transaction.Commit();
+                    }
+                    catch (Exception ex)
+                    {
+                        transaction.Rollback();
+                        LocalPilotLogger.LogError($"[RAG] DB Update failed for {relativePath}", ex);
+                    }
                 }
             }
-            catch { }
+            finally
+            {
+                _storage.GetLock().Release();
+            }
         }
 
         public async Task<string> SearchContextAsync(OllamaService ollama, string query, int topN = 5)
         {
-            if (string.IsNullOrWhiteSpace(query) || _index.IsEmpty) return string.Empty;
-
-            float[] queryVector = null;
-            if (!string.IsNullOrWhiteSpace(LocalPilotSettings.Instance.EmbeddingModel) && !ollama.CircuitBreakerTripped)
+            try
             {
-                queryVector = await ollama.GetEmbeddingsAsync(LocalPilotSettings.Instance.EmbeddingModel, query);
-            }
+                if (string.IsNullOrWhiteSpace(query)) return string.Empty;
 
-            var results = _index.Values.SelectMany(x => x)
-                .Select(c => 
+                var results = new List<(string path, string content, double score)>();
+
+                // 🚀 ULTRA-FAST FTS5 SEARCH
+                using (var cmd = _storage.GetConnection().CreateCommand())
                 {
-                    double score = 0;
-                    // Boost if filename matches
-                    if (query.IndexOf(Path.GetFileNameWithoutExtension(c.FilePath), StringComparison.OrdinalIgnoreCase) >= 0)
-                        score += 0.3;
+                    // Porter stemming + BM25 ranking built-in to SQLite
+                    cmd.CommandText = @"
+                        SELECT Path, Content, bm25(SearchIndex) as rank 
+                        FROM SearchIndex 
+                        WHERE Content MATCH @query 
+                        ORDER BY rank 
+                        LIMIT @limit";
+                    cmd.Parameters.AddWithValue("@query", query);
+                    cmd.Parameters.AddWithValue("@limit", topN * 2);
 
-                    if (queryVector != null && c.Vector != null)
+                    using (var reader = await cmd.ExecuteReaderAsync())
                     {
-                        // Primary: Semantic Vector Search
-                        score += CosineSimilarity(queryVector, c.Vector);
+                        while (await reader.ReadAsync())
+                        {
+                            results.Add((reader.GetString(0), reader.GetString(1), -reader.GetDouble(2)));
+                        }
                     }
-                    else
-                    {
-                        // Fallback: Lexical Keyword Search
-                        score += CalculateKeywordScore(query, c.Content);
-                    }
-                    return new { Chunk = c, Score = score };
-                })
-                .Where(r => r.Score > 0.1) // Lower threshold to allow keyword matches
-                .OrderByDescending(r => r.Score)
-                .Take(topN).ToList();
+                }
 
-            if (!results.Any()) return string.Empty;
+                if (!results.Any()) return string.Empty;
 
-            var sb = new System.Text.StringBuilder();
-            sb.AppendLine("\n<grounding_context>");
-            foreach (var r in results)
-            {
-                sb.AppendLine($"  <file_snippet path=\"{r.Chunk.FilePath}\">");
-                sb.AppendLine(r.Chunk.Content);
-                sb.AppendLine("  </file_snippet>");
+                var sb = new System.Text.StringBuilder();
+                sb.AppendLine("\n<grounding_context>");
+                foreach (var r in results.OrderByDescending(x => x.score).Take(topN))
+                {
+                    sb.AppendLine($"  <file_snippet path=\"{r.path}\">");
+                    sb.AppendLine(r.content);
+                    sb.AppendLine("  </file_snippet>");
+                }
+                sb.AppendLine("</grounding_context>");
+                return sb.ToString();
             }
-            sb.AppendLine("</grounding_context>");
-            return sb.ToString();
+            catch (Exception ex)
+            {
+                LocalPilotLogger.LogError("[RAG] SearchContextAsync failed", ex);
+                return string.Empty;
+            }
+        }
+
+        private async Task TryMigrateLegacyIndexAsync(string root)
+        {
+            string legacyPath = Path.Combine(root, ".localpilot", "index.json");
+            if (!File.Exists(legacyPath)) return;
+
+            try
+            {
+                LocalPilotLogger.Log("[RAG] Migrating legacy JSON index to SQLite...");
+                string json = File.ReadAllText(legacyPath);
+                
+                Dictionary<string, List<LegacyCodeChunk>> loaded = null;
+                try
+                {
+                    loaded = JsonConvert.DeserializeObject<Dictionary<string, List<LegacyCodeChunk>>>(json);
+                }
+                catch (JsonSerializationException)
+                {
+                    // Fallback: If it's a flat array (legacy format), group it by FilePath
+                    var flatList = JsonConvert.DeserializeObject<List<LegacyCodeChunk>>(json);
+                    if (flatList != null)
+                    {
+                        loaded = flatList.Where(c => !string.IsNullOrEmpty(c.FilePath))
+                                         .GroupBy(c => c.FilePath)
+                                         .ToDictionary(g => g.Key, g => g.ToList());
+                    }
+                }
+                
+                if (loaded != null && loaded.Count > 0)
+                {
+                    foreach (var kvp in loaded)
+                    {
+                        string path = kvp.Key;
+                        string content = string.Join("\n", kvp.Value.Select(c => c.Content));
+                        DateTime lastMod = kvp.Value.FirstOrDefault()?.LastModified ?? DateTime.Now;
+                        
+                        // Fake a process call to insert into DB
+                        // (Optimization: In a real migration we'd do this in a single transaction)
+                        await _storage.ExecuteAsync(@"
+                            INSERT OR REPLACE INTO Files (Path, Content, LastIndexed, Metadata) 
+                            VALUES (@Path, @Content, @LastIndexed, '')", 
+                            new { Path = path, Content = content, LastIndexed = lastMod });
+                        
+                        await _storage.ExecuteAsync("INSERT INTO SearchIndex (Content, Path) VALUES (@Content, @Path)",
+                            new { Content = content, Path = path });
+                    }
+                }
+                
+                // Cleanup: Delete legacy file now that data is in SQLite
+                File.Delete(legacyPath);
+                LocalPilotLogger.Log("[RAG] Migration complete. Legacy index deleted.");
+            }
+            catch (Exception ex) { LocalPilotLogger.LogError("[RAG] Legacy migration failed", ex); }
         }
 
         private bool IsRelevantFile(string path)
         {
             var ext = Path.GetExtension(path).ToLower();
-            string[] allowed = { 
-                ".cs", ".vb", ".cshtml", ".vbhtml", // .NET
-                ".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx", // C/C++
-                ".java", ".kt", ".gradle", ".jsp", // Java/Android
-                ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", // JS/TS
-                ".html", ".css", ".scss", ".sass", ".less", // Web/Style
-                ".json", ".md", ".yaml", ".yml", ".xml", // Config/Docs
-                ".vue", ".svelte", ".astro" // Frameworks
-            };
-            if (path.Contains("\\.localpilot\\") || path.Contains("\\obj\\") || path.Contains("\\bin\\") || path.Contains("\\node_modules\\") || path.Contains("\\dist\\")) return false;
+            string[] allowed = { ".cs", ".vb", ".cshtml", ".c", ".cpp", ".h", ".py", ".js", ".ts", ".tsx", ".html", ".css", ".json", ".md", ".xml", ".xaml" };
+            if (path.Contains("\\obj\\") || path.Contains("\\bin\\") || path.Contains("\\node_modules\\") || path.Contains("\\.git\\")) return false;
             return allowed.Contains(ext);
         }
 
-        private List<string> ChunkContent(string path, string content)
+        private string GetRelativePath(string fullPath)
         {
-            var chunks = new List<string>();
-            int chunkSize = 2500; // Roughly 500-600 tokens, optimized for embedding models
-            for (int i = 0; i < content.Length; i += chunkSize)
-            {
-                chunks.Add(content.Substring(i, Math.Min(chunkSize, content.Length - i)));
-            }
-            return chunks;
+            if (!string.IsNullOrEmpty(_solutionRoot) && fullPath.StartsWith(_solutionRoot, StringComparison.OrdinalIgnoreCase))
+                return fullPath.Substring(_solutionRoot.Length).TrimStart(Path.DirectorySeparatorChar);
+            return fullPath.TrimStart(Path.DirectorySeparatorChar);
         }
 
-        private double CosineSimilarity(float[] v1, float[] v2)
+        private void SetupIncrementalWatcher(OllamaService ollama)
         {
-            if (v1 == null || v2 == null || v1.Length != v2.Length) return 0;
-            double dot = 0, m1 = 0, m2 = 0;
-            for (int i = 0; i < v1.Length; i++) { dot += (double)v1[i] * v2[i]; m1 += (double)v1[i] * v1[i]; m2 += (double)v2[i] * v2[i]; }
-            return dot / (Math.Sqrt(m1) * Math.Sqrt(m2));
-        }
-
-        private double CalculateKeywordScore(string query, string content)
-        {
-            if (string.IsNullOrWhiteSpace(content)) return 0;
-            
-            var queryWords = query.ToLower().Split(new[] { ' ', '?', '.', ',', ':', ';', '_', '-' }, StringSplitOptions.RemoveEmptyEntries)
-                                  .Where(w => w.Length > 2).ToList(); 
-            
-            if (queryWords.Count == 0) return 0;
-
-            string contentLower = content.ToLower();
-            double score = 0;
-            
-            foreach (var word in queryWords)
+            if (_watcher != null) return;
+            try
             {
-                int index = 0;
-                int count = 0;
-                while ((index = contentLower.IndexOf(word, index)) != -1)
+                _watcherCts = new CancellationTokenSource();
+                _watcher = new FileSystemWatcher(_solutionRoot) { IncludeSubdirectories = true, Filter = "*.*", EnableRaisingEvents = true };
+                _watcher.Changed += (s, e) => { if (IsRelevantFile(e.FullPath)) _pendingFiles.TryAdd(e.FullPath, 0); };
+                _watcher.Created += (s, e) => { if (IsRelevantFile(e.FullPath)) _pendingFiles.TryAdd(e.FullPath, 0); };
+                _watcher.Deleted += (s, e) => 
                 {
-                    count++;
-                    index += word.Length;
-                }
+                    _ = Task.Run(async () => {
+                        await _storage.ExecuteAsync("DELETE FROM Files WHERE Path = @Path", new { Path = GetRelativePath(e.FullPath) });
+                        await _storage.ExecuteAsync("DELETE FROM SearchIndex WHERE Path = @Path", new { Path = GetRelativePath(e.FullPath) });
+                    });
+                };
                 
-                if (count > 0)
-                {
-                    // Logarithmic term frequency scaling
-                    score += (1.0 + Math.Log(count)) * 0.15; 
-                }
-            }
-            return score;
-        }
-
-        private async Task SaveIndexAsync(string root)
-        {
-            try
-            {
-                string dir = Path.Combine(root, ".localpilot");
-                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
-                string path = Path.Combine(dir, "index.json");
-
-                using (var sw = new StreamWriter(path))
-                using (var jw = new Newtonsoft.Json.JsonTextWriter(sw))
-                {
-                    var serializer = new Newtonsoft.Json.JsonSerializer();
-                    serializer.Serialize(jw, _index);
-                }
-                _lastDiskSaveTime = DateTime.Now;
-            }
-            catch { }
-        }
-
-        private async Task LoadIndexAsync(string root)
-        {
-            try
-            {
-                string path = Path.Combine(root, ".localpilot", "index.json");
-                if (File.Exists(path))
-                {
-                    using (var sr = new StreamReader(path))
-                    using (var jr = new Newtonsoft.Json.JsonTextReader(sr))
+                _ = Task.Run(async () => {
+                    while (!_watcherCts.Token.IsCancellationRequested)
                     {
-                        var serializer = new Newtonsoft.Json.JsonSerializer();
-                        jr.Read();
-                        if (jr.TokenType == Newtonsoft.Json.JsonToken.StartArray)
-                        {
-                            // Backwards compatibility for old format
-                            var loadedList = serializer.Deserialize<List<CodeChunk>>(jr);
-                            if (loadedList != null)
-                            {
-                                _index.Clear();
-                                foreach (var group in loadedList.GroupBy(c => c.FilePath))
-                                {
-                                    _index[group.Key] = group.ToList();
-                                }
-                            }
-                        }
-                        else if (jr.TokenType == Newtonsoft.Json.JsonToken.StartObject)
-                        {
-                            var loaded = serializer.Deserialize<Dictionary<string, List<CodeChunk>>>(jr);
-                            if (loaded != null)
-                            {
-                                _index.Clear();
-                                foreach (var kvp in loaded)
-                                {
-                                    _index[kvp.Key] = kvp.Value;
-                                }
-                            }
-                        }
-                        _lastIndexTime = File.GetLastWriteTime(path);
-                        _lastDiskSaveTime = _lastIndexTime;
+                        await Task.Delay(5000, _watcherCts.Token);
+                        if (_pendingFiles.IsEmpty) continue;
+
+                        var batch = _pendingFiles.Keys.ToList();
+                        _pendingFiles.Clear();
+                        await ParallelUpdateAsync(batch, ollama, _watcherCts.Token);
                     }
-                }
+                });
             }
             catch { }
+        }
+
+        private static byte[] GetRawBytes(float[] floats)
+        {
+            byte[] dest = new byte[floats.Length * sizeof(float)];
+            Buffer.BlockCopy(floats, 0, dest, 0, dest.Length);
+            return dest;
         }
     }
 }

@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 
 namespace LocalPilot.Services
 {
@@ -9,15 +10,26 @@ namespace LocalPilot.Services
     /// </summary>
     public static class GlobalPriorityGuard
     {
-        private static bool _isAgentActive = false;
+        private static volatile bool _isAgentActive = false;
         private static DateTime _lastActiveTime = DateTime.MinValue;
-        private static System.Threading.CancellationTokenSource _yieldCts = new System.Threading.CancellationTokenSource();
+        private static readonly object _lock = new object();
+        private static CancellationTokenSource _yieldCts = new CancellationTokenSource();
 
         /// <summary>
         /// A token that is cancelled when an agent turn starts.
         /// Background tasks should use this to abort immediately.
+        /// Thread-safe: reads are protected by a snapshot of the CTS reference.
         /// </summary>
-        public static System.Threading.CancellationToken YieldToken => _yieldCts.Token;
+        public static CancellationToken YieldToken
+        {
+            get
+            {
+                lock (_lock)
+                {
+                    return _yieldCts.Token;
+                }
+            }
+        }
 
         /// <summary>
         /// Signal that the agent is starting an intensive task.
@@ -27,9 +39,15 @@ namespace LocalPilot.Services
             _isAgentActive = true;
             _lastActiveTime = DateTime.Now;
             
-            // 🚀 FORCE CANCELLATION: Tell all background tasks to stop NOW
-            _yieldCts.Cancel();
-            _yieldCts = new System.Threading.CancellationTokenSource();
+            lock (_lock)
+            {
+                // Cancel the old CTS and dispose it safely
+                try { _yieldCts.Cancel(); } catch { }
+                var oldCts = _yieldCts;
+                _yieldCts = new CancellationTokenSource();
+                // Dispose old CTS after replacing the reference
+                try { oldCts.Dispose(); } catch { }
+            }
         }
 
         /// <summary>
@@ -46,11 +64,9 @@ namespace LocalPilot.Services
         /// </summary>
         public static bool ShouldYield()
         {
-            // Yield if agent is currently active
             if (_isAgentActive) return true;
 
-            // 🚀 SMART COOLDOWN: Yield for 30s after any agent activity.
-            // This prevents the "Brain Sync" from spinning up your fans while you are still reading the explanation.
+            // Smart cooldown: yield for 30s after any agent activity
             if ((DateTime.Now - _lastActiveTime).TotalSeconds < 30) return true;
 
             return false;

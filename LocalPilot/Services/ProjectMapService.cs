@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -10,54 +11,17 @@ using Microsoft.VisualStudio.Text;
 using LocalPilot.Models;
 using EnvDTE;
 
-
 namespace LocalPilot.Services
 {
     /// <summary>
     /// Service to scan the workspace and generate a "Project Map" (file list + shallow snippets).
-    /// Supports disk-based persistence in the .localpilot directory.
+    /// Hardened with defensive error handling — this service MUST NOT crash the IDE under any circumstances.
     /// </summary>
     public class ProjectMapService
     {
         private static readonly ProjectMapService _instance = new ProjectMapService();
         public static ProjectMapService Instance => _instance;
 
-        public ProjectMapService()
-        {
-            // 🚀 SENIOR ARCHITECT PATTERN: Hook into IDE events for Incremental Updates
-            _ = Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.RunAsync(async () => {
-                await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                Community.VisualStudio.Toolkit.VS.Events.DocumentEvents.Saved += OnDocumentSaved;
-            });
-        }
-
-        private DateTime _lastIndexTime = DateTime.MinValue;
-        private void OnDocumentSaved(string filePath)
-        {
-            // 🚀 THROTTLE ENGINE: Prevent "Saving Storm" from pinning the CPU
-            if ((DateTime.Now - _lastIndexTime).TotalMilliseconds < 2000) return;
-            _lastIndexTime = DateTime.Now;
-
-            // Trigger background re-indexing of the saved file
-            _ = Task.Run(async () => {
-                try {
-                    if (!AllowedExtensions.Contains(Path.GetExtension(filePath).ToLowerInvariant())) return;
-                    string content = File.ReadAllText(filePath);
-                    if (content.Length < 10) return; // 🚀 OPTIMIZATION: Skip trivial/empty files
-
-                    // Clear old entries for this file before re-indexing
-                    lock (_symbolIndex)
-                    {
-                        foreach (var key in _symbolIndex.Keys.ToList())
-                        {
-                            _symbolIndex[key].RemoveAll(l => l.FilePath == filePath);
-                        }
-                    }
-                    IndexSymbols(filePath, content);
-                    LocalPilotLogger.Log($"[SymbolIndex] Incrementally updated: {Path.GetFileName(filePath)}");
-                } catch { /* Silent fail for background indexing */ }
-            });
-        }
         private static readonly HashSet<string> ExcludedDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
             "bin", "obj", ".git", ".vs", "node_modules", "packages", "vendor", "dist", "build", 
             "testresults", "artifacts", ".localpilot", ".angular", "wwwroot", "target", "out",
@@ -69,164 +33,244 @@ namespace LocalPilot.Services
             ".cs", ".js", ".ts", ".tsx", ".jsx", ".vue", ".svelte", ".py", ".go", ".rs", ".cpp", ".h", ".hpp", ".swift", ".java", ".kt", ".dart", ".rb", ".php", ".sh", ".ps1", ".sql", ".yml", ".yaml", ".json", ".xml", ".md", ".txt", ".tf", ".dockerfile", ".csproj", ".sln", ".slnx"
         };
 
-        private Dictionary<string, List<SymbolLocation>> _symbolIndex = new Dictionary<string, List<SymbolLocation>>(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentDictionary<string, List<SymbolLocation>> _symbolIndex = new ConcurrentDictionary<string, List<SymbolLocation>>(StringComparer.OrdinalIgnoreCase);
         private string _cachedMap = null;
         private string _lastRoot = null;
         private readonly SemaphoreSlim _lock = new SemaphoreSlim(1, 1);
         private DateTime _lastCacheTime = DateTime.MinValue;
+        private DateTime _lastIndexTime = DateTime.MinValue;
+
+        public ProjectMapService()
+        {
+            // Hook into IDE events for Incremental Updates
+            _ = Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.RunAsync(async () => {
+                try
+                {
+                    await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    Community.VisualStudio.Toolkit.VS.Events.DocumentEvents.Saved += OnDocumentSaved;
+                }
+                catch (Exception ex)
+                {
+                    LocalPilotLogger.LogError("[ProjectMap] Failed to hook DocumentEvents.Saved", ex);
+                }
+            });
+        }
+
+        private void OnDocumentSaved(string filePath)
+        {
+            try
+            {
+                // THROTTLE ENGINE: Prevent "Saving Storm" from pinning the CPU
+                if ((DateTime.Now - _lastIndexTime).TotalMilliseconds < 2000) return;
+                _lastIndexTime = DateTime.Now;
+
+                if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath)) return;
+                if (!AllowedExtensions.Contains(Path.GetExtension(filePath).ToLowerInvariant())) return;
+
+                // Trigger background re-indexing of the saved file
+                _ = Task.Run(async () => {
+                    try {
+                        string content = File.ReadAllText(filePath);
+                        if (content.Length < 10) return; // Skip trivial/empty files
+
+                        // Clear old entries for this file before re-indexing
+                        foreach (var key in _symbolIndex.Keys.ToList())
+                        {
+                            if (_symbolIndex.TryGetValue(key, out var list) && list != null)
+                            {
+                                lock (list) { list.RemoveAll(l => l.FilePath == filePath); }
+                            }
+                        }
+                        IndexSymbols(filePath, content);
+                        LocalPilotLogger.Log($"[SymbolIndex] Incrementally updated: {Path.GetFileName(filePath)}");
+                    } catch { /* Silent fail for background indexing */ }
+                });
+            }
+            catch { }
+        }
 
         /// <summary>
         /// Generates or retrieves a shallow snapshot of the workspace.
-        /// Reads the first ~500 bytes of each relevant text file.
+        /// Fully defensive — will never throw or crash the IDE.
         /// </summary>
         public async Task<string> GenerateProjectMapAsync(string rootPath, int maxBytesPerFile = 250, int maxTotalBytes = 600000)
         {
-            if (string.IsNullOrEmpty(rootPath) || !Directory.Exists(rootPath))
-                return "Project root not found.";
-
-            // 🚀 SOLUTION ISOLATION: Clear symbol index if solution changed
-            if (_lastRoot != rootPath)
-            {
-                LocalPilotLogger.Log($"[ProjectMap] Solution changed. Clearing symbol index for {rootPath}...");
-                lock (_symbolIndex) { _symbolIndex.Clear(); }
-                _cachedMap = null;
-                _lastRoot = rootPath;
-                _lastCacheTime = DateTime.MinValue;
-            }
-
-            // 🚀 SMART DEBOUNCE: If a map was generated in the last 10 seconds, reuse it 
-            if (_cachedMap != null && (DateTime.Now - _lastCacheTime).TotalSeconds < 10)
-                return _cachedMap;
-
-            await _lock.WaitAsync();
             try
             {
-                LocalPilotLogger.Log($"[ProjectMap] Generating High-Signal YAML snapshot of {rootPath}...");
-                
-                // 🚀 PERFORMANCE FIX: Grab all open document views ONCE on the Main Thread
-                // to avoid switching 400+ times in the loop below.
-                var openDocContents = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                try {
-                    await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                    var dte = await Community.VisualStudio.Toolkit.VS.GetRequiredServiceAsync<DTE, DTE>();
-                    foreach (Document doc in dte.Documents)
-                    {
-                        if (doc != null && !string.IsNullOrEmpty(doc.FullName))
-                        {
-                            var view = await Community.VisualStudio.Toolkit.VS.Documents.GetDocumentViewAsync(doc.FullName);
-                            if (view?.TextBuffer != null)
-                            {
-                                openDocContents[doc.FullName] = view.TextBuffer.CurrentSnapshot.GetText();
-                            }
-                        }
-                    }
-                } catch { /* Fail gracefully, we will fallback to disk */ }
+                if (string.IsNullOrEmpty(rootPath) || !Directory.Exists(rootPath))
+                    return "Project root not found.";
 
-                var sb = new StringBuilder();
-                sb.AppendLine("## WORKSPACE EXECUTIVE SUMMARY (YAML)");
-                sb.AppendLine($"# Generated: {DateTime.Now:O}");
-                sb.AppendLine($"# Root: {rootPath}");
-                sb.AppendLine("---");
-
-                var directoryInfo = new DirectoryInfo(rootPath);
-                var files = GetProjectFiles(directoryInfo).ToList();
-
-                foreach (var file in files)
+                // SOLUTION ISOLATION: Clear symbol index if solution changed
+                if (_lastRoot != rootPath)
                 {
-                    string relativePath = GetRelativePath(rootPath, file.FullName);
-                    
-                    // 🚀 COMPACT NODE REPRESENTATION
-                    sb.AppendLine($"- File: {relativePath}");
-                    
-                    // Grab signatures from the index
-                    lock (_symbolIndex)
-                    {
-                        var symbols = _symbolIndex.Values.SelectMany(v => v)
-                            .Where(l => l.FilePath == file.FullName)
-                            .Take(20);
-                        
-                        if (symbols.Any())
-                        {
-                            sb.AppendLine($"  Symbols: [{string.Join(", ", symbols.Select(s => s.Name))}]");
-                        }
-                    }
-
-                    // Shallow content preview (optimized for local LLM token density)
-                    // 🚀 PERFORMANCE FIX: Pass the pre-fetched contents to avoid context switching
-                    string head = await ReadFilePrefixAsync(file.FullName, maxBytesPerFile, openDocContents);
-                    if (!string.IsNullOrEmpty(head) && head != "[Binary/Excluded]")
-                    {
-                        string sanitized = head.Replace("\r", "").Replace("\n", " ").Replace("  ", " ");
-                        if (sanitized.Length > 150) sanitized = sanitized.Substring(0, 150) + "...";
-                        sb.AppendLine($"  Preview: \"{sanitized.Replace("\"", "'")}\"");
-                    }
-
-                    if (sb.Length > maxTotalBytes) 
-                    {
-                        sb.AppendLine("  # Note: Snapshot truncated due to context window limits.");
-                        break;
-                    }
+                    LocalPilotLogger.Log($"[ProjectMap] Solution changed. Clearing symbol index for {rootPath}...");
+                    _symbolIndex.Clear();
+                    _cachedMap = null;
+                    _lastRoot = rootPath;
+                    _lastCacheTime = DateTime.MinValue;
                 }
 
-                _cachedMap = sb.ToString();
-                _lastRoot = rootPath;
-                _lastCacheTime = DateTime.Now;
-                await SaveToDiskAsync(rootPath);
-                
-                return _cachedMap;
+                // SMART DEBOUNCE: If a map was generated in the last 10 seconds, reuse it 
+                if (_cachedMap != null && (DateTime.Now - _lastCacheTime).TotalSeconds < 10)
+                    return _cachedMap;
+
+                if (!await _lock.WaitAsync(0)) return _cachedMap ?? "Indexing in progress...";
+                try
+                {
+                    LocalPilotLogger.Log($"[ProjectMap] Generating High-Signal YAML snapshot of {rootPath}...");
+                    
+                    var openDocContents = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    try {
+                        await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                        var dte = await Community.VisualStudio.Toolkit.VS.GetRequiredServiceAsync<DTE, DTE>();
+                        if (dte?.Documents != null)
+                        {
+                            foreach (Document doc in dte.Documents)
+                            {
+                                try
+                                {
+                                    if (doc != null && !string.IsNullOrEmpty(doc.FullName))
+                                    {
+                                        var view = await Community.VisualStudio.Toolkit.VS.Documents.GetDocumentViewAsync(doc.FullName);
+                                        if (view?.TextBuffer != null)
+                                        {
+                                            openDocContents[doc.FullName] = view.TextBuffer.CurrentSnapshot.GetText();
+                                        }
+                                    }
+                                }
+                                catch { }
+                            }
+                        }
+                    } catch { /* Fail gracefully, we will fallback to disk */ }
+
+                    var sb = new StringBuilder();
+                    sb.AppendLine("## WORKSPACE EXECUTIVE SUMMARY (YAML)");
+                    sb.AppendLine($"# Generated: {DateTime.Now:O}");
+                    sb.AppendLine($"# Root: {rootPath}");
+                    sb.AppendLine("---");
+
+                    var files = SafeEnumerateFiles(new DirectoryInfo(rootPath)).ToList();
+
+                    foreach (var file in files)
+                    {
+                        try
+                        {
+                            string relativePath = GetRelativePath(rootPath, file.FullName);
+                            
+                            sb.AppendLine($"- File: {relativePath}");
+                            
+                            // Grab signatures from the index (snapshot the values to avoid collection changed)
+                            var allSymbols = _symbolIndex.Values.ToArray();
+                            var fileSymbols = allSymbols.SelectMany(v => v)
+                                .Where(l => l.FilePath == file.FullName)
+                                .Take(20)
+                                .ToList();
+                            
+                            if (fileSymbols.Any())
+                            {
+                                sb.AppendLine($"  Symbols: [{string.Join(", ", fileSymbols.Select(s => s.Name))}]");
+                            }
+
+                            // Shallow content preview
+                            string head = await ReadFilePrefixAsync(file.FullName, maxBytesPerFile, openDocContents);
+                            if (!string.IsNullOrEmpty(head) && head != "[Binary/Excluded]")
+                            {
+                                string sanitized = head.Replace("\r", "").Replace("\n", " ").Replace("  ", " ");
+                                if (sanitized.Length > 150) sanitized = sanitized.Substring(0, 150) + "...";
+                                sb.AppendLine($"  Preview: \"{sanitized.Replace("\"", "'")}\"");
+                            }
+
+                            if (sb.Length > maxTotalBytes) 
+                            {
+                                sb.AppendLine("  # Note: Snapshot truncated due to context window limits.");
+                                break;
+                            }
+                        }
+                        catch { }
+                    }
+
+                    _cachedMap = sb.ToString();
+                    _lastRoot = rootPath;
+                    _lastCacheTime = DateTime.Now;
+                    await SaveToDiskAsync(rootPath);
+                    
+                    return _cachedMap;
+                }
+                finally
+                {
+                    _lock.Release();
+                }
             }
-            finally
+            catch (Exception ex)
             {
-                _lock.Release();
+                LocalPilotLogger.LogError("[ProjectMap] GenerateProjectMapAsync failed catastrophically (non-fatal)", ex);
+                return "Failed to generate project map.";
             }
+        }
+
+        private IEnumerable<FileInfo> SafeEnumerateFiles(DirectoryInfo dir)
+        {
+            var files = new List<FileInfo>();
+            var queue = new Queue<DirectoryInfo>();
+            queue.Enqueue(dir);
+
+            while (queue.Count > 0 && files.Count < 400)
+            {
+                var currentDir = queue.Dequeue();
+                try
+                {
+                    if (ExcludedDirs.Contains(currentDir.Name)) continue;
+
+                    foreach (var file in currentDir.GetFiles())
+                    {
+                        try
+                        {
+                            if (AllowedExtensions.Contains(file.Extension))
+                            {
+                                files.Add(file);
+                                if (files.Count >= 400) break;
+                            }
+                        }
+                        catch { }
+                    }
+
+                    if (files.Count >= 400) break;
+
+                    foreach (var subDir in currentDir.GetDirectories())
+                    {
+                        try
+                        {
+                            queue.Enqueue(subDir);
+                        }
+                        catch { }
+                    }
+                }
+                catch { }
+            }
+
+            return files.OrderBy(f => f.Extension == ".sln" || f.Extension == ".csproj" ? 0 : 1);
         }
 
         private async Task SaveToDiskAsync(string root)
         {
             try
             {
+                if (string.IsNullOrEmpty(root)) return;
                 string dir = Path.Combine(root, ".localpilot");
                 if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
                 
                 string path = Path.Combine(dir, "map.txt");
-                await Task.Run(() => File.WriteAllText(path, _cachedMap));
-                LocalPilotLogger.Log($"[ProjectMap] Persisted map to {path}");
+                string tempPath = path + ".tmp";
+                await Task.Run(() => File.WriteAllText(tempPath, _cachedMap));
+                if (File.Exists(path)) File.Delete(path);
+                File.Move(tempPath, path);
             }
-            catch (Exception ex) { LocalPilotLogger.LogError("[ProjectMap] Save failed", ex); }
-        }
-
-        private async Task LoadFromDiskAsync(string root)
-        {
-            try
-            {
-                string path = Path.Combine(root, ".localpilot", "map.txt");
-                if (File.Exists(path))
-                {
-                    _cachedMap = await Task.Run(() => File.ReadAllText(path));
-                    _lastRoot = root;
-                    _lastCacheTime = File.GetLastWriteTime(path);
-                    LocalPilotLogger.Log("[ProjectMap] Loaded persistent map from disk");
-                }
-            }
-            catch (Exception ex) { LocalPilotLogger.LogError("[ProjectMap] Load failed", ex); }
-        }
-
-        private IEnumerable<FileInfo> GetProjectFiles(DirectoryInfo dir)
-        {
-            return dir.EnumerateFiles("*", SearchOption.AllDirectories)
-                .Where(f => !IsExcluded(f.FullName) && AllowedExtensions.Contains(f.Extension))
-                .OrderBy(f => f.Extension == ".sln" || f.Extension == ".csproj" ? 0 : 1)
-                .Take(400); 
-        }
-
-        private bool IsExcluded(string path)
-        {
-            var segments = path.Split(new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar }, StringSplitOptions.RemoveEmptyEntries);
-            return segments.Any(s => ExcludedDirs.Contains(s, StringComparer.OrdinalIgnoreCase));
+            catch { }
         }
 
         public async Task<string> GetLiveContentAsync(string filePath, Dictionary<string, string> preFetched = null)
         {
+            if (string.IsNullOrEmpty(filePath)) return string.Empty;
             if (preFetched != null && preFetched.TryGetValue(filePath, out var content))
                 return content;
 
@@ -239,42 +283,60 @@ namespace LocalPilot.Services
                 }
                 else
                 {
-                    // If we're not on the main thread and don't have pre-fetched data, 
-                    // we'll try to jump to UI thread once, but this is what we want to avoid in loops.
-                    return await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.RunAsync(async () => {
-                        await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                        var doc = await Community.VisualStudio.Toolkit.VS.Documents.GetDocumentViewAsync(filePath);
-                        return doc?.TextBuffer?.CurrentSnapshot?.GetText();
-                    }) ?? await Task.Run(() => File.ReadAllText(filePath));
+                    var live = await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.RunAsync(async () => {
+                        try
+                        {
+                            await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                            var doc = await Community.VisualStudio.Toolkit.VS.Documents.GetDocumentViewAsync(filePath);
+                            return doc?.TextBuffer?.CurrentSnapshot?.GetText();
+                        }
+                        catch { return null; }
+                    });
+                    if (live != null) return live;
                 }
             }
-            catch { /* Fallback to disk */ }
+            catch { }
 
-            return await Task.Run(() => File.ReadAllText(filePath));
-        }
+            try
+            {
+                if (File.Exists(filePath))
+                    return await Task.Run(() => File.ReadAllText(filePath));
+            }
+            catch { }
 
-        public async Task<Stream> GetLiveStreamAsync(string filePath, Dictionary<string, string> preFetched = null)
-        {
-            // 🛡️ MEMORY CEILING FIX: Convert live content to stream
-            string content = await GetLiveContentAsync(filePath, preFetched);
-            return new MemoryStream(Encoding.UTF8.GetBytes(content));
+            return string.Empty;
         }
 
         private async Task<string> ReadFilePrefixAsync(string filePath, int bytesToRead, Dictionary<string, string> preFetched = null)
         {
             try
             {
+                if (!File.Exists(filePath)) return string.Empty;
                 if (IsBinaryFile(filePath)) return "[Binary/Excluded]";
 
-                // 🚀 SENIOR ARCHITECT FIX: Prioritize Live Buffer over Disk
-                string content = await GetLiveContentAsync(filePath, preFetched);
-                
-                string text = content.Length > bytesToRead ? content.Substring(0, bytesToRead) : content;
-                
-                // 🚀 POPULATE FAST INDEX
+                if (preFetched != null && preFetched.TryGetValue(filePath, out var prefetched))
+                {
+                    string truncated = prefetched.Length > bytesToRead ? prefetched.Substring(0, bytesToRead) : prefetched;
+                    IndexSymbols(filePath, truncated);
+                    return prefetched.Length > bytesToRead ? truncated + "... [Truncated]" : truncated;
+                }
+
+                string text;
+                try
+                {
+                    using (var reader = new StreamReader(filePath))
+                    {
+                        var buffer = new char[bytesToRead];
+                        int read = await reader.ReadAsync(buffer, 0, bytesToRead);
+                        text = new string(buffer, 0, read);
+                    }
+                }
+                catch { return "[Access Denied]"; }
+
                 IndexSymbols(filePath, text);
 
-                if (content.Length > bytesToRead) return text + "... [Truncated]";
+                var fileInfo = new FileInfo(filePath);
+                if (fileInfo.Length > bytesToRead) return text + "... [Truncated]";
                 return text;
             }
             catch { return "[Access Denied]"; }
@@ -284,6 +346,7 @@ namespace LocalPilot.Services
         {
             try
             {
+                if (!File.Exists(filePath)) return false;
                 var buffer = new byte[512];
                 using (var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
                 {
@@ -300,58 +363,65 @@ namespace LocalPilot.Services
 
         public IReadOnlyList<SymbolLocation> FindSymbols(string name)
         {
-            if (_symbolIndex.TryGetValue(name, out var list)) return list;
+            if (string.IsNullOrEmpty(name)) return new List<SymbolLocation>();
+            if (_symbolIndex.TryGetValue(name, out var list) && list != null)
+            {
+                lock (list) { return list.ToList(); }
+            }
             return new List<SymbolLocation>();
         }
 
+        private static readonly Regex[] _symbolPatterns = new[]
+        {
+            new Regex(@"(?<!\/\/\s*)(?:class|interface|struct|type|trait)\s+(?<name>[a-zA-Z_]\w*)", RegexOptions.Compiled | RegexOptions.ExplicitCapture),
+            new Regex(@"(?<!\/\/\s*)@(?:Component|Injectable|Directive|NgModule|Pipe)\s*\(\s*\{", RegexOptions.Compiled | RegexOptions.ExplicitCapture),
+            new Regex(@"(?<!\/\/\s*)(?:func|def|function)\s+(?<name>[a-zA-Z_]\w*)\s*\(", RegexOptions.Compiled | RegexOptions.ExplicitCapture),
+            new Regex(@"(?<!\/\/\s*)(?:export\s+)?(?:const|let|var)\s+(?<name>[a-zA-Z_]\w*)\s*[:=]\s*(?:\(.*\))\s*=>", RegexOptions.Compiled | RegexOptions.ExplicitCapture),
+            new Regex(@"(?<!\/\/\s*)(?:public|private|internal|protected|static|async|virtual)?\s+(?:(?<type>[a-zA-Z_][\w\<\>\[\]]*)\s+)?(?<name>[a-zA-Z_]\w*)\s*\((?<args>[^\)]*)\)\s*\{", RegexOptions.Compiled | RegexOptions.ExplicitCapture)
+        };
+
         private void IndexSymbols(string filePath, string content)
         {
-            string ext = Path.GetExtension(filePath).ToLowerInvariant();
-            var supported = new HashSet<string> { ".cs", ".js", ".ts", ".tsx", ".jsx", ".vue", ".svelte", ".py", ".go", ".razor", ".cshtml", ".rs", ".rb", ".php", ".java", ".kt", ".sql" };
-            if (!supported.Contains(ext)) return;
-
-            // 🚀 Lightning Fast Polyglot Indexer
-            // Targets: Classes, Interfaces, Methods, Functions, Components (inc. Angular)
-            var patterns = new[] {
-                @"(?<!\/\/\s*)(?:class|interface|struct|type|trait)\s+(?<name>[a-zA-Z_]\w*)", // Type declarations
-                @"(?<!\/\/\s*)@(?:Component|Injectable|Directive|NgModule|Pipe)\s*\(\s*\{", // Angular Decorators
-                @"(?<!\/\/\s*)(?:func|def|function)\s+(?<name>[a-zA-Z_]\w*)\s*\(", // Keyword functions
-                @"(?<!\/\/\s*)(?:export\s+)?(?:const|let|var)\s+(?<name>[a-zA-Z_]\w*)\s*[:=]\s*(?:\(.*\))\s*=>", // Arrow Functions 
-                @"(?<!\/\/\s*)(?:public|private|internal|protected|static|async|virtual)?\s+(?:(?<type>[a-zA-Z_][\w\<\>\[\]]*)\s+)?(?<name>[a-zA-Z_]\w*)\s*\((?<args>[^\)]*)\)\s*\{" // C-style Methods
-            };
-
-            foreach (var pattern in patterns)
+            try
             {
-                var matches = Regex.Matches(content, pattern);
-                foreach (Match m in matches)
+                string ext = Path.GetExtension(filePath).ToLowerInvariant();
+                var supported = new HashSet<string> { ".cs", ".js", ".ts", ".tsx", ".jsx", ".vue", ".svelte", ".py", ".go", ".razor", ".cshtml", ".rs", ".rb", ".php", ".java", ".kt", ".sql" };
+                if (!supported.Contains(ext)) return;
+
+                foreach (var pattern in _symbolPatterns)
                 {
-                    var name = m.Groups["name"].Value;
-                    if (string.IsNullOrEmpty(name) || name == "if" || name == "foreach" || name == "while" || name == "switch") continue;
-
-                    var loc = new SymbolLocation
+                    var matches = pattern.Matches(content);
+                    foreach (Match m in matches)
                     {
-                        Name = name,
-                        FilePath = filePath,
-                        Line = GetLineNumber(content, m.Index),
-                        Column = 1,
-                        Kind = m.Value.Contains("class") ? "Class" : "Method"
-                    };
+                        var name = m.Groups["name"].Value;
+                        if (string.IsNullOrEmpty(name) || name == "if" || name == "foreach" || name == "while" || name == "switch") continue;
 
-                    lock (_symbolIndex)
-                    {
-                        if (!_symbolIndex.ContainsKey(name)) _symbolIndex[name] = new List<SymbolLocation>();
-                        // Prevent duplicates
-                        if (!_symbolIndex[name].Any(l => l.FilePath == filePath && l.Line == loc.Line))
+                        var loc = new SymbolLocation
                         {
-                            _symbolIndex[name].Add(loc);
+                            Name = name,
+                            FilePath = filePath,
+                            Line = GetLineNumber(content, m.Index),
+                            Column = 1,
+                            Kind = m.Value.Contains("class") ? "Class" : "Method"
+                        };
+
+                        var list = _symbolIndex.GetOrAdd(name, _ => new List<SymbolLocation>());
+                        lock (list)
+                        {
+                            if (!list.Any(l => l.FilePath == filePath && l.Line == loc.Line))
+                            {
+                                list.Add(loc);
+                            }
                         }
                     }
                 }
             }
+            catch { }
         }
 
         private int GetLineNumber(string content, int index)
         {
+            if (string.IsNullOrEmpty(content)) return 1;
             int line = 1;
             for (int i = 0; i < index && i < content.Length; i++)
             {
@@ -362,10 +432,14 @@ namespace LocalPilot.Services
 
         private string GetRelativePath(string rootPath, string fullPath)
         {
+            if (string.IsNullOrEmpty(rootPath) || string.IsNullOrEmpty(fullPath)) return fullPath;
             if (!rootPath.EndsWith(Path.DirectorySeparatorChar.ToString()))
                 rootPath += Path.DirectorySeparatorChar;
 
-            return fullPath.Replace(rootPath, "");
+            if (fullPath.StartsWith(rootPath, StringComparison.OrdinalIgnoreCase))
+                return fullPath.Substring(rootPath.Length);
+            
+            return fullPath;
         }
     }
 }

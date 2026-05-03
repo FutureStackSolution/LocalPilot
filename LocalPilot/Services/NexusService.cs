@@ -10,19 +10,22 @@ using Community.VisualStudio.Toolkit;
 using LocalPilot.Models;
 using Microsoft.VisualStudio.Shell;
 using Newtonsoft.Json;
+using Microsoft.Data.Sqlite;
 
 namespace LocalPilot.Services
 {
     /// <summary>
     /// LocalPilot Nexus: The full-stack dependency graph service.
-    /// Optimized with Incremental Scanning, Parallel Processing, and Debounced Updates.
+    /// UPGRADED (v4.0): Uses SQLite Storage Engine for persistent graph storage.
+    /// Eliminates JSON serialization stutters and allows for massive graph scale.
     /// </summary>
     public class NexusService : IDisposable
     {
         private static readonly NexusService _instance = new NexusService();
         public static NexusService Instance => _instance;
 
-        private NexusGraph _graph = new NexusGraph();
+        private readonly StorageService _storage = StorageService.Instance;
+        private volatile NexusGraph _graph = new NexusGraph();
         private readonly SemaphoreSlim _lock = new SemaphoreSlim(1, 1);
         private string _workspaceRoot = string.Empty;
         
@@ -33,44 +36,77 @@ namespace LocalPilot.Services
 
         private NexusService() 
         {
-            // Start background consumer for debounced incremental updates
             _workerTask = Task.Run(ProcessQueueAsync);
         }
 
         public async Task InitializeAsync(string workspaceRoot)
         {
-            _workspaceRoot = workspaceRoot;
-            await LoadFromDiskAsync();
-            SetupWatcher(workspaceRoot);
+            try
+            {
+                _workspaceRoot = workspaceRoot;
+                await TryMigrateLegacyNexusAsync(workspaceRoot);
+                await RefreshGraphFromDbAsync();
+                SetupWatcher(workspaceRoot);
+            }
+            catch (Exception ex)
+            {
+                LocalPilotLogger.LogError("[Nexus] InitializeAsync failed", ex);
+            }
         }
 
         public NexusGraph GetGraph() => _graph;
 
-        private void SetupWatcher(string path)
+        private async Task RefreshGraphFromDbAsync()
         {
-            if (_watcher != null) { _watcher.Dispose(); }
-            if (!Directory.Exists(path)) return;
-
-            _watcher = new FileSystemWatcher(path)
+            var newGraph = new NexusGraph();
+            try
             {
-                IncludeSubdirectories = true,
-                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.DirectoryName,
-                Filter = "*.*"
-            };
+                using (var cmd = _storage.GetConnection().CreateCommand())
+                {
+                    cmd.CommandText = "SELECT Id, Label, Type, Metadata FROM NexusNodes";
+                    using (var reader = await cmd.ExecuteReaderAsync())
+                    {
+                        while (await reader.ReadAsync())
+                        {
+                            newGraph.Nodes.Add(new NexusNode {
+                                Id = reader.GetString(0),
+                                Name = reader.GetString(1),
+                                Type = (NexusNodeType)Enum.Parse(typeof(NexusNodeType), reader.GetString(2)),
+                                FilePath = reader.GetString(3) // Using Metadata column for FilePath
+                            });
+                        }
+                    }
 
-            _watcher.Changed += OnFileChanged;
-            _watcher.Created += OnFileChanged;
-            _watcher.Deleted += OnFileDeleted;
-            _watcher.Renamed += OnFileRenamed;
-            _watcher.EnableRaisingEvents = true;
+                    cmd.CommandText = "SELECT SourceId, TargetId, Type FROM NexusEdges";
+                    using (var reader = await cmd.ExecuteReaderAsync())
+                    {
+                        while (await reader.ReadAsync())
+                        {
+                            newGraph.Edges.Add(new NexusEdge {
+                                FromId = reader.GetString(0),
+                                ToId = reader.GetString(1),
+                                Type = (NexusEdgeType)Enum.Parse(typeof(NexusEdgeType), reader.GetString(2))
+                            });
+                        }
+                    }
+                }
+                _graph = newGraph;
+            }
+            catch (Exception ex) { LocalPilotLogger.LogError("[Nexus] RefreshGraphFromDbAsync failed", ex); }
         }
 
-        private void OnFileChanged(object sender, FileSystemEventArgs e) => QueueFile(e.FullPath);
-        private void OnFileDeleted(object sender, FileSystemEventArgs e) => QueueFile(e.FullPath, isDeleted: true);
-        private void OnFileRenamed(object sender, RenamedEventArgs e) 
+        private void SetupWatcher(string path)
         {
-            QueueFile(e.OldFullPath, isDeleted: true);
-            QueueFile(e.FullPath);
+            try
+            {
+                if (_watcher != null) { try { _watcher.Dispose(); } catch { } }
+                if (string.IsNullOrEmpty(path) || !Directory.Exists(path)) return;
+                _watcher = new FileSystemWatcher(path) { IncludeSubdirectories = true, Filter = "*.*", EnableRaisingEvents = true };
+                _watcher.Changed += (s, e) => QueueFile(e.FullPath);
+                _watcher.Created += (s, e) => QueueFile(e.FullPath);
+                _watcher.Deleted += (s, e) => QueueFile(e.FullPath, true);
+            }
+            catch { }
         }
 
         private void QueueFile(string path, bool isDeleted = false)
@@ -79,7 +115,6 @@ namespace LocalPilot.Services
             if (ext == ".cs" || ext == ".ts" || ext == ".tsx")
             {
                 if (path.Contains("\\obj\\") || path.Contains("\\bin\\") || path.Contains("\\node_modules\\")) return;
-                
                 _pendingFiles.TryAdd(path, 0);
             }
         }
@@ -90,94 +125,114 @@ namespace LocalPilot.Services
             {
                 try
                 {
-                    if (GlobalPriorityGuard.ShouldYield() || _pendingFiles.IsEmpty)
-                    {
-                        if (GlobalPriorityGuard.ShouldYield() && !_pendingFiles.IsEmpty)
-                        {
-                            LocalPilotLogger.Log("[Nexus] Priority Yield: Pausing graph sync while Agent is active...", LogCategory.Agent);
-                        }
-                        await Task.Delay(5000, _cts.Token); // Deep Sleep during activity
-                        continue;
-                    }
+                    await Task.Delay(5000, _cts.Token);
+                    if (_pendingFiles.IsEmpty) continue;
 
-                    var filesToProcess = _pendingFiles.Keys.ToList();
+                    var files = _pendingFiles.Keys.ToList();
                     _pendingFiles.Clear();
 
-                    await _lock.WaitAsync(_cts.Token);
+                    if (!await _lock.WaitAsync(0)) continue;
                     try
                     {
-                        LocalPilotLogger.Log($"[Nexus] Performing incremental update for {filesToProcess.Count} files...", LogCategory.Agent);
-                        foreach (var file in filesToProcess)
-                        {
-                            UpdateGraphForFile(file);
-                        }
-                        PerformBridging(_graph);
-                        _graph.LastUpdated = DateTime.Now;
-                        await SaveToDiskAsync();
+                        foreach (var file in files) await UpdateGraphForFileAsync(file);
+                        await RefreshGraphFromDbAsync();
                     }
                     finally { _lock.Release(); }
                 }
                 catch (OperationCanceledException) { break; }
-                catch (Exception ex) { LocalPilotLogger.LogError("[Nexus] Queue processing failed", ex); }
+                catch { await Task.Delay(5000); }
             }
         }
 
-        /// <summary>
-        /// 🚀 HIGH PERFORMANCE: Full rebuild using Parallel.ForEach.
-        /// </summary>
         public async Task RebuildGraphAsync(CancellationToken ct = default)
         {
             if (!await _lock.WaitAsync(0)) return;
             try
             {
-                LocalPilotLogger.Log("[Nexus] Rebuilding full-stack dependency graph...", LogCategory.Agent);
-                var newGraph = new NexusGraph();
+                LocalPilotLogger.Log("[Nexus] Rebuilding persistent dependency graph...");
                 
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                 var solution = await VS.Solutions.GetCurrentSolutionAsync();
                 if (solution == null || string.IsNullOrEmpty(solution.FullPath)) return;
                 _workspaceRoot = Path.GetDirectoryName(solution.FullPath);
 
-                // 🚀 PARALLEL SCAN ENGINE
-                var allFiles = Directory.EnumerateFiles(_workspaceRoot, "*.*", SearchOption.AllDirectories)
-                    .Where(f => {
-                        var ext = Path.GetExtension(f).ToLowerInvariant();
-                        return (ext == ".cs" || ext == ".ts" || ext == ".tsx") &&
-                               !f.Contains("\\obj\\") && !f.Contains("\\bin\\") && !f.Contains("\\node_modules\\");
-                    }).ToList();
-
-                try
+                // Switch to background thread for the heavy scan
+                await Task.Run(async () => 
                 {
-                    using (var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, GlobalPriorityGuard.YieldToken))
+                    var allFiles = Directory.EnumerateFiles(_workspaceRoot, "*.*", SearchOption.AllDirectories)
+                                            .Where(f => {
+                                                var ext = Path.GetExtension(f).ToLowerInvariant();
+                                                return (ext == ".cs" || ext == ".ts" || ext == ".tsx") &&
+                                                       !f.Contains("\\obj\\") && !f.Contains("\\bin\\") && !f.Contains("\\node_modules\\");
+                                            }).ToList();
+
+                    // Clear tables for rebuild
+                    await _storage.ExecuteAsync("DELETE FROM NexusNodes");
+                    await _storage.ExecuteAsync("DELETE FROM NexusEdges");
+
+                    // Process in batches to avoid overwhelming the system
+                    int batchSize = 10;
+                    for (int i = 0; i < allFiles.Count; i += batchSize)
                     {
-                        Parallel.ForEach(allFiles, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount, CancellationToken = linkedCts.Token }, file =>
-                        {
-                            AnalyzeFile(file, newGraph);
-                        });
+                        var batch = allFiles.Skip(i).Take(batchSize);
+                        await Task.WhenAll(batch.Select(f => UpdateGraphForFileAsync(f)));
                     }
-                }
-                catch (OperationCanceledException) { LocalPilotLogger.Log("[Nexus] Graph rebuild yielded to agent."); }
+                });
 
-                PerformBridging(newGraph);
-                _graph = newGraph;
-                _graph.LastUpdated = DateTime.Now;
-
-                await SaveToDiskAsync();
-                LocalPilotLogger.Log($"[Nexus] Graph synchronized: {_graph.Nodes.Count} nodes, {_graph.Edges.Count} edges.", LogCategory.Agent);
+                await RefreshGraphFromDbAsync();
+                LocalPilotLogger.Log($"[Nexus] Sync complete: {_graph.Nodes.Count} nodes.");
             }
             finally { _lock.Release(); }
         }
 
-        private void UpdateGraphForFile(string filePath)
+        private async Task UpdateGraphForFileAsync(string filePath)
         {
-            // 1. Remove old nodes and edges associated with this file
-            _graph.Nodes.RemoveAll(n => n.FilePath == filePath);
-            _graph.Edges.RemoveAll(e => e.FromId == filePath || (_graph.Nodes.Any(n => n.Id == e.ToId && n.FilePath == filePath)));
+            // 1. Clear old data for this file
+            await _storage.ExecuteAsync("DELETE FROM NexusNodes WHERE Metadata = @Path", new { Path = filePath });
+            await _storage.ExecuteAsync("DELETE FROM NexusEdges WHERE SourceId = @Path OR TargetId IN (SELECT Id FROM NexusNodes WHERE Metadata = @Path)", new { Path = filePath });
 
-            // 2. Re-analyze if file exists (not deleted)
-            if (File.Exists(filePath))
+            if (!File.Exists(filePath)) return;
+
+            // 2. Re-analyze and persist
+            var tempGraph = new NexusGraph();
+            AnalyzeFile(filePath, tempGraph);
+
+            await _storage.GetLock().WaitAsync();
+            try
             {
-                AnalyzeFile(filePath, _graph);
+                using (var transaction = _storage.GetConnection().BeginTransaction())
+                {
+                    foreach (var node in tempGraph.Nodes)
+                    {
+                        using (var cmd = _storage.GetConnection().CreateCommand())
+                        {
+                            cmd.Transaction = transaction;
+                            cmd.CommandText = "INSERT OR REPLACE INTO NexusNodes (Id, Label, Type, Metadata) VALUES (@Id, @Label, @Type, @Path)";
+                            cmd.Parameters.AddWithValue("@Id", node.Id);
+                            cmd.Parameters.AddWithValue("@Label", node.Name);
+                            cmd.Parameters.AddWithValue("@Type", node.Type.ToString());
+                            cmd.Parameters.AddWithValue("@Path", filePath);
+                            await cmd.ExecuteNonQueryAsync();
+                        }
+                    }
+                    foreach (var edge in tempGraph.Edges)
+                    {
+                        using (var cmd = _storage.GetConnection().CreateCommand())
+                        {
+                            cmd.Transaction = transaction;
+                            cmd.CommandText = "INSERT OR REPLACE INTO NexusEdges (SourceId, TargetId, Type) VALUES (@Src, @Tgt, @Type)";
+                            cmd.Parameters.AddWithValue("@Src", edge.FromId);
+                            cmd.Parameters.AddWithValue("@Tgt", edge.ToId);
+                            cmd.Parameters.AddWithValue("@Type", edge.Type.ToString());
+                            await cmd.ExecuteNonQueryAsync();
+                        }
+                    }
+                    transaction.Commit();
+                }
+            }
+            finally
+            {
+                _storage.GetLock().Release();
             }
         }
 
@@ -185,8 +240,10 @@ namespace LocalPilot.Services
         {
             try
             {
-                string ext = Path.GetExtension(file).ToLowerInvariant();
+                var fi = new FileInfo(file);
+                if (fi.Length > 1024 * 1024) return;
                 string content = File.ReadAllText(file);
+                string ext = Path.GetExtension(file).ToLowerInvariant();
 
                 if (ext == ".cs") AnalyzeCSharpFile(file, content, graph);
                 else if (ext == ".ts" || ext == ".tsx") AnalyzeTypeScriptFile(file, content, graph);
@@ -196,139 +253,61 @@ namespace LocalPilot.Services
 
         private void AnalyzeCSharpFile(string file, string content, NexusGraph graph)
         {
-            // 🛡️ CONTRACT DISCOVERY: Detect DTOs and Models for Frontend Bridging
-            bool isModel = file.Contains("\\Models\\") || file.Contains("\\Dtos\\") || 
-                           Path.GetFileName(file).EndsWith("Dto.cs") || Path.GetFileName(file).EndsWith("Model.cs") ||
-                           Path.GetFileName(file).EndsWith("Request.cs") || Path.GetFileName(file).EndsWith("Response.cs");
+            bool isModel = file.Contains("\\Models\\") || file.Contains("\\Dtos\\");
+            if (isModel) graph.Nodes.Add(new NexusNode { Id = file, Name = Path.GetFileNameWithoutExtension(file), Type = NexusNodeType.DataModel, FilePath = file });
 
-            if (isModel && !content.Contains(": ControllerBase"))
+            if (content.Contains(": ControllerBase") || content.Contains("[ApiController]"))
             {
-                var modelNode = new NexusNode
-                {
-                    Id = file,
-                    Name = Path.GetFileNameWithoutExtension(file),
-                    Type = NexusNodeType.DataModel,
-                    Language = "cs",
-                    FilePath = file
-                };
-                lock (graph) { if (!graph.Nodes.Any(n => n.Id == file)) graph.Nodes.Add(modelNode); }
-            }
+                var ctrl = new NexusNode { Id = file, Name = Path.GetFileNameWithoutExtension(file), Type = NexusNodeType.Controller, FilePath = file };
+                graph.Nodes.Add(ctrl);
 
-            if (content.Contains(": ControllerBase") || content.Contains(": Controller") || content.Contains("[ApiController]"))
-            {
-                var controllerNode = new NexusNode
-                {
-                    Id = file,
-                    Name = Path.GetFileNameWithoutExtension(file),
-                    Type = NexusNodeType.Controller,
-                    Language = "cs",
-                    FilePath = file
-                };
-                lock (graph) { graph.Nodes.Add(controllerNode); }
-
-                var baseRouteMatch = Regex.Match(content, @"\[Route\(""(?<route>[^""]+)""\)\]");
-                string baseRoute = baseRouteMatch.Success ? baseRouteMatch.Groups["route"].Value : "";
-
-                var actionMatches = Regex.Matches(content, @"\[(?<verb>Http[a-zA-Z]+)(?:\(""(?<route>[^""]*)""\))?\]");
-                foreach (Match m in actionMatches)
+                var matches = Regex.Matches(content, @"\[(?<verb>Http[a-zA-Z]+)(?:\(""(?<route>[^""]*)""\))?\]");
+                foreach (Match m in matches)
                 {
                     string verb = m.Groups["verb"].Value.Replace("Http", "").ToUpper();
-                    string fullRoute = CombineRoutes(baseRoute, m.Groups["route"].Value);
-                    var endpointNode = new NexusNode
-                    {
-                        Id = $"api://{verb}/{fullRoute.Trim('/')}",
-                        Name = $"{verb} {fullRoute}",
-                        Type = NexusNodeType.ApiEndpoint,
-                        Language = "contract"
-                    };
-                    
-                    lock (graph)
-                    {
-                        if (!graph.Nodes.Contains(endpointNode)) graph.Nodes.Add(endpointNode);
-                        graph.Edges.Add(new NexusEdge { FromId = endpointNode.Id, ToId = controllerNode.Id, Type = NexusEdgeType.MapsTo });
-                    }
+                    string endpointId = $"api://{verb}/{m.Groups["route"].Value.Trim('/')}";
+                    graph.Nodes.Add(new NexusNode { Id = endpointId, Name = endpointId, Type = NexusNodeType.ApiEndpoint });
+                    graph.Edges.Add(new NexusEdge { FromId = endpointId, ToId = ctrl.Id, Type = NexusEdgeType.MapsTo });
                 }
             }
         }
 
         private void AnalyzeTypeScriptFile(string file, string content, NexusGraph graph)
         {
-            bool isComponent = content.Contains("@Component") || content.Contains("React.Component") || Regex.IsMatch(content, @"function\s+[A-Z]\w*.*return\s+\(");
-            bool isService = content.Contains("@Injectable") || file.EndsWith(".service.ts");
-
-            if (isComponent || isService)
+            bool isComp = content.Contains("@Component") || content.Contains("React.Component");
+            if (isComp)
             {
-                var node = new NexusNode
-                {
-                    Id = file,
-                    Name = Path.GetFileNameWithoutExtension(file),
-                    Type = isComponent ? NexusNodeType.Component : NexusNodeType.FrontendService,
-                    Language = Path.GetExtension(file).TrimStart('.'),
-                    FilePath = file
-                };
-                lock (graph) { graph.Nodes.Add(node); }
+                var node = new NexusNode { Id = file, Name = Path.GetFileNameWithoutExtension(file), Type = NexusNodeType.Component, FilePath = file };
+                graph.Nodes.Add(node);
 
-                var httpMatches = Regex.Matches(content, @"\.(?<verb>get|post|put|delete|patch)\s*<[^>]*>?\s*\(\s*[`'""](?<url>[^`'""\s)]+)[`'""]");
+                var httpMatches = Regex.Matches(content, @"\.(?<verb>get|post|put|delete)\s*\(\s*[`'""'](?<url>[^`'""\s)]+)[`'""]");
                 foreach (Match m in httpMatches)
                 {
-                    string verb = m.Groups["verb"].Value.ToUpper();
-                    string endpointId = $"api://{verb}/{NormalizeFrontendUrl(m.Groups["url"].Value)}";
-                    lock (graph) { graph.Edges.Add(new NexusEdge { FromId = node.Id, ToId = endpointId, Type = NexusEdgeType.Calls, Description = $"Calls {verb} {m.Groups["url"].Value}" }); }
+                    string endpointId = $"api://{m.Groups["verb"].Value.ToUpper()}/{m.Groups["url"].Value.Trim('/')}";
+                    graph.Edges.Add(new NexusEdge { FromId = node.Id, ToId = endpointId, Type = NexusEdgeType.Calls });
                 }
             }
         }
 
-        private void PerformBridging(NexusGraph graph)
+        private async Task TryMigrateLegacyNexusAsync(string root)
         {
-            lock (graph)
+            string path = Path.Combine(root, ".localpilot", "nexus.json");
+            if (!File.Exists(path)) return;
+            try
             {
-                var callEdges = graph.Edges.Where(e => e.ToId.StartsWith("api://")).ToList();
-                foreach (var edge in callEdges)
+                LocalPilotLogger.Log("[Nexus] Migrating legacy graph to SQLite...");
+                var loaded = JsonConvert.DeserializeObject<NexusGraph>(File.ReadAllText(path));
+                if (loaded != null)
                 {
-                    if (!graph.Nodes.Any(n => n.Id == edge.ToId))
-                    {
-                        graph.Nodes.Add(new NexusNode { Id = edge.ToId, Name = edge.ToId.Replace("api://", "").Replace("/", " "), Type = NexusNodeType.ApiEndpoint, Language = "contract" });
-                    }
+                    foreach (var n in loaded.Nodes) await _storage.ExecuteAsync("INSERT OR REPLACE INTO NexusNodes (Id, Label, Type, Metadata) VALUES (@Id, @L, @T, @P)", new { Id = n.Id, L = n.Name, T = n.Type.ToString(), P = n.FilePath });
+                    foreach (var e in loaded.Edges) await _storage.ExecuteAsync("INSERT OR REPLACE INTO NexusEdges (SourceId, TargetId, Type) VALUES (@S, @T, @Ty)", new { S = e.FromId, T = e.ToId, Ty = e.Type.ToString() });
                 }
+                File.Delete(path);
+                LocalPilotLogger.Log("[Nexus] Migration complete. Legacy graph deleted.");
             }
+            catch { }
         }
 
-        private string CombineRoutes(string @base, string action)
-        {
-            @base = @base?.Trim('/') ?? "";
-            action = action?.Trim('/') ?? "";
-            return string.IsNullOrEmpty(@base) ? action : (string.IsNullOrEmpty(action) ? @base : $"{@base}/{action}");
-        }
-
-        private string NormalizeFrontendUrl(string url)
-        {
-            if (url.Contains("://")) try { url = new Uri(url).AbsolutePath; } catch { }
-            url = Regex.Replace(url, @"\$\{[^}]+\}", "{id}");
-            url = Regex.Replace(url, @":\w+", "{id}");
-            return url.Trim('/');
-        }
-
-        private async Task SaveToDiskAsync()
-        {
-            try { 
-                string dir = Path.Combine(_workspaceRoot, ".localpilot");
-                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
-                File.WriteAllText(Path.Combine(dir, "nexus.json"), JsonConvert.SerializeObject(_graph)); 
-            } catch { }
-        }
-
-        private async Task LoadFromDiskAsync()
-        {
-            try { 
-                string path = Path.Combine(_workspaceRoot, ".localpilot", "nexus.json");
-                if (File.Exists(path)) _graph = JsonConvert.DeserializeObject<NexusGraph>(File.ReadAllText(path)) ?? new NexusGraph();
-            } catch { }
-        }
-
-        public void Dispose()
-        {
-            _cts.Cancel();
-            _watcher?.Dispose();
-        }
+        public void Dispose() { _cts.Cancel(); _watcher?.Dispose(); }
     }
 }
