@@ -97,9 +97,13 @@ namespace LocalPilot.Completion
 
         private async Task TriggerCompletionAsync()
         {
-            _cts?.Cancel();
-            _cts = new CancellationTokenSource();
-            var token = _cts.Token;
+            CancellationToken token;
+            lock (_lock)
+            {
+                _cts?.Cancel();
+                _cts = new CancellationTokenSource();
+                token = _cts.Token;
+            }
 
             try
             {

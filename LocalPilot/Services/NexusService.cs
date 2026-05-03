@@ -170,7 +170,13 @@ namespace LocalPilot.Services
                     await _storage.ExecuteAsync("DELETE FROM NexusNodes");
                     await _storage.ExecuteAsync("DELETE FROM NexusEdges");
 
-                    Parallel.ForEach(allFiles, file => { try { UpdateGraphForFileAsync(file).GetAwaiter().GetResult(); } catch { } });
+                    // Process in batches to avoid overwhelming the system
+                    int batchSize = 10;
+                    for (int i = 0; i < allFiles.Count; i += batchSize)
+                    {
+                        var batch = allFiles.Skip(i).Take(batchSize);
+                        await Task.WhenAll(batch.Select(f => UpdateGraphForFileAsync(f)));
+                    }
                 });
 
                 await RefreshGraphFromDbAsync();

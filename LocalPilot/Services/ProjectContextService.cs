@@ -127,6 +127,7 @@ namespace LocalPilot.Services
         private async Task<Dictionary<string, DateTime>> GetFileHashesFromDbAsync()
         {
             var dict = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+            await _storage.GetLock().WaitAsync();
             try
             {
                 using (var cmd = _storage.GetConnection().CreateCommand())
@@ -144,6 +145,10 @@ namespace LocalPilot.Services
                 }
             }
             catch (Exception ex) { LocalPilotLogger.LogError("[RAG] Failed to read DB snapshot", ex); }
+            finally
+            {
+                _storage.GetLock().Release();
+            }
             return dict;
         }
 
