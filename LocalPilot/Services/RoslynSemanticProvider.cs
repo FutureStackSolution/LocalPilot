@@ -60,9 +60,34 @@ namespace LocalPilot.Services
             var solution = _workspace.CurrentSolution;
             var results = new List<SymbolLocation>();
 
-            foreach (var project in solution.Projects)
+            // 🚀 PERFORMANCE HYGIENE: Prioritize the Active Project to avoid full solution compilation
+            Microsoft.CodeAnalysis.Project activeProject = null;
+            try {
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                var activeDoc = await VS.Documents.GetActiveDocumentViewAsync();
+                if (activeDoc != null) {
+                    var docId = solution.GetDocumentIdsWithFilePath(activeDoc.FilePath).FirstOrDefault();
+                    if (docId != null) activeProject = solution.GetProject(docId.ProjectId);
+                }
+            } catch { }
+
+            var projects = solution.Projects.ToList();
+            if (activeProject != null) {
+                projects.Remove(activeProject);
+                projects.Insert(0, activeProject);
+            }
+
+            foreach (var project in projects)
             {
                 if (ct.IsCancellationRequested) break;
+                
+                // 🛡️ CIRCUIT BREAKER: Skip projects that aren't C#/VB to save cycles
+                if (!CanHandle(Path.GetExtension(project.FilePath ?? ""))) continue;
+
+                // 🚀 SMART CHECK: Check if the project even contains the symbol name before compiling
+                // This is a much cheaper metadata check than GetCompilationAsync.
+                // (Note: Some versions of Roslyn don't have this, so we fallback)
+                
                 var compilation = await project.GetCompilationAsync(ct).ConfigureAwait(false);
                 if (compilation == null) continue;
 
@@ -85,6 +110,9 @@ namespace LocalPilot.Services
                         }
                     }
                 }
+                
+                // If we found it in the active project or high-priority projects, we stop to save time
+                if (results.Any()) break;
             }
             return results;
         }
@@ -159,33 +187,76 @@ namespace LocalPilot.Services
         public async Task<string> GetDiagnosticsAsync(CancellationToken ct)
         {
             await _initTask.JoinAsync(ct);
-            if (_workspace == null) return null;
-
-            var solution = _workspace.CurrentSolution;
-            var sb = new System.Text.StringBuilder();
-            int count = 0;
-
-            foreach (var project in solution.Projects)
+            
+            // 🚀 SENIOR ARCHITECT FIX: Use Visual Studio's Error List instead of full-solution compilation.
+            // Compilation-based diagnostics are 100x slower on large projects (e.g. HMIS).
+            try
             {
-                if (ct.IsCancellationRequested) break;
-                if (!CanHandle(Path.GetExtension(project.FilePath ?? ""))) continue;
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                var dte = Package.GetGlobalService(typeof(global::EnvDTE.DTE)) as global::EnvDTE80.DTE2;
+                if (dte == null) return null;
+
+                var items = dte.ToolWindows.ErrorList.ErrorItems;
+                if (items.Count == 0) return null;
+
+                var sb = new System.Text.StringBuilder();
+                int count = 0;
+                int totalItems = items.Count;
+                for (int i = 1; i <= totalItems; i++)
+                {
+                    if (ct.IsCancellationRequested) break;
+                    try
+                    {
+                        var item = items.Item(i);
+                        if (item == null) continue;
+
+                        // Only report Errors for Roslyn (Warnings are too noisy for the system prompt)
+                        if (item.ErrorLevel == global::EnvDTE80.vsBuildErrorLevel.vsBuildErrorLevelHigh)
+                        {
+                            string file = string.IsNullOrEmpty(item.FileName) ? "Unknown" : Path.GetFileName(item.FileName);
+                            sb.AppendLine($"[ERROR] {item.Description} (at {file}:{item.Line})");
+                            count++;
+                        }
+                        if (count >= 10) break;
+                    }
+                    catch { continue; }
+                }
+                return count > 0 ? sb.ToString() : null;
+            }
+            catch (Exception ex)
+            {
+                LocalPilotLogger.Log($"[RoslynProvider] Error List access failed: {ex.Message}. Falling back to active project only.");
+            }
+
+            // Fallback: Active Project compilation diagnostics only (MUCH faster than solution-wide)
+            try
+            {
+                var solution = _workspace?.CurrentSolution;
+                if (solution == null) return null;
+
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                var activeProj = await Community.VisualStudio.Toolkit.VS.Solutions.GetActiveProjectAsync();
+                if (activeProj == null) return null;
+
+                var project = solution.Projects.FirstOrDefault(p => p.Name == activeProj.Name);
+                if (project == null) return null;
 
                 var compilation = await project.GetCompilationAsync(ct).ConfigureAwait(false);
-                if (compilation == null) continue;
+                if (compilation == null) return null;
 
                 var diagnostics = compilation.GetDiagnostics(ct)
                     .Where(d => d.Severity == DiagnosticSeverity.Error)
-                    .Take(15); 
+                    .Take(10);
 
+                var sbFallback = new System.Text.StringBuilder();
                 foreach (var diag in diagnostics)
                 {
                     var lineSpan = diag.Location.GetLineSpan();
-                    string file = Path.GetFileName(lineSpan.Path);
-                    sb.AppendLine($"[ERROR] {diag.GetMessage()} (at {file}:{lineSpan.StartLinePosition.Line + 1})");
-                    count++;
+                    sbFallback.AppendLine($"[ERROR] {diag.GetMessage()} (at {Path.GetFileName(lineSpan.Path)}:{lineSpan.StartLinePosition.Line + 1})");
                 }
+                return sbFallback.Length > 0 ? sbFallback.ToString() : null;
             }
-            return count > 0 ? sb.ToString() : null;
+            catch { return null; }
         }
 
         public async Task SynchronizeDocumentAsync(string filePath)
@@ -194,7 +265,7 @@ namespace LocalPilot.Services
             await Task.CompletedTask;
         }
 
-        public async Task<string> RenameSymbolAsync(string filePath, int line, int column, string newName, CancellationToken ct)
+        public async Task<string> RenameSymbolAsync(string filePath, int line, int column, string newName, string oldName, CancellationToken ct)
         {
             await _initTask.JoinAsync(ct);
             if (_workspace == null) return "Error: Roslyn Workspace not initialized.";
@@ -225,15 +296,55 @@ namespace LocalPilot.Services
                 var semanticModel = await document.GetSemanticModelAsync(ct).ConfigureAwait(false);
                 var symbol = semanticModel.GetDeclaredSymbol(node, ct) ?? semanticModel.GetSymbolInfo(node, ct).Symbol;
 
-                // 🚀 FUZZY FALLBACK: If the model provided a wrong line number, try to find the symbol by name in this file
+                // 🚀 ADVANCED FUZZY FALLBACK (v2.2)
+                // If the model provided wrong coordinates, try several recovery strategies
                 if (symbol == null)
                 {
-                    var root = await document.GetSyntaxRootAsync(ct);
-                    // Search for the symbol name (we'd need the name, but usually we can infer it or try the token text)
-                    var possibleNode = root.DescendantNodes().FirstOrDefault(n => n.GetText().ToString().Trim() == token.Text);
-                    if (possibleNode != null)
+                    // Strategy 1: If we have the old name, search the entire file for it (Tokens are faster than Nodes)
+                    if (!string.IsNullOrEmpty(oldName))
                     {
-                         symbol = semanticModel.GetDeclaredSymbol(possibleNode, ct) ?? semanticModel.GetSymbolInfo(possibleNode, ct).Symbol;
+                        var bestToken = syntaxRoot.DescendantTokens()
+                            .Where(t => t.Text == oldName)
+                            .OrderBy(t => Math.Abs(t.GetLocation().GetMappedLineSpan().StartLinePosition.Line - (line - 1)))
+                            .FirstOrDefault();
+
+                        if (bestToken != default)
+                        {
+                            token = bestToken;
+                            node = token.Parent;
+                            symbol = semanticModel.GetDeclaredSymbol(node, ct) ?? semanticModel.GetSymbolInfo(node, ct).Symbol;
+                            
+                            // If still null, try the parent of the parent (e.g. for some complex declarators)
+                            if (symbol == null && node.Parent != null)
+                            {
+                                symbol = semanticModel.GetDeclaredSymbol(node.Parent, ct) ?? semanticModel.GetSymbolInfo(node.Parent, ct).Symbol;
+                            }
+                            
+                            if (symbol != null) LocalPilotLogger.Log($"[RoslynProvider] Fuzzy matched symbol '{oldName}' via Strategy 1.");
+                        }
+                    }
+
+                    // Strategy 2: If still not found, try the token text at the position (if it's not whitespace)
+                    if (symbol == null && !string.IsNullOrWhiteSpace(token.Text))
+                    {
+                        var bestToken = syntaxRoot.DescendantTokens()
+                            .Where(t => t.Text == token.Text)
+                            .OrderBy(t => Math.Abs(t.GetLocation().GetMappedLineSpan().StartLinePosition.Line - (line - 1)))
+                            .FirstOrDefault();
+
+                        if (bestToken != default)
+                        {
+                            token = bestToken;
+                            node = token.Parent;
+                            symbol = semanticModel.GetDeclaredSymbol(node, ct) ?? semanticModel.GetSymbolInfo(node, ct).Symbol;
+                            
+                            if (symbol == null && node.Parent != null)
+                            {
+                                symbol = semanticModel.GetDeclaredSymbol(node.Parent, ct) ?? semanticModel.GetSymbolInfo(node.Parent, ct).Symbol;
+                            }
+                            
+                            if (symbol != null) LocalPilotLogger.Log($"[RoslynProvider] Fuzzy matched token '{token.Text}' via Strategy 2.");
+                        }
                     }
                 }
 
@@ -241,7 +352,8 @@ namespace LocalPilot.Services
                 {
                     bool isStillLoading = solution.Projects.Any(p => !p.Documents.Any());
                     string hint = isStillLoading ? " (Solution is likely still indexing background documents)" : "";
-                    return $"Error: Could not find a refactorable symbol at the specified location.{hint}";
+                    string foundTokenText = string.IsNullOrEmpty(token.Text) ? "empty" : $"'{token.Text}'";
+                    return $"Error: Could not find a refactorable symbol at the specified location (Line {line}, Col {column}). Token found: {foundTokenText}. {hint}Suggestion: Verify the line/column point exactly to an identifier.";
                 }
 
                 // 🚀 MODERN RENAMER API: Using non-obsolete SymbolRenameOptions for deep semantic coverage

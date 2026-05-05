@@ -104,13 +104,20 @@ namespace LocalPilot.Services
                 var obj = Newtonsoft.Json.Linq.JObject.Parse(schema);
                 foreach (var prop in obj.Properties())
                 {
-                    string propType = prop.Value?.ToString() ?? "string";
+                    string val = prop.Value?.ToString() ?? "string";
+                    bool isOptional = val.Contains("(optional)");
+                    string propType = val.Replace("(optional)", "").Trim();
+
                     paramDef.Properties[prop.Name] = new OllamaPropertyDefinition
                     {
                         Type = propType == "integer" ? "integer" : "string",
                         Description = $"The {prop.Name} parameter"
                     };
-                    paramDef.Required.Add(prop.Name);
+                    
+                    if (!isOptional)
+                    {
+                        paramDef.Required.Add(prop.Name);
+                    }
                 }
             }
             catch
@@ -142,42 +149,55 @@ namespace LocalPilot.Services
         {
             if (string.IsNullOrEmpty(path)) return WorkspaceRoot;
 
+            // 🚀 SANITIZATION: LLMs sometimes wrap paths in quotes or backticks
+            path = path.Trim('\"', '\'', '`', ' ', '\t', '\n', '\r');
+
             // 🛡️ SECURITY GUARD: Block access to internal metadata
             if (IsInternalMetadata(path))
             {
                 throw new UnauthorizedAccessException($"Access to internal metadata directory '.localpilot' is restricted. Please target source files in the project instead.");
             }
 
-            // 1. Already absolute and exists: use as-is
-            if (Path.IsPathRooted(path) && File.Exists(path)) return path;
-
-            // 2. Try relative to workspace root
-            string combined = Path.IsPathRooted(path) ? path : Path.Combine(WorkspaceRoot ?? "", path);
-            if (File.Exists(combined)) return combined;
-
-            // 3. Fuzzy fallback: search workspace for a file with the same name.
-            if (!string.IsNullOrEmpty(WorkspaceRoot) && Directory.Exists(WorkspaceRoot))
+            try
             {
-                string fileName = Path.GetFileName(path);
-                if (!string.IsNullOrEmpty(fileName))
+                // 1. Already absolute and exists: use as-is
+                if (Path.IsPathRooted(path) && File.Exists(path)) return path;
+
+                // 2. Try relative to workspace root
+                string combined = Path.IsPathRooted(path) ? path : Path.Combine(WorkspaceRoot ?? "", path);
+                if (File.Exists(combined)) return combined;
+
+                // 3. Fuzzy fallback: search workspace for a file with the same name.
+                if (!string.IsNullOrEmpty(WorkspaceRoot) && Directory.Exists(WorkspaceRoot))
                 {
-                    try
+                    string fileName = Path.GetFileName(path);
+                    if (!string.IsNullOrEmpty(fileName))
                     {
-                        var matches = Directory.GetFiles(WorkspaceRoot, fileName, SearchOption.AllDirectories)
-                            .Where(f => !f.Contains("\\.git\\") && !f.Contains("\\bin\\") && !f.Contains("\\obj\\") && !f.Contains("\\.localpilot\\"))
-                            .ToList();
-
-                        if (matches.Count == 1)
+                        try
                         {
-                            LocalPilotLogger.Log($"[ResolvePath] Fuzzy matched '{path}' -> '{matches[0]}'");
-                            return matches[0];
-                        }
-                    }
-                    catch { }
-                }
-            }
+                            var matches = Directory.GetFiles(WorkspaceRoot, fileName, SearchOption.AllDirectories)
+                                .Where(f => !f.Contains("\\.git\\") && !f.Contains("\\bin\\") && !f.Contains("\\obj\\") && !f.Contains("\\.localpilot\\"))
+                                .ToList();
 
-            return combined;
+                            if (matches.Count == 1)
+                            {
+                                LocalPilotLogger.Log($"[ResolvePath] Fuzzy matched '{path}' -> '{matches[0]}'");
+                                return matches[0];
+                            }
+                        }
+                        catch { }
+                    }
+                }
+
+                return combined;
+            }
+            catch (ArgumentException)
+            {
+                // This happens if the path contains illegal characters.
+                // We'll return the input as-is and let the downstream tool handle the "File Not Found" gracefully
+                // rather than crashing the whole agent loop.
+                return path;
+            }
         }
 
         private bool IsInternalMetadata(string path)
@@ -508,36 +528,32 @@ namespace LocalPilot.Services
                     return new ToolResponse { IsError = true, Output = $"File not found: {path}" };
                 }
                 
-                // Normalization: LLMs often use \n, Windows uses \r\n.
-                // We'll prioritize the exact match, then try normalized line endings.
+                // Normalization: LLMs often use \n, Windows uses \r\n, and sometimes have trailing spaces.
+                // We'll prioritize the exact match, then try fuzzy whitespace normalization.
                 if (!content.Contains(oldText))
                 {
-                    // Try normalizing line endings in both query and content for the search
-                    string normalizedOld = oldText.Replace("\r\n", "\n").Trim();
-                    string normalizedContent = content.Replace("\r\n", "\n");
+                    // 🚀 FUZZY FALLBACK (v2.0): Match ignoring whitespace variations
+                    string escapedOld = System.Text.RegularExpressions.Regex.Escape(oldText);
+                    string pattern = System.Text.RegularExpressions.Regex.Replace(escapedOld, @"\s+", @"\s+");
+                    var match = System.Text.RegularExpressions.Regex.Match(content, pattern);
 
-                    var index = normalizedContent.IndexOf(normalizedOld, StringComparison.OrdinalIgnoreCase);
-                    if (index == -1)
+                    if (match.Success)
                     {
-                        return new ToolResponse { IsError = true, Output = $"Error: Could not find the specified text in '{path}'. Please ensure the 'old_text' matches the file content exactly, including whitespace." };
-                    }
-                    
-                    // We found it! But we need to replace it in the ORIGINAL content with ORIGINAL line endings.
-                    // This is tricky. A simpler way: if we can't find exact, but find normalized, let's just 
-                    // replace the first block that matches the normalized text.
-                    
-                    // Direct replacement of normalized text is safer if we also normalize the whole file,
-                    // but we don't want to force \n on a Windows project.
-                    // For now, let's just use the case-insensitive fallback if the exact match fails.
-                    var caseIndex = content.IndexOf(oldText, StringComparison.OrdinalIgnoreCase);
-                    if (caseIndex != -1)
-                    {
-                        var actualOldText = content.Substring(caseIndex, oldText.Length);
-                        oldText = actualOldText;
+                        oldText = match.Value;
+                        LocalPilotLogger.Log($"[ReplaceText] Fuzzy match found for '{path}' using regex fallback.");
                     }
                     else
                     {
-                        return new ToolResponse { IsError = true, Output = $"Error: String '{oldText}' not found. Potential line-ending or whitespace mismatch." };
+                        // Final attempt: Case-insensitive exact match
+                        var caseIndex = content.IndexOf(oldText, StringComparison.OrdinalIgnoreCase);
+                        if (caseIndex != -1)
+                        {
+                            oldText = content.Substring(caseIndex, oldText.Length);
+                        }
+                        else
+                        {
+                            return new ToolResponse { IsError = true, Output = $"Error: Could not find the specified text in '{path}'. Please ensure the 'old_text' matches the file content exactly, including whitespace." };
+                        }
                     }
                 }
 
@@ -660,7 +676,7 @@ namespace LocalPilot.Services
         public RenameSymbolTool(ToolRegistry registry) => _registry = registry;
         public string Name => "rename_symbol";
         public string Description => "Renames a symbol project-wide using Roslyn. The 'path' MUST be a specific file. YOU MUST RUN 'read_file' FIRST to get the current correct line and column numbers before calling this tool.";
-        public string ParameterSchema => "{ \"path\": \"string\", \"line\": \"integer\", \"column\": \"integer\", \"new_name\": \"string\" }";
+        public string ParameterSchema => "{ \"path\": \"string\", \"line\": \"integer\", \"column\": \"integer\", \"new_name\": \"string\", \"old_name\": \"string (optional)\" }";
 
         public async Task<ToolResponse> ExecuteAsync(Dictionary<string, object> args, CancellationToken ct)
         {
@@ -672,6 +688,8 @@ namespace LocalPilot.Services
                 return new ToolResponse { IsError = true, Output = "Missing 'column' argument." };
             if (!args.TryGetValue("new_name", out var nameObj) || nameObj == null)
                 return new ToolResponse { IsError = true, Output = "Missing 'new_name' argument." };
+
+            string oldName = args.TryGetValue("old_name", out var oldObj) ? oldObj?.ToString() : null;
 
             var path = _registry.ResolvePath(pathObj.ToString());
             var line = Convert.ToInt32(lineObj);
@@ -686,7 +704,7 @@ namespace LocalPilot.Services
 
                 // 🚀 NATIVE LSP REFACTORING (Roslyn)
                 // This replaces the unreliable DTE UI-based rename with project-wide semantic renaming.
-                var result = await SymbolIndexService.Instance.RenameSymbolAsync(path, line, col, newName, ct);
+                var result = await SymbolIndexService.Instance.RenameSymbolAsync(path, line, col, newName, oldName, ct);
                 
                 if (result.StartsWith("Error") || result.Contains("failed"))
                 {

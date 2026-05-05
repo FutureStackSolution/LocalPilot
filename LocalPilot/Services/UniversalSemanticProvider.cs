@@ -175,8 +175,13 @@ namespace LocalPilot.Services
             catch { return null; }
         }
 
-        public Task<string> RenameSymbolAsync(string filePath, int line, int column, string newName, CancellationToken ct)
+        public Task<string> RenameSymbolAsync(string filePath, int line, int column, string newName, string oldName, CancellationToken ct)
         {
+            if (!CanHandle(Path.GetExtension(filePath)))
+            {
+                return Task.FromResult("Not Applicable: Universal provider does not handle this file type.");
+            }
+
             return Task.FromResult("Error: Semantic refactoring is currently only optimized for Roslyn-compatible languages (C#, VB). For this file type, please use the 'replace_text' tool or 'grep_search' to update references manually.");
         }
     }

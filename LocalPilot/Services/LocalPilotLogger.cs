@@ -57,38 +57,25 @@ namespace LocalPilot.Services
 
             string sevStr = severity.ToString().ToUpper();
             string catStr = category.ToString().ToUpper();
-            string timestamped = $"[{DateTime.Now:HH:mm:ss.fff}] [{sevStr}] [{catStr}] {message}";
+            
+            // 🚀 DEDUPLICATION: If the message already starts with the category name, strip it to avoid redundant tags
+            string cleanMessage = message;
+            string prefix = $"[{catStr}]";
+            string prefixAlt = $"[{category}]";
+            if (cleanMessage.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                cleanMessage = cleanMessage.Substring(prefix.Length).Trim();
+            else if (cleanMessage.StartsWith(prefixAlt, StringComparison.OrdinalIgnoreCase))
+                cleanMessage = cleanMessage.Substring(prefixAlt.Length).Trim();
+
+            string timestamped = $"[{DateTime.Now:HH:mm:ss.fff}] [{sevStr}] [{catStr}] {cleanMessage}";
 
             // 1. Notify Subscribers (UI)
-            OnLog?.Invoke(message, category, severity);
+            OnLog?.Invoke(cleanMessage, category, severity);
 
-            // 2. Queue for Output Window (High Performance Batching)
+            // 2. Queue for Output Window & File (High Performance Batching)
             bool isWatchdog = category == LogCategory.Build || category == LogCategory.Context || severity == LogSeverity.Debug;
             _logQueue.Enqueue((timestamped, isWatchdog));
             EnsureLogLoopRunning();
-
-            // 3. Log to File
-            _ = Task.Run(() =>
-            {
-                lock (_fileLock)
-                {
-                    try
-                    {
-                        if (!Directory.Exists(_logDir)) Directory.CreateDirectory(_logDir);
-                        
-                        var fi = new FileInfo(_logFile);
-                        if (fi.Exists && fi.Length > 5 * 1024 * 1024)
-                        {
-                            string backup = _logFile + ".old";
-                            if (File.Exists(backup)) File.Delete(backup);
-                            File.Move(_logFile, backup);
-                        }
-
-                        File.AppendAllText(_logFile, timestamped + Environment.NewLine);
-                    }
-                    catch { }
-                }
-            });
         }
 
         private static void EnsureLogLoopRunning()
@@ -108,27 +95,52 @@ namespace LocalPilot.Services
             {
                 try
                 {
-                    await Task.Delay(300); // 🚀 Batch logs every 300ms to save UI thread
+                    await Task.Delay(300); // 🚀 Batch logs every 300ms to save UI thread and disk I/O
                     
                     if (_logQueue.IsEmpty) continue;
 
                     var mainBatch = new System.Text.StringBuilder();
                     var watchdogBatch = new System.Text.StringBuilder();
+                    var fileBatch = new System.Text.StringBuilder();
 
                     while (_logQueue.TryDequeue(out var entry))
                     {
+                        fileBatch.AppendLine(entry.message);
                         if (entry.isWatchdog) watchdogBatch.AppendLine(entry.message);
                         else mainBatch.AppendLine(entry.message);
                     }
 
+                    // 1. Update Output Window (Main Thread)
                     if (mainBatch.Length > 0 || watchdogBatch.Length > 0)
                     {
                         await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                        
                         if (_pane == null && !_initializing) await InitializePanesAsync();
-
                         if (mainBatch.Length > 0) _pane?.OutputStringThreadSafe(mainBatch.ToString());
                         if (watchdogBatch.Length > 0) _watchdogPane?.OutputStringThreadSafe(watchdogBatch.ToString());
+                    }
+
+                    // 2. Update Log File (Background Thread)
+                    if (fileBatch.Length > 0)
+                    {
+                        await Task.Run(() =>
+                        {
+                            lock (_fileLock)
+                            {
+                                try
+                                {
+                                    if (!Directory.Exists(_logDir)) Directory.CreateDirectory(_logDir);
+                                    var fi = new FileInfo(_logFile);
+                                    if (fi.Exists && fi.Length > 10 * 1024 * 1024) // Raised to 10MB
+                                    {
+                                        string backup = _logFile + ".old";
+                                        if (File.Exists(backup)) File.Delete(backup);
+                                        File.Move(_logFile, backup);
+                                    }
+                                    File.AppendAllText(_logFile, fileBatch.ToString());
+                                }
+                                catch { }
+                            }
+                        });
                     }
                 }
                 catch { /* Prevent loop death */ }

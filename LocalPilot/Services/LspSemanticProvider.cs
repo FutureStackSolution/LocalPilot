@@ -73,8 +73,13 @@ namespace LocalPilot.Services
             catch { return null; }
         }
 
-        public Task<string> RenameSymbolAsync(string filePath, int line, int column, string newName, CancellationToken ct)
+        public Task<string> RenameSymbolAsync(string filePath, int line, int column, string newName, string oldName, CancellationToken ct)
         {
+            if (!CanHandle(Path.GetExtension(filePath)))
+            {
+                return Task.FromResult("Not Applicable: LSP does not handle this file type.");
+            }
+
             // Avoid triggering the modal VS Rename dialog which blocks the agent workflow.
             // Redirect to the text-based approach that works non-interactively.
             return Task.FromResult($"Error: LSP-based rename is not available for {Path.GetExtension(filePath)} files in automated mode. Please use the 'replace_text' tool or 'grep_search' to find and update references manually.");

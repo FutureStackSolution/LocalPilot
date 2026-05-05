@@ -106,7 +106,7 @@ namespace LocalPilot
                             settings.EmbeddingModel = embedModel;
 
                             SettingsPersistence.Save(settings);
-                            LocalPilotLogger.Log($"[AutoConfig] First-run detected available models. Set default to: {chatModel}", LogCategory.Ollama);
+                            LocalPilotLogger.Log($"First-run detected available models. Set default to: {chatModel}", LogCategory.Ollama);
                         }
                     }
                     catch { /* Quietly skip if Ollama is not running during first-run */ }
@@ -133,7 +133,7 @@ namespace LocalPilot
                     // 🚀 World-Class: Background Warmup (Pre-load the model)
                     _ = ollama.WarmupAsync(settings.ChatModel, cancellationToken);
                     
-                    LocalPilotLogger.Log("[Autopilot] Indexing project context in background...");
+                    LocalPilotLogger.Log("Indexing project context in background...", LogCategory.Context);
                     await ProjectContextService.Instance.IndexSolutionAsync(ollama, cancellationToken);
 
                     // v1.8 Nexus Intelligence: Build the Full-Stack Dependency Graph

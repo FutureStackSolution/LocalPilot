@@ -40,7 +40,7 @@ namespace LocalPilot.Services
             if (!Directory.Exists(appData)) Directory.CreateDirectory(appData);
             _dbPath = Path.Combine(appData, "localpilot_v2.db");
             
-            LocalPilotLogger.Log($"[Storage] Initializing persistent engine instance at: {_dbPath}", LogCategory.Storage);
+            LocalPilotLogger.Log($"Initializing persistent engine instance at: {_dbPath}", LogCategory.Storage);
             // 🚀 EXPERT: We no longer initialize in the constructor to avoid UI blocking.
             // Initialization happens lazily on the first request.
         }
@@ -92,7 +92,7 @@ namespace LocalPilot.Services
 
                         if (version < CurrentSchemaVersion)
                         {
-                            LocalPilotLogger.Log($"[Storage] Database schema outdated (v{version} -> v{CurrentSchemaVersion}). Applying migrations...", LogCategory.Storage);
+                            LocalPilotLogger.Log($"Database schema outdated (v{version} -> v{CurrentSchemaVersion}). Applying migrations...", LogCategory.Storage);
                             ApplyMigrations(version);
                         }
 
@@ -201,7 +201,7 @@ namespace LocalPilot.Services
                         cmd.ExecuteNonQuery();
                     }
                     transaction.Commit();
-                    LocalPilotLogger.Log($"[Storage] Database migrated to v{CurrentSchemaVersion} successfully.", LogCategory.Storage);
+                    LocalPilotLogger.Log($"Database migrated to v{CurrentSchemaVersion} successfully.", LogCategory.Storage);
                 }
                 catch (Exception ex)
                 {

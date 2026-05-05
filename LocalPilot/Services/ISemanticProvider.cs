@@ -39,6 +39,6 @@ namespace LocalPilot.Services
         /// <summary>
         /// Performs a semantic refactoring (rename) across the solution.
         /// </summary>
-        Task<string> RenameSymbolAsync(string filePath, int line, int column, string newName, CancellationToken ct);
+        Task<string> RenameSymbolAsync(string filePath, int line, int column, string newName, string oldName, CancellationToken ct);
     }
 }

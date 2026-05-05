@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using LocalPilot.Models;
 
@@ -79,14 +80,21 @@ namespace LocalPilot.Services
 
             try
             {
-                var options = new OllamaOptions { Temperature = 0.0, NumPredict = 1024 };
+                var options = new OllamaOptions { 
+                    Temperature = 0.0, 
+                    NumPredict = 1024,
+                    RequestTimeoutSeconds = 45 // 🚀 SAFETY: 45s cap for summarization
+                };
                 var summarySb = new System.Text.StringBuilder(512);
                 
-                await foreach (var token in _ollama.StreamChatAsync(model, new List<ChatMessage> { 
-                    new ChatMessage { Role = "user", Content = sb.ToString() } 
-                }, options))
+                using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(45)))
                 {
-                    summarySb.Append(token);
+                    await foreach (var token in _ollama.StreamChatAsync(model, new List<ChatMessage> { 
+                        new ChatMessage { Role = "user", Content = sb.ToString() } 
+                    }, options, cts.Token))
+                    {
+                        summarySb.Append(token);
+                    }
                 }
 
                 return summarySb.ToString();
