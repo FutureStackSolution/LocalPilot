@@ -190,14 +190,17 @@ Since **LocalPilot** runs Large Language Models (LLMs) **entirely on your local 
 ## 📜 Release History
 
 ### 🚀 v1.9.1 - The Stability & Hardening Update (latest)
-**"Dynamic execution, laptop-first performance, and a hardened agentic core."**
+**"Dynamic execution, resilient semantic refactoring, and a hardened agentic core."**
 
-- **⚡ Dynamic Timeout Engine**: Implemented a task-complexity-aware timeout system that automatically scales from 60s to 300s for deep refactoring tasks, preventing premature task termination for small models.
-- **🛡️ GPU VRAM Watchdog**: Proactive monitoring of GPU memory health before starting agent turns to prevent system-wide freezes on low-resource laptop hardware.
-- **🚀 $O(N+M)$ Indexing Optimization**: Refactored the Project Map generation logic to eliminate $O(N^2)$ bottlenecks, drastically reducing CPU spikes during codebase indexing.
-- **🏠 Laptop-Friendly Concurrency**: Hardened background I/O with strict `SemaphoreSlim` throttling (8 concurrent tasks) for maximum IDE responsiveness.
-- **🧹 Architecture Pruning**: Conducted a critical review to remove redundant logic and update stale technical documentation across the service layer.
-- **✅ VSTHRD Hardening**: Resolved all Visual Studio Threading Analyzer warnings (`VSTHRD105`, `VSTHRD110`) in asynchronous extensions to ensure enterprise-grade reliability.
+- **⚡ Dynamic Timeout Engine**: Implemented a task-complexity-aware timeout system that automatically scales from 60s to 300s for deep refactoring tasks.
+- **🔧 Resilient Semantic Rename**: Re-engineered the project-wide rename tool with advanced fuzzy matching and Roslyn node-based recovery to handle inaccurate inputs from smaller models.
+- **📂 Path Architecture Sanitization**: Implemented robust input sanitization and try-catch guards for all LLM-generated file paths to prevent runtime crashes.
+- **🧠 History Compaction Safety**: Introduced a 45-second safety fuse for conversation history compaction, ensuring lightning-fast turn transitions in long sessions.
+- **🔍 Surgical Indexing**: Replaced solution-wide prefill with surgical, index-driven tool lookups, significantly reducing agent "thinking" latency in massive solutions.
+- **🚀 $O(N+M)$ Indexing Optimization**: Refactored Project Map generation to eliminate $O(N^2)$ bottlenecks, drastically reducing CPU spikes during background indexing.
+- **🛡️ SQLite Connection Resilience**: Hardened the "Lazy Self-Healing" connection pattern across all services to eliminate intermittent concurrency and search-context exceptions.
+- **🏠 Laptop-Friendly Throttling**: Hardened background I/O with strict `SemaphoreSlim` throttling (8 concurrent tasks) for maximum IDE responsiveness.
+- **✅ VSTHRD Hardening**: Resolved all Visual Studio Threading Analyzer warnings (`VSTHRD105`, `VSTHRD110`) to ensure enterprise-grade reliability.
 
 ### 🚀 v1.9 - The Persistent Performance Update
 **"Seamless SQLite storage, legacy-free architecture, and hardened stability."**
