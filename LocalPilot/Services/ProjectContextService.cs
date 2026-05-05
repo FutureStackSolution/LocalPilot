@@ -64,7 +64,7 @@ namespace LocalPilot.Services
 
                 if (_solutionRoot != currentRoot)
                 {
-                    LocalPilotLogger.Log($"[RAG] Solution changed. Active root: {currentRoot}", LogCategory.Agent);
+                    LocalPilotLogger.Log($"Solution changed. Active root: {currentRoot}", LogCategory.Agent);
                     _solutionRoot = currentRoot;
                     
                     // Legacy migration check
@@ -75,7 +75,7 @@ namespace LocalPilot.Services
                 {
                     try
                     {
-                        LocalPilotLogger.Log("[RAG] Starting differential SQLite sync...", LogCategory.Agent);
+                        LocalPilotLogger.Log("Starting differential SQLite sync...", LogCategory.Agent);
                         var sw = System.Diagnostics.Stopwatch.StartNew();
                         
                         var allFiles = SafeEnumerateFiles(new DirectoryInfo(_solutionRoot)).ToList();
@@ -108,14 +108,14 @@ namespace LocalPilot.Services
 
                         if (filesToUpdate.Any())
                         {
-                            LocalPilotLogger.Log($"[RAG] Updating {filesToUpdate.Count} files in persistent storage...", LogCategory.Agent);
+                            LocalPilotLogger.Log($"Updating {filesToUpdate.Count} files in persistent storage...", LogCategory.Agent);
                             await ParallelUpdateAsync(filesToUpdate, ollama, ct);
                             sw.Stop();
                             LocalPilotLogger.Log($"[RAG] SQLite sync complete in {sw.ElapsedMilliseconds}ms.", LogCategory.Performance);
                         }
                         else
                         {
-                            LocalPilotLogger.Log("[RAG] SQLite index is up to date.", LogCategory.Agent);
+                            LocalPilotLogger.Log("SQLite index is up to date.", LogCategory.Agent);
                         }
                     }
                     catch (Exception ex)
@@ -180,51 +180,53 @@ namespace LocalPilot.Services
         private async Task ParallelUpdateAsync(List<string> files, OllamaService ollama, CancellationToken ct)
         {
             int concurrency = Math.Max(1, Math.Min(8, LocalPilotSettings.Instance.BackgroundIndexingConcurrency));
-            using (var semaphore = new SemaphoreSlim(concurrency))
+            int batchSize = 50; // Process 50 files per transaction batch
+            
+            for (int i = 0; i < files.Count; i += batchSize)
             {
-                var tasks = files.Select(async file =>
+                if (ollama.CircuitBreakerTripped || ct.IsCancellationRequested || GlobalPriorityGuard.ShouldYield()) break;
+
+                var currentBatch = files.Skip(i).Take(batchSize).ToList();
+                var batchData = new ConcurrentBag<(string path, string content, List<string> chunks, List<float[]> vectors)>();
+
+                // 1. Parallel Prefetch & Embed (CPU + Ollama)
+                using (var semaphore = new SemaphoreSlim(concurrency))
                 {
-                    if (ollama.CircuitBreakerTripped || ct.IsCancellationRequested) return;
+                    var tasks = currentBatch.Select(async file =>
+                    {
+                        // 🚀 RESOURCE HYGIENE: Yield immediately if the Agent starts a turn
+                        if (GlobalPriorityGuard.ShouldYield() || ct.IsCancellationRequested) return;
 
-                    await semaphore.WaitAsync(ct);
-                    try
-                    {
-                        await ProcessFileAsync(file, GetRelativePath(file), ollama, ct);
-                    }
-                    catch (Exception ex)
-                    {
-                        LocalPilotLogger.LogError($"[RAG] Failed to index {Path.GetFileName(file)}", ex);
-                    }
-                    finally
-                    {
-                        semaphore.Release();
-                    }
-                });
+                        await semaphore.WaitAsync(ct);
+                        try
+                        {
+                            string content = await ReadSafeTextAsync(file);
+                            if (string.IsNullOrWhiteSpace(content)) return;
 
-                await Task.WhenAll(tasks);
+                            var chunks = GetSemanticChunks(content, Path.GetExtension(file).ToLower());
+                            if (!chunks.Any()) return;
+
+                            var vectors = await ollama.GetEmbeddingsBatchAsync(LocalPilotSettings.Instance.EmbeddingModel, chunks, ct);
+                            if (vectors != null)
+                            {
+                                batchData.Add((GetRelativePath(file), content, chunks, vectors));
+                            }
+                        }
+                        finally { semaphore.Release(); }
+                    });
+                    await Task.WhenAll(tasks);
+                }
+
+                // 2. Atomic SQLite Batch Write (One transaction for 25 files)
+                if (batchData.Any())
+                {
+                    await CommitBatchToDbAsync(batchData.ToList(), ct);
+                }
             }
         }
 
-        private async Task ProcessFileAsync(string fullPath, string relativePath, OllamaService ollama, CancellationToken ct)
+        private async Task CommitBatchToDbAsync(List<(string path, string content, List<string> chunks, List<float[]> vectors)> batch, CancellationToken ct)
         {
-            if (!File.Exists(fullPath)) return;
-            var fileInfo = new FileInfo(fullPath);
-            if (fileInfo.Length > 1024000) return; // 1MB cap
-
-            string content = await ReadSafeTextAsync(fullPath);
-            if (string.IsNullOrWhiteSpace(content)) return;
-
-            // 1. Semantic Chunking (Roslyn-powered)
-            string hash = ComputeHash(content);
-            var chunks = GetSemanticChunks(content, Path.GetExtension(fullPath).ToLower());
-
-            // 🚀 WORLD-CLASS: Process chunks IN BATCH for massive speedup and reduced log spam
-            // We do the slow work (Embeddings) OUTSIDE the DB lock to prevent deadlocks.
-            string embeddingModel = LocalPilotSettings.Instance.EmbeddingModel;
-            var vectors = await ollama.GetEmbeddingsBatchAsync(embeddingModel, chunks, ct);
-            var processedChunks = chunks.Zip(vectors, (text, vector) => new { Text = text, Vector = vector }).ToList();
-
-            // 2. Persist to SQLite (Quick batch write)
             await _storage.GetLock().WaitAsync(ct).ConfigureAwait(false);
             try
             {
@@ -233,73 +235,76 @@ namespace LocalPilot.Services
                 {
                     try
                     {
-                        // Clear old data for this file
-                        using (var cmd = connection.CreateCommand())
+                        // 🚀 PREPARE COMMANDS ONCE PER BATCH
+                        using (var delCmd = connection.CreateCommand())
+                        using (var insFileCmd = connection.CreateCommand())
+                        using (var insChunkCmd = connection.CreateCommand())
+                        using (var insSearchCmd = connection.CreateCommand())
                         {
-                            cmd.Transaction = transaction;
-                            cmd.Parameters.AddWithValue("@Path", relativePath);
+                            delCmd.Transaction = transaction;
+                            delCmd.CommandText = "DELETE FROM Files WHERE Path = @P; DELETE FROM SearchIndex WHERE Path = @P; DELETE FROM Chunks WHERE Path = @P;";
+                            var pDel = delCmd.Parameters.Add("@P", SqliteType.Text);
 
-                            cmd.CommandText = "DELETE FROM Files WHERE Path = @Path";
-                            await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+                            insFileCmd.Transaction = transaction;
+                            insFileCmd.CommandText = "INSERT INTO Files (Path, Content, LastIndexed, Hash) VALUES (@P, @C, @L, @H)";
+                            var pFileP = insFileCmd.Parameters.Add("@P", SqliteType.Text);
+                            var pFileC = insFileCmd.Parameters.Add("@C", SqliteType.Text);
+                            var pFileL = insFileCmd.Parameters.Add("@L", SqliteType.Text);
+                            var pFileH = insFileCmd.Parameters.Add("@H", SqliteType.Text);
 
-                            cmd.CommandText = "DELETE FROM SearchIndex WHERE Path = @Path";
-                            await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+                            insChunkCmd.Transaction = transaction;
+                            insChunkCmd.CommandText = "INSERT INTO Chunks (Path, Content, Vector) VALUES (@P, @C, @V); SELECT last_insert_rowid();";
+                            var pChunkP = insChunkCmd.Parameters.Add("@P", SqliteType.Text);
+                            var pChunkC = insChunkCmd.Parameters.Add("@C", SqliteType.Text);
+                            var pChunkV = insChunkCmd.Parameters.Add("@V", SqliteType.Blob);
 
-                            cmd.CommandText = "DELETE FROM Chunks WHERE Path = @Path";
-                            await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-                        }
+                            insSearchCmd.Transaction = transaction;
+                            insSearchCmd.CommandText = "INSERT INTO SearchIndex (Content, Path, ChunkId) VALUES (@C, @P, @Id)";
+                            var pSearchC = insSearchCmd.Parameters.Add("@C", SqliteType.Text);
+                            var pSearchP = insSearchCmd.Parameters.Add("@P", SqliteType.Text);
+                            var pSearchId = insSearchCmd.Parameters.Add("@Id", SqliteType.Integer);
 
-                        // Insert into Files registry
-                        using (var cmd = _storage.GetConnection().CreateCommand())
-                        {
-                            cmd.Transaction = transaction;
-                            cmd.CommandText = "INSERT INTO Files (Path, Content, LastIndexed, Hash) VALUES (@Path, @Content, @LastIndexed, @Hash)";
-                            cmd.Parameters.AddWithValue("@Path", relativePath ?? (object)DBNull.Value);
-                            cmd.Parameters.AddWithValue("@Content", content ?? (object)DBNull.Value);
-                            cmd.Parameters.AddWithValue("@LastIndexed", fileInfo.LastWriteTime);
-                            cmd.Parameters.AddWithValue("@Hash", hash ?? (object)DBNull.Value);
-                            await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-                        }
-
-                        foreach (var chunk in processedChunks)
-                        {
-                            long chunkId = 0;
-                            // 1. Update Chunks table with vectors (Get the ID for fast JOINs)
-                            using (var cmd = _storage.GetConnection().CreateCommand())
+                            foreach (var item in batch)
                             {
-                                cmd.Transaction = transaction;
-                                cmd.CommandText = "INSERT INTO Chunks (Path, Content, Vector) VALUES (@Path, @Content, @Vector); SELECT last_insert_rowid();";
-                                cmd.Parameters.AddWithValue("@Path", relativePath ?? (object)DBNull.Value);
-                                cmd.Parameters.AddWithValue("@Content", chunk.Text ?? (object)DBNull.Value);
-                                cmd.Parameters.AddWithValue("@Vector", chunk.Vector != null ? (object)GetRawBytes(chunk.Vector) : DBNull.Value);
-                                chunkId = (long)await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
-                            }
+                                var fileInfo = new FileInfo(_solutionRoot + "\\" + item.path);
+                                string hash = ComputeHash(item.content);
 
-                            // 2. Update Search Index (FTS5) with ChunkId reference
-                            using (var cmd = _storage.GetConnection().CreateCommand())
-                            {
-                                cmd.Transaction = transaction;
-                                cmd.CommandText = "INSERT INTO SearchIndex (Content, Path, ChunkId) VALUES (@Content, @Path, @ChunkId)";
-                                cmd.Parameters.AddWithValue("@Content", chunk.Text ?? (object)DBNull.Value);
-                                cmd.Parameters.AddWithValue("@Path", relativePath ?? (object)DBNull.Value);
-                                cmd.Parameters.AddWithValue("@ChunkId", chunkId);
-                                await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+                                // 1. Cleanup
+                                pDel.Value = item.path;
+                                await delCmd.ExecuteNonQueryAsync(ct);
+
+                                // 2. File Entry
+                                pFileP.Value = item.path;
+                                pFileC.Value = item.content;
+                                pFileL.Value = fileInfo.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss");
+                                pFileH.Value = hash;
+                                await insFileCmd.ExecuteNonQueryAsync(ct);
+
+                                // 3. Chunks & Search Index
+                                for (int j = 0; j < item.chunks.Count; j++)
+                                {
+                                    pChunkP.Value = item.path;
+                                    pChunkC.Value = item.chunks[j];
+                                    pChunkV.Value = item.vectors[j] != null ? (object)GetRawBytes(item.vectors[j]) : DBNull.Value;
+                                    long chunkId = (long)await insChunkCmd.ExecuteScalarAsync(ct);
+
+                                    pSearchC.Value = item.chunks[j];
+                                    pSearchP.Value = item.path;
+                                    pSearchId.Value = chunkId;
+                                    await insSearchCmd.ExecuteNonQueryAsync(ct);
+                                }
                             }
                         }
-
                         transaction.Commit();
                     }
                     catch (Exception ex)
                     {
                         transaction.Rollback();
-                        LocalPilotLogger.LogError($"[RAG] DB Update failed for {relativePath}", ex);
+                        LocalPilotLogger.LogError("[RAG] Bulk DB transaction failed", ex);
                     }
                 }
             }
-            finally
-            {
-                _storage.GetLock().Release();
-            }
+            finally { _storage.GetLock().Release(); }
         }
 
         private List<string> GetSemanticChunks(string content, string ext)
@@ -467,7 +472,7 @@ namespace LocalPilot.Services
 
             try
             {
-                LocalPilotLogger.Log("[RAG] Migrating legacy JSON index to SQLite...");
+                LocalPilotLogger.Log("Migrating legacy JSON index to SQLite...", LogCategory.Storage);
                 string json = File.ReadAllText(legacyPath);
                 
                 Dictionary<string, List<LegacyCodeChunk>> loaded = null;
@@ -507,7 +512,7 @@ namespace LocalPilot.Services
                 
                 // Cleanup: Delete legacy file now that data is in SQLite
                 File.Delete(legacyPath);
-                LocalPilotLogger.Log("[RAG] Migration complete. Legacy index deleted.");
+                LocalPilotLogger.Log("Migration complete. Legacy index deleted.", LogCategory.Storage);
             }
             catch (Exception ex) { LocalPilotLogger.LogError("[RAG] Legacy migration failed", ex); }
         }
@@ -571,7 +576,7 @@ namespace LocalPilot.Services
                     _pendingFiles.TryAdd(e.FullPath, 0);
                 };
 
-                LocalPilotLogger.Log($"[RAG] FileSystemWatcher active on: {_solutionRoot}");
+                LocalPilotLogger.Log($"FileSystemWatcher active on: {_solutionRoot}", LogCategory.Storage);
                 
                 // Start the background processing loop for the queue
                 _ = Task.Run(async () => {
@@ -585,7 +590,7 @@ namespace LocalPilot.Services
                             // Atomic clear — re-scanning is safer for consistent state after batches
                         }
                         
-                        LocalPilotLogger.Log("[RAG] Incremental changes detected. Re-indexing...");
+                        LocalPilotLogger.Log("Incremental changes detected. Re-indexing...", LogCategory.Storage);
                         await IndexSolutionAsync(ollama, _watcherCts.Token);
                     }
                 });

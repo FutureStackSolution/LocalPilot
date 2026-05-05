@@ -176,6 +176,9 @@ namespace LocalPilot.Services
                     }
                 }
 
+                /* 
+                // 🚀 DISABLED: Auto-injecting a massive project map causes 'Prefill Paralysis' on large projects.
+                // The agent should use tools like 'list_files' or 'search_code' instead.
                 if (LocalPilot.Settings.LocalPilotSettings.Instance.EnableProjectMap)
                 {
                     // 🚀 SMART CONTEXT BUDGETING: Use a compact map for Quick Actions to avoid context bloat
@@ -191,6 +194,7 @@ namespace LocalPilot.Services
                         }
                     }
                 }
+                */
                 
                 // Fetch initial grounding context from the project (Skip for simple Quick Actions)
                 if (!isQuickAction)
@@ -338,22 +342,29 @@ namespace LocalPilot.Services
                 else if (cmd == "/doc" || cmd == "/document") processedTask = PromptLoader.GetPrompt("DocumentPrompt", new Dictionary<string, string> { { "codeBlock", args } });
             }
 
-            // Finally, the user request with a task header
-            messages.Add(new ChatMessage { Role = "user", Content = $"## TASK\n{processedTask}" });
-
-
             // 🔍 FILE NESTING: Use Roslyn/LSP to find definitions for potential symbols in the task
             // This provides the model with structural awareness of the code it's discussing.
             var words = processedTask.Split(new[] { ' ', '.', '(', ')', '[', ']', '<', '>', ',', ';', ':', '!', '?' }, StringSplitOptions.RemoveEmptyEntries);
-            var PascalNames = words.Where(w => w.Length >= 3 && char.IsUpper(w[0])).Distinct();
+            
+            // 🚀 PERFORMANCE SHIELD: Filter and limit the number of symbol lookups to prevent pre-turn hangs.
+            var PascalNames = words
+                .Where(w => w.Length >= 4 && char.IsUpper(w[0]) && !w.All(char.IsUpper)) 
+                .Distinct()
+                .Take(5); 
 
-            foreach (var name in PascalNames)
+            using (var discoveryCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
             {
-                var locs = await SymbolIndexService.Instance.FindDefinitionsAsync(name, ct);
-                if (locs != null && locs.Any())
+                discoveryCts.CancelAfter(5000); 
+                foreach (var name in PascalNames)
                 {
-                    var loc = locs.First();
-                    messages.Add(new ChatMessage { Role = "system", Content = $"[LSP CONTEXT] Symbol '{name}' ({loc.Kind}) is defined at: {loc.FilePath}:{loc.Line}" });
+                    if (discoveryCts.Token.IsCancellationRequested) break;
+                    
+                    var locs = await SymbolIndexService.Instance.FindDefinitionsAsync(name, discoveryCts.Token);
+                    if (locs != null && locs.Any())
+                    {
+                        var loc = locs.First();
+                        messages.Add(new ChatMessage { Role = "system", Content = $"[LSP CONTEXT] Symbol '{name}' ({loc.Kind}) is defined at: {loc.FilePath}:{loc.Line}" });
+                    }
                 }
             }
 
@@ -363,6 +374,12 @@ namespace LocalPilot.Services
             {
                 messages.Add(new ChatMessage { Role = "system", Content = $"## WORKSPACE SYMBOLS\n{symbolSummary}" });
             }
+
+            // Finally, the user request with a task header
+            // 🚀 KV-CACHE STABILITY: By adding the user task AFTER the semantic discovery, 
+            // we ensure that the discovery results (which are derived from the task) are 
+            // part of the stable prefix that never changes across turns.
+            messages.Add(new ChatMessage { Role = "user", Content = $"## TASK\n{processedTask}" });
 
             // ═══════════════════════════════════════════════════════════════════
             // AGENT LOOP: Native tool calling — no parsing, no nudging
@@ -389,11 +406,11 @@ namespace LocalPilot.Services
                 // OODA ORIENTATION: Inject Turn Summary to prevent amnesia
                 if (step > 1)
                 {
-                    // Clean up previous turn's system messages to prevent context bloat
-                    messages.RemoveAll(m => m.Role == "system" && 
-                        (m.Content.StartsWith("## OODA ORIENTATION") ||
-                         m.Content.StartsWith("[LSP CONTEXT]")));
-
+                    // 🚀 KV-CACHE HYGIENE: Only remove the previous OODA orientation.
+                    // We keep the LSP context and other system messages in their original positions 
+                    // to maintain the stable prefix for Ollama's prompt caching.
+                    messages.RemoveAll(m => m.Role == "system" && m.Content.StartsWith("## OODA ORIENTATION"));
+                    
                     string historySummary = GenerateActionHistorySummary(messages);
                     messages.Add(new ChatMessage { Role = "system", Content = $"## OODA ORIENTATION (Turn {step})\n{historySummary}\n\nSTAY FOCUSED: Proceed to the next step of your plan." });
                 }
@@ -403,8 +420,12 @@ namespace LocalPilot.Services
                 var turnSw = Stopwatch.StartNew();
                 int estimatedTokens = 0;
 
+                // 🚀 SMART CONTEXT TRUNCATION: Prevent 'Prefill Bloat' for 90k+ token projects.
+                // We prune the context IN Visual Studio so Ollama doesn't have to discard it slowly.
+                var prunedMessages = PruneContextToLimit(messages, options.NumCtx);
+
                 // Stream with native tool calling
-                await foreach (var result in _ollama.StreamChatWithToolsAsync(contextModel, messages, toolDefinitions, options, ct))
+                await foreach (var result in _ollama.StreamChatWithToolsAsync(contextModel, prunedMessages, toolDefinitions, options, ct))
                 {
                     if (result.IsTextToken)
                     {
@@ -562,7 +583,9 @@ namespace LocalPilot.Services
                                        toolCall.Name == "replace_text" || 
                                        toolCall.Name == "delete_file" || 
                                        toolCall.Name == "rename_symbol" || 
-                                       toolCall.Name == "run_terminal";
+                                       toolCall.Name == "run_terminal" ||
+                                       toolCall.Name == "write_to_file" ||
+                                       toolCall.Name == "replace_file_content";
                         if (isRisky && RequestPermissionAsync != null)
                         {
                             OnStatusUpdate?.Invoke(AgentStatus.ActionPending, $"Waiting for permission to {toolCall.Name}...");
@@ -594,7 +617,7 @@ namespace LocalPilot.Services
                                              GetSafeToolArg(toolCall, "ReplacementContent"); // 🛡️ Support more tool variants
 
                             // 🚀 INTELLIGENT STAGING: For replacements, calculate the FULL NEW CONTENT for the diff
-                            if (toolCall.Name == "replace_text")
+                            if (toolCall.Name == "replace_text" || toolCall.Name == "replace_file_content")
                             {
                                 string oldText = GetSafeToolArg(toolCall, "old_text");
                                 string absPath = _toolRegistry.ResolvePath(target);
@@ -821,44 +844,85 @@ namespace LocalPilot.Services
         private List<ToolCallRequest> ParseJsonToolCalls(string text)
         {
             var results = new List<ToolCallRequest>();
+            if (string.IsNullOrWhiteSpace(text)) return results;
+
             try
             {
-                // Match blocks like: ```json { "name": "...", "arguments": { ... } } ```
-                // Or just a raw JSON object { "name": "...", ... }
-                var pattern = @"(?:```(?:json)?\s*)?\{\s*""name""\s*:\s*""(?<name>[^""]+)""\s*,\s*""arguments""\s*:\s*(?<args>\{.*?\})\s*\}(?:\s*```)?";
-                var matches = System.Text.RegularExpressions.Regex.Matches(text, pattern, System.Text.RegularExpressions.RegexOptions.Singleline);
-
-                foreach (System.Text.RegularExpressions.Match m in matches)
+                // 🚀 ADVANCED PARSER (v4.1): Hand-crafted to survive LLM formatting chaos
+                // 1. First, look for the standard "name/arguments" pattern
+                var blocks = ExtractJsonBlocks(text);
+                foreach (var block in blocks)
                 {
                     try
                     {
-                        string name = m.Groups["name"].Value;
-                        string argsJson = m.Groups["args"].Value;
-                        var args = JsonConvert.DeserializeObject<Dictionary<string, object>>(argsJson);
-                        
-                        results.Add(new ToolCallRequest { Name = name, Arguments = args });
-                    }
-                    catch { /* Skip malformed JSON */ }
-                }
-
-                // Fallback: If no structured "name/arguments" pairs, look for any JSON object that might be a tool call
-                if (!results.Any())
-                {
-                    var rawPattern = @"(?:```(?:json)?\s*)?(?<json>\{\s*""name""\s*:.+?\})(?:\s*```)?";
-                    var rawMatches = System.Text.RegularExpressions.Regex.Matches(text, rawPattern, System.Text.RegularExpressions.RegexOptions.Singleline);
-                    foreach (System.Text.RegularExpressions.Match m in rawMatches)
-                    {
-                        try
+                        var tc = JsonConvert.DeserializeObject<ToolCallRequest>(block);
+                        if (tc != null && !string.IsNullOrEmpty(tc.Name))
                         {
-                            var tc = JsonConvert.DeserializeObject<ToolCallRequest>(m.Groups["json"].Value);
-                            if (tc != null && !string.IsNullOrEmpty(tc.Name)) results.Add(tc);
+                            results.Add(tc);
                         }
-                        catch { }
+                        else
+                        {
+                            // Try parsing as a raw object if it might be an older format
+                            var dict = JsonConvert.DeserializeObject<Dictionary<string, object>>(block);
+                            if (dict != null && dict.TryGetValue("name", out var n) && n != null)
+                            {
+                                var request = new ToolCallRequest { Name = n.ToString() };
+                                if (dict.TryGetValue("arguments", out var a) && a is Newtonsoft.Json.Linq.JObject jo)
+                                    request.Arguments = jo.ToObject<Dictionary<string, object>>();
+                                else
+                                    request.Arguments = dict; // Treat top-level as args if no "arguments" key
+                                
+                                results.Add(request);
+                            }
+                        }
+                    }
+                    catch { /* Block was not valid JSON tool call */ }
+                }
+            }
+            catch (Exception ex)
+            {
+                LocalPilotLogger.Log($"[Agent] ParseJsonToolCalls critical failure: {ex.Message}");
+            }
+
+            return results;
+        }
+
+        private List<string> ExtractJsonBlocks(string text)
+        {
+            var blocks = new List<string>();
+            int pos = 0;
+            while ((pos = text.IndexOf('{', pos)) != -1)
+            {
+                int end = FindClosingBrace(text, pos);
+                if (end != -1)
+                {
+                    blocks.Add(text.Substring(pos, end - pos + 1));
+                    pos = end + 1;
+                }
+                else pos++;
+            }
+            return blocks;
+        }
+
+        private int FindClosingBrace(string text, int start)
+        {
+            int level = 0;
+            bool inString = false;
+            for (int i = start; i < text.Length; i++)
+            {
+                char c = text[i];
+                if (c == '\"' && (i == 0 || text[i - 1] != '\\')) inString = !inString;
+                if (!inString)
+                {
+                    if (c == '{') level++;
+                    else if (c == '}')
+                    {
+                        level--;
+                        if (level == 0) return i;
                     }
                 }
             }
-            catch { }
-            return results;
+            return -1;
         }
 
         private string BuildToolSignature(ToolCallRequest toolCall)
@@ -903,6 +967,11 @@ namespace LocalPilot.Services
 
             LocalPilotLogger.Log($"[Orchestrator] Dynamic Context Allocation: {options.NumCtx} tokens (QuickAction: {isQuickAction}, EstimatedInput: {estimatedTokens})");
 
+            // 🚀 AGGRESSIVE DYNAMIC TIMEOUT: Scale based on prefill complexity
+            // Heuristic: Base 120s + 10s per 1k tokens. 
+            // This accommodates systems with slower GPU prefill or CPU offloading.
+            int dynamicTimeout = (int)(120 + (estimatedTokens / 1000) * 10);
+            
             switch (mode)
             {
                 case LocalPilot.Settings.PerformanceMode.Fast:
@@ -910,6 +979,7 @@ namespace LocalPilot.Services
                     options.NumPredict = 1024;
                     options.RepeatPenalty = 1.1;
                     options.TopP = 0.9;
+                    options.RequestTimeoutSeconds = Math.Max(180, Math.Min(1200, dynamicTimeout));
                     break;
 
                 case LocalPilot.Settings.PerformanceMode.HighAccuracy:
@@ -917,6 +987,7 @@ namespace LocalPilot.Services
                     options.NumPredict = 8192;
                     options.RepeatPenalty = 1.25;
                     options.TopP = 0.1;
+                    options.RequestTimeoutSeconds = Math.Max(dynamicTimeout * 2, 1800); // Up to 30 mins for deep logic
                     break;
 
                 case LocalPilot.Settings.PerformanceMode.Standard:
@@ -925,8 +996,13 @@ namespace LocalPilot.Services
                     options.NumPredict = 2048;
                     options.RepeatPenalty = 1.15;
                     options.TopP = 0.7;
+                    options.RequestTimeoutSeconds = Math.Max(180, Math.Min(1200, dynamicTimeout));
                     break;
             }
+
+            if (isQuickAction) options.RequestTimeoutSeconds = Math.Max(options.RequestTimeoutSeconds, 180);
+
+            LocalPilotLogger.Log($"[Orchestrator] Dynamic Timeout: {options.RequestTimeoutSeconds}s (Base: {dynamicTimeout}s, EstimatedTokens: {estimatedTokens})");
 
             return options;
         }
@@ -1057,6 +1133,50 @@ namespace LocalPilot.Services
 
             if (!summaryParts.Any()) return "No prior actions in this session.";
             return "Summary of recent steps:\n" + string.Join("\n", summaryParts);
+        }
+        private List<ChatMessage> PruneContextToLimit(List<ChatMessage> original, int tokenLimit)
+        {
+            // If the estimated tokens are already within limits, return as-is
+            long totalChars = 0;
+            foreach (var m in original) totalChars += m.Content?.Length ?? 0;
+            long estimatedTokens = totalChars / 2;
+            if (estimatedTokens <= tokenLimit) return original;
+
+            LocalPilotLogger.Log($"[Orchestrator] PRUNING: Input ({estimatedTokens} tokens) exceeds limit ({tokenLimit}). Truncating older context...", LogCategory.Agent, LogSeverity.Warning);
+
+            var pruned = new List<ChatMessage>();
+            // ALWAYS KEEP: The System Instruction (Index 0) and the First User Request (Index 1)
+            if (original.Count > 0) pruned.Add(original[0]);
+            if (original.Count > 1) pruned.Add(original[1]);
+
+            // ALWAYS KEEP: The 2 most recent turns (to maintain short-term memory)
+            int recentCount = 4; // 2 assistant + 2 tool results
+            int recentStart = Math.Max(2, original.Count - recentCount);
+
+            // Add the "Middle" messages but truncate them if they are huge tool outputs
+            for (int i = 2; i < recentStart; i++)
+            {
+                var msg = original[i];
+                if (msg.Role == "tool" && (msg.Content?.Length ?? 0) > 2000)
+                {
+                    // Truncate massive tool results (like full project maps) in the history
+                    pruned.Add(new ChatMessage { Role = msg.Role, Content = msg.Content.Substring(0, 500) + "\n... [TRUNCATED OLD CONTEXT] ...\n" + msg.Content.Substring(msg.Content.Length - 500) });
+                }
+                else
+                {
+                    // For very long projects, we skip the middle messages entirely if we are still over limit
+                    // But for now, let's just keep them.
+                    pruned.Add(msg);
+                }
+            }
+
+            // Add the most recent turns intact
+            for (int i = recentStart; i < original.Count; i++)
+            {
+                pruned.Add(original[i]);
+            }
+
+            return pruned;
         }
     }
 }

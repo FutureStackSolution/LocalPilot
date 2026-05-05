@@ -86,7 +86,7 @@ namespace LocalPilot.Services
             return null;
         }
 
-        public async Task<string> RenameSymbolAsync(string filePath, int line, int column, string newName, CancellationToken ct)
+        public async Task<string> RenameSymbolAsync(string filePath, int line, int column, string newName, string oldName, CancellationToken ct)
         {
             var reports = new List<string>();
             
@@ -95,15 +95,24 @@ namespace LocalPilot.Services
             {
                 timeoutSource.CancelAfter(300000); // 300s timeout for deep semantic analysis
                 
+                string ext = Path.GetExtension(filePath ?? "").ToLowerInvariant();
                 foreach (var provider in GetOrderedProviders(filePath))
                 {
                     string tierName = provider.GetType().Name.Replace("SemanticProvider", "");
                     try
                     {
-                        string result = await provider.RenameSymbolAsync(filePath, line, column, newName, timeoutSource.Token);
-                        if (!string.IsNullOrEmpty(result) && !result.StartsWith("Error")) return result;
+                        string result = await provider.RenameSymbolAsync(filePath, line, column, newName, oldName, timeoutSource.Token);
                         
-                        reports.Add($"{tierName}: {result ?? "No response"}");
+                        if (string.IsNullOrEmpty(result)) continue;
+                        if (result.StartsWith("Not Applicable")) continue;
+                        
+                        if (!result.StartsWith("Error")) return result;
+                        
+                        reports.Add($"{tierName}: {result}");
+
+                        // 🛡️ CIRCUIT BREAKER: If the primary provider for this extension failed, 
+                        // heuristics are unlikely to succeed safely for a Rename operation.
+                        if (provider.CanHandle(ext)) break;
                     }
                     catch (OperationCanceledException) 
                     { 

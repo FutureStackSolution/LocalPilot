@@ -407,6 +407,22 @@ namespace LocalPilot.Chat
                 this.Resources["LpUserBubbleBgBrush"] = CreateFrozenBrush(userBubbleColor);
                 this.Resources["LpSuccessBrush"]    = CreateFrozenBrush(Color.FromRgb(0x4E, 0xC9, 0xB0));
 
+                // 🚀 ERROR BANNER THEMING: Dynamic safety colors
+                if (isDark)
+                {
+                    this.Resources["LpErrorBgBrush"] = CreateFrozenBrush(Color.FromRgb(0x45, 0x1A, 0x1A)); // Deep Crimson
+                    this.Resources["LpErrorFgBrush"] = Brushes.White;
+                    this.Resources["LpErrorSubFgBrush"] = CreateFrozenBrush(Color.FromRgb(0xDC, 0xDC, 0xDC));
+                    this.Resources["LpErrorBorderBrush"] = CreateFrozenBrush(Color.FromRgb(0xFF, 0x44, 0x44));
+                }
+                else
+                {
+                    this.Resources["LpErrorBgBrush"] = CreateFrozenBrush(Color.FromRgb(0xFF, 0xF2, 0xF2)); // Soft Pink
+                    this.Resources["LpErrorFgBrush"] = CreateFrozenBrush(Color.FromRgb(0x33, 0x33, 0x33)); // Dark Text
+                    this.Resources["LpErrorSubFgBrush"] = CreateFrozenBrush(Color.FromRgb(0x66, 0x66, 0x66));
+                    this.Resources["LpErrorBorderBrush"] = CreateFrozenBrush(Color.FromRgb(0xCC, 0x00, 0x00));
+                }
+
                 // 🚀 CACHE SYNC: Update the backing fields for fast access
                 _themeWindowBg = (Brush)this.Resources["LpWindowBgBrush"];
                 _themeWindowFg = (Brush)this.Resources["LpWindowFgBrush"];
@@ -1231,14 +1247,9 @@ namespace LocalPilot.Chat
                 HorizontalAlignment = HorizontalAlignment.Right,
             };
 
-            var body = new TextBlock
-            {
-                Text            = text,
-                TextWrapping    = TextWrapping.Wrap,
-                Foreground      = (Brush)this.Resources["LpWindowFgBrush"],
-                FontSize        = 12.5,
-                FontFamily      = UIFont,
-            };
+            var body = CreateRichTextBox();
+            body.FontSize = 12.5;
+            SetRichText(body, text);
 
             bubble.Child = body;
             row.Children.Add(bubble);
@@ -2272,9 +2283,17 @@ namespace LocalPilot.Chat
             }
 
             string targetFileArg = GetSafeArg("TargetFile") ?? GetSafeArg("path") ?? "workspace";
-            string resolvedPath = _toolRegistry.ResolvePath(targetFileArg);
-            bool isOverwrite = File.Exists(resolvedPath);
-            string targetDisplayName = System.IO.Path.GetFileName(resolvedPath) ?? targetFileArg;
+            string resolvedPath = targetFileArg;
+            bool isOverwrite = false;
+            string targetDisplayName = targetFileArg;
+
+            try
+            {
+                resolvedPath = _toolRegistry.ResolvePath(targetFileArg);
+                isOverwrite = File.Exists(resolvedPath);
+                targetDisplayName = System.IO.Path.GetFileName(resolvedPath) ?? targetFileArg;
+            }
+            catch { /* Best effort display for malformed paths */ }
             
             string actionDescription = isOverwrite 
                 ? $"OVERWRITE existing file '{targetDisplayName}'" 

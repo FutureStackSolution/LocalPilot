@@ -17,8 +17,8 @@ namespace LocalPilot.Services
     /// </summary>
     public class OllamaService
     {
-        private static readonly HttpClient _httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
-        private static readonly HttpClient _backgroundHttpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
+        private static readonly HttpClient _httpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+        private static readonly HttpClient _backgroundHttpClient = new HttpClient { Timeout = TimeSpan.FromMinutes(35) };
         private string _baseUrl;
 
         private volatile bool _circuitBreakerTripped = false;
@@ -52,7 +52,7 @@ namespace LocalPilot.Services
                 var payload = new { model, prompt = "Hi", stream = false, keep_alive = "10m" };
                 var content = new StringContent(JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
                 await _httpClient.PostAsync($"{_baseUrl}/api/generate", content, ct).ConfigureAwait(false);
-                LocalPilotLogger.Log($"[Ollama] Warmup complete for model: {model}", LogCategory.Ollama);
+                LocalPilotLogger.Log($"Warmup complete for model: {model}", LogCategory.Ollama);
             }
             catch { /* Best effort only */ }
         }
@@ -157,7 +157,7 @@ namespace LocalPilot.Services
             if (missingIndices.Count == 0) return resultsList;
 
             // 2. Fetch Missing from Ollama
-            LocalPilotLogger.Log($"[Storage] Embedding Cache MISS ({missingIndices.Count}/{prompts.Count} chunks) - Requesting from Ollama...", LogCategory.Storage, LogSeverity.Debug);
+            LocalPilotLogger.Log($"Embedding Cache MISS ({missingIndices.Count}/{prompts.Count} chunks) - Requesting from Ollama...", LogCategory.Storage, LogSeverity.Debug);
 
             try
             {
@@ -251,14 +251,14 @@ namespace LocalPilot.Services
                 CircuitBreakerTripped = true;
                 // v1.8 Resilience: Set 5 minute cooldown to prevent hammering a dead service
                 _circuitBreakerCooldownUntil = DateTime.Now.AddMinutes(5);
-                LocalPilotLogger.Log("[Ollama] CIRCUIT BREAKER TRIPPED. Too many consecutive failures. Cooldown active for 5 mins.", LogCategory.Ollama, LogSeverity.Warning);
+                LocalPilotLogger.Log("CIRCUIT BREAKER TRIPPED. Too many consecutive failures. Cooldown active for 5 mins.", LogCategory.Ollama, LogSeverity.Warning);
             }
         }
 
         private void ResetCircuitBreaker()
         {
             if (CircuitBreakerTripped)
-                LocalPilotLogger.Log("[Ollama] Connection restored. Resetting circuit breaker.", LogCategory.Ollama);
+                LocalPilotLogger.Log("Connection restored. Resetting circuit breaker.", LogCategory.Ollama);
             
             System.Threading.Interlocked.Exchange(ref _consecutiveFailures, 0);
             CircuitBreakerTripped = false;
@@ -429,7 +429,7 @@ namespace LocalPilot.Services
 
                 if (isCancelled)
                 {
-                    int timeout = options?.RequestTimeoutSeconds ?? 60;
+                    int timeout = options?.RequestTimeoutSeconds ?? 120;
                     yield return ChatStreamResult.Text($"\n⚠️ **LocalPilot Error:** The request to Ollama timed out after {timeout} seconds. Your hardware might be under heavy load or the context is too large. Try reducing the amount of context (e.g. closing unnecessary files) or selecting a smaller model.");
                     yield break;
                 }
@@ -675,7 +675,7 @@ namespace LocalPilot.Services
 
         /// <summary>Internal: Total time to wait for the request to complete.</summary>
         [JsonIgnore]
-        public int RequestTimeoutSeconds { get; set; } = 60;
+        public int RequestTimeoutSeconds { get; set; } = 120;
     }
 
     public class ChatMessage
