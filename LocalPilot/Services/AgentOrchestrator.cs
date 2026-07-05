@@ -120,6 +120,11 @@ namespace LocalPilot.Services
                 }
 
                 string solutionPath = "unknown";
+                string activeSelection = "";
+                string activeDocPath = null;
+                string activeDocContent = null;
+                Community.VisualStudio.Toolkit.DocumentView activeDoc = null;
+
                 try
                 {
                     await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
@@ -128,10 +133,44 @@ namespace LocalPilot.Services
                     {
                         solutionPath = Path.GetDirectoryName(sol.FullPath);
                     }
+
+                    if (!isConversational)
+                    {
+                        activeDoc = await VS.Documents.GetActiveDocumentViewAsync();
+                        if (activeDoc?.FilePath != null)
+                        {
+                            activeDocPath = activeDoc.FilePath;
+                            activeDocContent = activeDoc.TextBuffer?.CurrentSnapshot?.GetText();
+
+                            // Get selection if available
+                            if (activeDoc.TextView?.Selection != null && activeDoc.TextView.Selection.SelectedSpans.Count > 0)
+                            {
+                                activeSelection = activeDoc.TextView.Selection.SelectedSpans[0].GetText();
+                            }
+                            if (string.IsNullOrWhiteSpace(activeSelection) && activeDocContent != null)
+                            {
+                                activeSelection = activeDocContent;
+                            }
+                        }
+                    }
                 }
                 catch { }
 
+                // Fallback workspace root if no solution is loaded
+                if (string.IsNullOrEmpty(solutionPath) || solutionPath == "unknown")
+                {
+                    if (!string.IsNullOrEmpty(activeDocPath))
+                    {
+                        try
+                        {
+                            solutionPath = Path.GetDirectoryName(activeDocPath);
+                        }
+                        catch { }
+                    }
+                }
+
                 _toolRegistry.WorkspaceRoot = solutionPath;
+                _toolRegistry.ActiveDocumentPath = activeDocPath;
                 
                 // 🚀 MODEL SELECTION: Use specific model for tasks (Explain, Refactor, etc) if provided
                 string contextModel = modelOverride ?? LocalPilot.Settings.LocalPilotSettings.Instance.ChatModel;
@@ -253,70 +292,49 @@ namespace LocalPilot.Services
                 }
 
                 // Fetch active document info ONCE to avoid redundant UI thread switches
-                string activeSelection = "";
-                string activeDocPath = null;
-                string activeDocContent = null;
-                if (!isConversational)
+                if (!isConversational && activeDoc != null && activeDocPath != null)
                 {
                     try
                     {
-                        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                        var activeDoc = await VS.Documents.GetActiveDocumentViewAsync();
-                        if (activeDoc?.FilePath != null)
+                        // Inject semantic neighborhood from Roslyn/LSP
+                        string neighborhood = await SymbolIndexService.Instance.GetNeighborhoodContextAsync(activeDocPath, ct);
+                        if (!string.IsNullOrEmpty(neighborhood))
                         {
-                            activeDocPath = activeDoc.FilePath;
-                            activeDocContent = activeDoc.TextBuffer?.CurrentSnapshot?.GetText();
+                            messages.Add(new ChatMessage { Role = "system", Content = neighborhood });
+                        }
 
-                            // Get selection if available
-                            if (activeDoc.TextView?.Selection != null && activeDoc.TextView.Selection.SelectedSpans.Count > 0)
-                            {
-                                activeSelection = activeDoc.TextView.Selection.SelectedSpans[0].GetText();
-                            }
-                            if (string.IsNullOrWhiteSpace(activeSelection) && activeDocContent != null)
-                            {
-                                activeSelection = activeDocContent;
-                            }
-
-                            // Inject semantic neighborhood from Roslyn/LSP
-                            string neighborhood = await SymbolIndexService.Instance.GetNeighborhoodContextAsync(activeDocPath, ct);
-                            if (!string.IsNullOrEmpty(neighborhood))
-                            {
-                                messages.Add(new ChatMessage { Role = "system", Content = neighborhood });
-                            }
-
-                            // Inject active editor snippet (Surgical: 50 lines around cursor)
-                            string snippetContent = activeDocContent;
-                            if (snippetContent != null)
-                            {
-                                try {
-                                    var selection = activeDoc.TextView?.Selection;
-                                    int cursorLine = 0;
-                                    if (selection != null && selection.ActivePoint != null) {
-                                        cursorLine = selection.ActivePoint.Position.GetContainingLine().LineNumber;
-                                    }
-
-                                    var lines = snippetContent.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
-                                    int start = Math.Max(0, cursorLine - 25);
-                                    int end = Math.Min(lines.Length - 1, cursorLine + 25);
-                                    
-                                    var sbSnippet = new StringBuilder();
-                                    if (start > 0) sbSnippet.AppendLine("// ... [Top of file truncated] ...");
-                                    for (int i = start; i <= end; i++) {
-                                        sbSnippet.AppendLine(lines[i]);
-                                    }
-                                    if (end < lines.Length - 1) sbSnippet.AppendLine("// ... [Bottom of file truncated] ...");
-
-                                    snippetContent = sbSnippet.ToString();
-                                } catch {
-                                    // Fallback to start of file if cursor detection fails
-                                    if (snippetContent.Length > 3000) snippetContent = snippetContent.Substring(0, 3000) + "... [truncated]";
+                        // Inject active editor snippet (Surgical: 50 lines around cursor)
+                        string snippetContent = activeDocContent;
+                        if (snippetContent != null)
+                        {
+                            try {
+                                var selection = activeDoc.TextView?.Selection;
+                                int cursorLine = 0;
+                                if (selection != null && selection.ActivePoint != null) {
+                                    cursorLine = selection.ActivePoint.Position.GetContainingLine().LineNumber;
                                 }
 
-                                messages.Add(new ChatMessage { 
-                                    Role = "system", 
-                                    Content = $"## ACTIVE EDITOR SNIPPET (Near Cursor)\nPath: {activeDocPath}\nCode:\n```\n{snippetContent}\n```" 
-                                });
+                                var lines = snippetContent.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
+                                int start = Math.Max(0, cursorLine - 25);
+                                int end = Math.Min(lines.Length - 1, cursorLine + 25);
+                                
+                                var sbSnippet = new StringBuilder();
+                                if (start > 0) sbSnippet.AppendLine("// ... [Top of file truncated] ...");
+                                for (int i = start; i <= end; i++) {
+                                    sbSnippet.AppendLine(lines[i]);
+                                }
+                                if (end < lines.Length - 1) sbSnippet.AppendLine("// ... [Bottom of file truncated] ...");
+
+                                snippetContent = sbSnippet.ToString();
+                            } catch {
+                                // Fallback to start of file if cursor detection fails
+                                if (snippetContent.Length > 3000) snippetContent = snippetContent.Substring(0, 3000) + "... [truncated]";
                             }
+
+                            messages.Add(new ChatMessage { 
+                                Role = "system", 
+                                Content = $"## ACTIVE EDITOR SNIPPET (Near Cursor)\nPath: {activeDocPath}\nCode:\n```\n{snippetContent}\n```" 
+                            });
                         }
                     }
                     catch { }

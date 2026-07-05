@@ -30,6 +30,7 @@ namespace LocalPilot.Services
     {
         private readonly Dictionary<string, IAgentTool> _tools = new Dictionary<string, IAgentTool>();
         public string WorkspaceRoot { get; set; } = string.Empty;
+        public string ActiveDocumentPath { get; set; } = string.Empty;
 
         public ToolRegistry()
         {
@@ -163,11 +164,33 @@ namespace LocalPilot.Services
                 // 1. Already absolute and exists: use as-is
                 if (Path.IsPathRooted(path) && File.Exists(path)) return path;
 
-                // 2. Try relative to workspace root
+                // 2. Try matching and resolving relative to active document
+                if (!string.IsNullOrEmpty(ActiveDocumentPath))
+                {
+                    string activeFileName = Path.GetFileName(ActiveDocumentPath);
+                    string targetFileName = Path.GetFileName(path);
+                    
+                    if (string.Equals(activeFileName, targetFileName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return ActiveDocumentPath;
+                    }
+                    
+                    string activeDir = Path.GetDirectoryName(ActiveDocumentPath);
+                    if (!string.IsNullOrEmpty(activeDir))
+                    {
+                        string relativeToActive = Path.Combine(activeDir, path);
+                        if (File.Exists(relativeToActive))
+                        {
+                            return relativeToActive;
+                        }
+                    }
+                }
+
+                // 3. Try relative to workspace root
                 string combined = Path.IsPathRooted(path) ? path : Path.Combine(WorkspaceRoot ?? "", path);
                 if (File.Exists(combined)) return combined;
 
-                // 3. Fuzzy fallback: search workspace for a file with the same name.
+                // 4. Fuzzy fallback: search workspace for a file with the same name.
                 if (!string.IsNullOrEmpty(WorkspaceRoot) && Directory.Exists(WorkspaceRoot))
                 {
                     string fileName = Path.GetFileName(path);
@@ -182,6 +205,24 @@ namespace LocalPilot.Services
                             if (matches.Count == 1)
                             {
                                 LocalPilotLogger.Log($"[ResolvePath] Fuzzy matched '{path}' -> '{matches[0]}'");
+                                return matches[0];
+                            }
+                            else if (matches.Count > 1)
+                            {
+                                // Prioritize file closest to/matching the active document's directory hierarchy
+                                if (!string.IsNullOrEmpty(ActiveDocumentPath))
+                                {
+                                    string activeDir = Path.GetDirectoryName(ActiveDocumentPath);
+                                    var closestMatch = matches.FirstOrDefault(m => m.StartsWith(activeDir, StringComparison.OrdinalIgnoreCase));
+                                    if (closestMatch != null)
+                                    {
+                                        LocalPilotLogger.Log($"[ResolvePath] Multi-match fuzzy matched (closest to active) '{path}' -> '{closestMatch}'");
+                                        return closestMatch;
+                                    }
+                                }
+                                
+                                // Default to the first match instead of falling back to a non-existent root path
+                                LocalPilotLogger.Log($"[ResolvePath] Multi-match fuzzy matched (first match) '{path}' -> '{matches[0]}'");
                                 return matches[0];
                             }
                         }
