@@ -608,6 +608,7 @@
                  VirtualizingStackPanel.VirtualizationMode="Recycling"
                  VirtualizingStackPanel.CacheLength="2,3"
                  VirtualizingStackPanel.CacheLengthUnit="Item"
+                 VirtualizingPanel.ScrollUnit="Pixel"
                  HorizontalContentAlignment="Stretch">
             <ListBox.Template>
                 <ControlTemplate TargetType="ListBox">
