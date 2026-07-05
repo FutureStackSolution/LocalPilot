@@ -907,10 +907,20 @@
                         </StackPanel>
                     </Grid>
                 </Border>
-                <TextBlock Text="Enter to send · Shift+Enter for newline"
-                           Foreground="{DynamicResource LpMutedFgBrush}"
-                           FontSize="10"
-                           Margin="2,8,2,0"/>
+                <Grid Margin="2,8,2,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Enter to send · Shift+Enter for newline"
+                               Foreground="{DynamicResource LpMutedFgBrush}"
+                               FontSize="10"
+                               VerticalAlignment="Center"/>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock Text="Model: " Foreground="{DynamicResource LpMutedFgBrush}" FontSize="10" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                        <ComboBox x:Name="CmbChatModelSelector" Width="130" Height="20" FontSize="10" SelectionChanged="CmbChatModelSelector_SelectionChanged" Focusable="false" BorderThickness="0" Background="{DynamicResource LpMenuBgBrush}" Foreground="{DynamicResource LpWindowFgBrush}"/>
+                    </StackPanel>
+                </Grid>
             </StackPanel>
         </Grid>
 

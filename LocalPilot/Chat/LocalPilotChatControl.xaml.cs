@@ -243,6 +243,8 @@ namespace LocalPilot.Chat
                 }
                 catch (OperationCanceledException) { }
             });
+
+            _ = LoadChatModelsAsync();
         }
 
         private async Task ScanCurrentFileForPerformanceAsync(CancellationToken ct = default)
@@ -2456,6 +2458,68 @@ namespace LocalPilot.Chat
 
             MessagesContainer.Items.Add(listItem);
             DebouncedScrollToEnd();
+        }
+
+        private async Task LoadChatModelsAsync()
+        {
+            try
+            {
+                var models = await _ollama.GetAvailableModelsAsync();
+                
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                
+                CmbChatModelSelector.Items.Clear();
+                if (models == null || models.Count == 0)
+                {
+                    CmbChatModelSelector.Items.Add(new ComboBoxItem { Content = "(No models found)", IsEnabled = false });
+                    CmbChatModelSelector.SelectedIndex = 0;
+                    return;
+                }
+
+                string currentChatModel = LocalPilotSettings.Instance.ChatModel;
+                ComboBoxItem selectedItem = null;
+
+                foreach (var m in models)
+                {
+                    var item = new ComboBoxItem { Content = m };
+                    CmbChatModelSelector.Items.Add(item);
+                    
+                    if (m.Equals(currentChatModel, StringComparison.OrdinalIgnoreCase))
+                    {
+                        selectedItem = item;
+                    }
+                }
+
+                if (selectedItem != null)
+                {
+                    CmbChatModelSelector.SelectedItem = selectedItem;
+                }
+                else if (CmbChatModelSelector.Items.Count > 0)
+                {
+                    CmbChatModelSelector.SelectedIndex = 0;
+                }
+            }
+            catch (Exception ex)
+            {
+                LocalPilotLogger.LogError("[Chat] Failed to load chat models list", ex);
+            }
+        }
+
+        private void CmbChatModelSelector_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+        {
+            if (CmbChatModelSelector.SelectedItem is ComboBoxItem item)
+            {
+                string selectedModel = item.Content?.ToString();
+                if (!string.IsNullOrEmpty(selectedModel) && !selectedModel.StartsWith("("))
+                {
+                    if (LocalPilotSettings.Instance.ChatModel != selectedModel)
+                    {
+                        LocalPilotSettings.Instance.ChatModel = selectedModel;
+                        LocalPilot.Options.SettingsPersistence.Save(LocalPilotSettings.Instance);
+                        LocalPilotLogger.Log($"[Chat] Switched Chat Model to: {selectedModel}", LogCategory.UI);
+                    }
+                }
+            }
         }
     }
 }
