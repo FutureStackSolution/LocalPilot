@@ -449,6 +449,21 @@
                             </StackPanel>
                         </Grid>
 
+                        <Grid Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                <TextBlock Text="Model Keep-Alive Duration" Style="{DynamicResource LpLabelStyle}"/>
+                                <TextBox x:Name="TxtKeepAlive" Style="{DynamicResource LpInputStyle}" ToolTip="How long the model stays loaded in Ollama's VRAM (e.g., 15m, 1h, or -1 to keep loaded indefinitely)."/>
+                                <TextBlock Text="Use -1 to keep loaded indefinitely · 0 to unload immediately" Style="{DynamicResource LpMutedLabel}" FontSize="11" Margin="0,2,0,0"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Margin="8,0,0,0">
+                                <!-- empty slot for alignment -->
+                            </StackPanel>
+                        </Grid>
+
                         <!-- Project Intelligence -->
                         <TextBlock Text="📂  Project Intelligence" Style="{DynamicResource LpSectionHeader}"/>
                         <CheckBox x:Name="ChkEnableProjectMap" Content="Enable Project Map (Background indexing of headers)" Style="{DynamicResource LpCheckStyle}"/>

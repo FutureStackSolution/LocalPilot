@@ -100,6 +100,7 @@ namespace LocalPilot.Options
             TxtNumCtx.Text            = s.ContextWindowSize.ToString();
             TxtNumPredict.Text        = s.MaxOutputTokens.ToString();
             TxtRequestTimeout.Text    = s.RequestTimeoutSeconds.ToString();
+            TxtKeepAlive.Text         = s.KeepAliveDuration ?? "15m";
 
             // Populate model combos with current value; 
             // full list populated after async fetch
@@ -167,6 +168,7 @@ namespace LocalPilot.Options
                     if (TxtNumCtx != null && int.TryParse(TxtNumCtx.Text, out int nc) && nc >= 512) s.ContextWindowSize = nc;
                     if (TxtNumPredict != null && int.TryParse(TxtNumPredict.Text, out int np) && np >= 128) s.MaxOutputTokens = np;
                     if (TxtRequestTimeout != null && int.TryParse(TxtRequestTimeout.Text, out int rt) && rt >= 0) s.RequestTimeoutSeconds = rt;
+                    if (TxtKeepAlive != null) s.KeepAliveDuration = TxtKeepAlive.Text.Trim();
                 }
 
                 // Persist to disk

@@ -49,7 +49,7 @@ namespace LocalPilot.Services
             if (string.IsNullOrEmpty(model) || CircuitBreakerTripped) return;
             try
             {
-                var payload = new { model, prompt = "Hi", stream = false, keep_alive = "10m" };
+                var payload = new { model, prompt = "Hi", stream = false, keep_alive = LocalPilot.Settings.LocalPilotSettings.Instance.KeepAliveDuration ?? "15m" };
                 var content = new StringContent(JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
                 using (var localCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
                 {
@@ -174,7 +174,7 @@ namespace LocalPilot.Services
             try
             {
                 // Try /api/embed (Batch supported)
-                var payload = new { model, input = missingPrompts, keep_alive = "10m" };
+                var payload = new { model, input = missingPrompts, keep_alive = LocalPilot.Settings.LocalPilotSettings.Instance.KeepAliveDuration ?? "15m" };
                 var body = JsonConvert.SerializeObject(payload);
                 var content = new StringContent(body, Encoding.UTF8, "application/json");
 
@@ -235,7 +235,7 @@ namespace LocalPilot.Services
         {
             try
             {
-                var payload = new { model, prompt, keep_alive = "10m" };
+                var payload = new { model, prompt, keep_alive = LocalPilot.Settings.LocalPilotSettings.Instance.KeepAliveDuration ?? "15m" };
                 var body = JsonConvert.SerializeObject(payload);
                 var content = new StringContent(body, Encoding.UTF8, "application/json");
 
@@ -294,7 +294,7 @@ namespace LocalPilot.Services
                 prompt,
                 stream  = true,
                 options = options ?? new OllamaOptions(),
-                keep_alive = "5m" // Default keep_alive for completions
+                keep_alive = LocalPilot.Settings.LocalPilotSettings.Instance.KeepAliveDuration ?? "15m"
             };
 
             var body    = JsonConvert.SerializeObject(payload);
@@ -404,7 +404,7 @@ namespace LocalPilot.Services
                     tools,
                     stream = true,
                     options = options ?? new OllamaOptions(),
-                    keep_alive = "5m"
+                    keep_alive = LocalPilot.Settings.LocalPilotSettings.Instance.KeepAliveDuration ?? "15m"
                 };
 
                 string jsonPayload = JsonConvert.SerializeObject(payload, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore });
@@ -456,7 +456,7 @@ namespace LocalPilot.Services
                 if (toolSupportFailed)
                 {
                     yield return ChatStreamResult.Text("\n> [!NOTE]\n> The selected model does not support native tool calling. Falling back to text parsing.\n\n");
-                    var fallbackPayload = new { model, messages, stream = true, options = options ?? new OllamaOptions(), keep_alive = "5m" };
+                    var fallbackPayload = new { model, messages, stream = true, options = options ?? new OllamaOptions(), keep_alive = LocalPilot.Settings.LocalPilotSettings.Instance.KeepAliveDuration ?? "15m" };
                     var fallbackContent = new StringContent(JsonConvert.SerializeObject(fallbackPayload), Encoding.UTF8, "application/json");
                     response = await _httpClient.PostAsync($"{_baseUrl}/api/chat", fallbackContent, requestCts.Token).ConfigureAwait(false);
                     response.EnsureSuccessStatusCode();

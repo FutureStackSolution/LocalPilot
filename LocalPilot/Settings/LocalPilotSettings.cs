@@ -61,6 +61,7 @@ namespace LocalPilot.Settings
         public int    MaxOutputTokens     { get; set; } = 1024;
         /// <summary>Ollama request timeout in seconds. 0 uses automatic dynamic calculation.</summary>
         public int    RequestTimeoutSeconds { get; set; } = 0;
+        public string KeepAliveDuration { get; set; } = "15m";
 
         // ── Agent ─────────────────────────────────────────────────────────────
         public bool   AutonomousModeEnabled    { get; set; } = true;
