@@ -381,6 +381,7 @@
                             <CheckBox x:Name="ChkReview"   Content="Code Review" Style="{DynamicResource LpCheckStyle}"/>
                             <CheckBox x:Name="ChkFix"      Content="Fix Issues" Style="{DynamicResource LpCheckStyle}"/>
                             <CheckBox x:Name="ChkUnitTest" Content="Generate Unit Test" Style="{DynamicResource LpCheckStyle}"/>
+                            <CheckBox x:Name="ChkAutoFixOnBuild" Content="Auto-Fix on Build Failure" Style="{DynamicResource LpCheckStyle}"/>
                         </UniformGrid>
 
                         <!-- Interface Preferences -->

@@ -48,6 +48,7 @@ namespace LocalPilot.Services
 
         private async Task OnBuildCompletedAsync()
         {
+            if (!LocalPilot.Settings.LocalPilotSettings.Instance.EnableAutoFixOnBuildFailure) return;
             try
             {
                 // Wait for Error List to populate

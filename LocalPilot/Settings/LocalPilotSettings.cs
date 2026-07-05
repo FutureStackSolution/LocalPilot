@@ -71,6 +71,7 @@ namespace LocalPilot.Settings
         public bool   EnableReview       { get; set; } = true;
         public bool   EnableFix          { get; set; } = true;
         public bool   EnableUnitTest     { get; set; } = true;
+        public bool   EnableAutoFixOnBuildFailure { get; set; } = true;
 
         // ── Workspace Snapshot ────────────────────────────────────────────────
         public bool   EnableProjectMap   { get; set; } = true;
