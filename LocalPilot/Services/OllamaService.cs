@@ -419,12 +419,16 @@ namespace LocalPilot.Services
                     var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
                     response = await _httpClient.PostAsync($"{_baseUrl}/api/chat", content, requestCts.Token).ConfigureAwait(false);
                     
-                    if (response.StatusCode == System.Net.HttpStatusCode.BadRequest)
+                    if (response.StatusCode == System.Net.HttpStatusCode.BadRequest || response.StatusCode == System.Net.HttpStatusCode.InternalServerError)
                     {
                         if (tools != null && tools.Count > 0)
                         {
                             toolSupportFailed = true;
-                            LocalPilotLogger.Log($"[Ollama] Model '{model}' does not support native tool calling. Falling back.", LogCategory.Ollama, LogSeverity.Warning);
+                            LocalPilotLogger.Log($"[Ollama] Model '{model}' failed with tool calling (Status: {response.StatusCode}). Falling back to text parsing.", LogCategory.Ollama, LogSeverity.Warning);
+                        }
+                        else
+                        {
+                            response.EnsureSuccessStatusCode();
                         }
                     }
                     else
