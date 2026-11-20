@@ -62,11 +62,19 @@ namespace LocalPilot.Services
                         {
                             try
                             {
-                                SQLitePCL.Batteries_V2.Init();
+                                SQLitePCL.raw.SetProvider(new SQLitePCL.SQLite3Provider_e_sqlite3());
                             }
                             catch (Exception ex)
                             {
-                                LocalPilotLogger.Log($"[Storage] SQLitePCL.Batteries_V2.Init failed: {ex.Message}", LogCategory.Storage, LogSeverity.Warning);
+                                LocalPilotLogger.Log($"[Storage] Setting SQLite3Provider_e_sqlite3 failed: {ex.Message}. Falling back to Batteries_V2.Init()", LogCategory.Storage, LogSeverity.Warning);
+                                try
+                                {
+                                    SQLitePCL.Batteries_V2.Init();
+                                }
+                                catch (Exception bEx)
+                                {
+                                    LocalPilotLogger.Log($"[Storage] SQLitePCL.Batteries_V2.Init failed: {bEx.Message}", LogCategory.Storage, LogSeverity.Warning);
+                                }
                             }
                             _connection = new SqliteConnection($"Data Source={_dbPath}");
                         }

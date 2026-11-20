@@ -65,8 +65,9 @@
   <ItemGroup>
     <PackageReference Include="Community.VisualStudio.Toolkit.17" Version="17.0.549" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.0" />
-    <PackageReference Include="SQLitePCLRaw.core" Version="2.1.6" />
-    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.6" />
+    <PackageReference Include="SQLitePCLRaw.core" Version="2.1.11" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.11" />
+    <PackageReference Include="SQLitePCLRaw.provider.e_sqlite3" Version="2.1.11" />
     <PackageReference Include="Microsoft.VisualStudio.SDK" Version="17.14.40265" ExcludeAssets="runtime" />
     <PackageReference Include="Microsoft.VSSDK.BuildTools" Version="18.5.38461" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
@@ -87,6 +88,12 @@
     <Content Include="$(OutputPath)SQLitePCLRaw.batteries_v2.dll">
       <IncludeInVSIX>true</IncludeInVSIX>
       <Link>SQLitePCLRaw.batteries_v2.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Visible>false</Visible>
+    </Content>
+    <Content Include="$(OutputPath)SQLitePCLRaw.provider.e_sqlite3.dll">
+      <IncludeInVSIX>true</IncludeInVSIX>
+      <Link>SQLitePCLRaw.provider.e_sqlite3.dll</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Visible>false</Visible>
     </Content>
