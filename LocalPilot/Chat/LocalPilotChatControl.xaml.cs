@@ -2106,11 +2106,7 @@ namespace LocalPilot.Chat
             const int maxUiElements = 50; 
             while (MessagesContainer.Items.Count > maxUiElements)
             {
-                // Skip index 0 if it's the WelcomePanel
-                int indexToRemove = (MessagesContainer.Items.Count > 0 && MessagesContainer.Items[0] == WelcomePanel) ? 1 : 0;
-                if (indexToRemove >= MessagesContainer.Items.Count) break;
-
-                MessagesContainer.Items.RemoveAt(indexToRemove);
+                MessagesContainer.Items.RemoveAt(0);
             }
         }
 
@@ -2177,13 +2173,33 @@ namespace LocalPilot.Chat
         // ── Toolbar events ────────────────────────────────────────────────────
         private void BtnClear_Click(object sender, RoutedEventArgs e)
         {
-            _cts?.Cancel();
-            MessagesContainer.Items.Clear();
-            MessagesContainer.Items.Add(WelcomePanel); // Restore the static welcome UI
-            WelcomePanel.Visibility = Visibility.Visible;
-            _history.Clear();
-            ShowWelcomeMessage();
-            AppendAIBubble("Conversation cleared. Project context will still be used if indexed.");
+            try
+            {
+                try { _cts?.Cancel(); } catch { }
+                SetStreaming(false);
+
+                lock (_streamingLock)
+                {
+                    _streamingBuffer.Clear();
+                }
+                _currentChunkSb.Clear();
+                _currentNarrativeContainer = null;
+                _currentActivityContainer = null;
+                _lastStagedChanges = null;
+
+                if (ReviewPanel != null) ReviewPanel.Visibility = Visibility.Collapsed;
+                if (ConfirmationPanel != null) ConfirmationPanel.Visibility = Visibility.Collapsed;
+
+                MessagesContainer.Items.Clear();
+                WelcomePanel.Visibility = Visibility.Visible;
+                _history.Clear();
+                ShowWelcomeMessage();
+                AppendAIBubble("Conversation cleared. Project context will still be used if indexed.");
+            }
+            catch (Exception ex)
+            {
+                LocalPilotLogger.LogError("[Chat] Error clearing conversation", ex);
+            }
         }
 
 

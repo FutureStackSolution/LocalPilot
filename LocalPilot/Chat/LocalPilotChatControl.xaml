@@ -597,50 +597,52 @@
         <!-- 🚀 PERFORMANCE UPGRADE: ListBox provides native virtualization and recycling.
              ItemsControl inside a ScrollViewer disables virtualization because the scrollviewer 
              provides infinite measure height. ListBox handles its own scrolling correctly. -->
-        <ListBox Grid.Row="1" x:Name="MessagesContainer"
-                 Background="{DynamicResource LpWindowBgBrush}"
-                 BorderThickness="0"
-                 Padding="0,6"
-                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                 ScrollViewer.VerticalScrollBarVisibility="Auto"
-                 ScrollViewer.CanContentScroll="True"
-                 VirtualizingStackPanel.IsVirtualizing="True"
-                 VirtualizingStackPanel.VirtualizationMode="Recycling"
-                 VirtualizingStackPanel.CacheLength="2,3"
-                 VirtualizingStackPanel.CacheLengthUnit="Item"
-                 VirtualizingPanel.ScrollUnit="Pixel"
-                 HorizontalContentAlignment="Stretch">
-            <ListBox.Template>
-                <ControlTemplate TargetType="ListBox">
-                    <ScrollViewer x:Name="ChatScroll" Focusable="false" Background="Transparent">
-                        <ItemsPresenter />
-                    </ScrollViewer>
-                </ControlTemplate>
-            </ListBox.Template>
-            <ListBox.ItemsPanel>
-                <ItemsPanelTemplate>
-                    <VirtualizingStackPanel />
-                </ItemsPanelTemplate>
-            </ListBox.ItemsPanel>
-            
-            <ListBox.Items>
-                <!-- Welcome prompt — Copilot style: subtle, centred, muted -->
-                <ListBoxItem IsHitTestVisible="False">
-                    <StackPanel x:Name="WelcomePanel">
-                        <TextBlock Text="What's on your mind?"
-                                   FontSize="12"
-                                   Foreground="{DynamicResource LpMutedFgBrush}"
-                                   Margin="24,12,24,8"
-                                   TextWrapping="Wrap"/>
-                        <TextBlock Text="Tip: use slash actions like /explain, /fix, /review, or /test."
-                                   FontSize="10"
-                                   Foreground="{DynamicResource LpMutedFgBrush}"
-                                   Margin="24,0,24,10"
-                                   TextWrapping="Wrap"/>
-                    </StackPanel>
-                </ListBoxItem>
-            </ListBox.Items>
-        </ListBox>
+        <Grid Grid.Row="1">
+            <ListBox x:Name="MessagesContainer"
+                     Background="{DynamicResource LpWindowBgBrush}"
+                     BorderThickness="0"
+                     Padding="0,6"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                     ScrollViewer.VerticalScrollBarVisibility="Auto"
+                     ScrollViewer.CanContentScroll="True"
+                     VirtualizingStackPanel.IsVirtualizing="True"
+                     VirtualizingStackPanel.VirtualizationMode="Recycling"
+                     VirtualizingStackPanel.CacheLength="2,3"
+                     VirtualizingStackPanel.CacheLengthUnit="Item"
+                     VirtualizingPanel.ScrollUnit="Pixel"
+                     HorizontalContentAlignment="Stretch">
+                <ListBox.Template>
+                    <ControlTemplate TargetType="ListBox">
+                        <ScrollViewer x:Name="ChatScroll" Focusable="false" Background="Transparent">
+                            <ItemsPresenter />
+                        </ScrollViewer>
+                    </ControlTemplate>
+                </ListBox.Template>
+                <ListBox.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <VirtualizingStackPanel />
+                    </ItemsPanelTemplate>
+                </ListBox.ItemsPanel>
+            </ListBox>
+
+            <!-- Welcome prompt — Copilot style: subtle, centred, muted -->
+            <StackPanel x:Name="WelcomePanel"
+                        IsHitTestVisible="False"
+                        VerticalAlignment="Top"
+                        Visibility="Visible"
+                        Margin="0,8,0,0">
+                <TextBlock Text="What's on your mind?"
+                           FontSize="12"
+                           Foreground="{DynamicResource LpMutedFgBrush}"
+                           Margin="24,12,24,8"
+                           TextWrapping="Wrap"/>
+                <TextBlock Text="Tip: use slash actions like /explain, /fix, /review, or /test."
+                           FontSize="10"
+                           Foreground="{DynamicResource LpMutedFgBrush}"
+                           Margin="24,0,24,10"
+                           TextWrapping="Wrap"/>
+            </StackPanel>
+        </Grid>
 
         <!-- ═══════════════════════  DIAGNOSTIC CONSOLE  ═══════════════════════ -->
         <!-- Collapsible terminal-like log view -->
