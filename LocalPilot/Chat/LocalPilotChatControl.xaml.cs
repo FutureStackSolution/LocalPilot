@@ -2345,7 +2345,7 @@ namespace LocalPilot.Chat
                 return null;
             }
 
-            string targetFileArg = GetSafeArg("TargetFile") ?? GetSafeArg("path") ?? "workspace";
+            string targetFileArg = GetSafeArg("TargetFile") ?? GetSafeArg("path") ?? GetSafeArg("file") ?? "workspace";
             string resolvedPath = targetFileArg;
             bool isOverwrite = false;
             string targetDisplayName = targetFileArg;
@@ -2367,7 +2367,16 @@ namespace LocalPilot.Chat
             ConfirmationPanel.Visibility = Visibility.Visible;
             DebouncedScrollToEnd();
 
-            return await _permissionTcs.Task;
+            bool granted = await _permissionTcs.Task;
+            if (granted)
+            {
+                if (toolCall.Arguments == null) toolCall.Arguments = new Dictionary<string, object>();
+                if (isOverwrite || toolCall.Name == "write_file" || toolCall.Name == "write_to_file")
+                {
+                    toolCall.Arguments["overwrite"] = true;
+                }
+            }
+            return granted;
         }
         private void AppendAIBanner(string text, string buttonText, Action onButtonClick, string title = "SMART FIX SUGGESTION")
         {

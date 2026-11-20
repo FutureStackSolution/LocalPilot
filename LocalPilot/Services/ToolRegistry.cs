@@ -47,6 +47,14 @@ namespace LocalPilot.Services
             RegisterTool(new RunTestsTool(this));
             RegisterTool(new TraceDependencyTool(this));
             RegisterTool(new AnalyzeImpactTool(this));
+
+            // Tool Aliases
+            var writeTool = _tools["write_file"];
+            _tools["write_to_file"] = writeTool;
+            _tools["create_file"] = writeTool;
+
+            var replaceTool = _tools["replace_text"];
+            _tools["replace_file_content"] = replaceTool;
         }
 
         public void RegisterTool(IAgentTool tool)
@@ -66,9 +74,11 @@ namespace LocalPilot.Services
         public List<OllamaToolDefinition> GetOllamaToolDefinitions()
         {
             var definitions = new List<OllamaToolDefinition>();
+            var seenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             
             foreach (var tool in _tools.Values)
             {
+                if (!seenNames.Add(tool.Name)) continue;
                 var def = new OllamaToolDefinition
                 {
                     Type = "function",
@@ -109,9 +119,13 @@ namespace LocalPilot.Services
                     bool isOptional = val.Contains("(optional)");
                     string propType = val.Replace("(optional)", "").Trim();
 
+                    string schemaType = "string";
+                    if (propType == "integer") schemaType = "integer";
+                    else if (propType == "boolean") schemaType = "boolean";
+
                     paramDef.Properties[prop.Name] = new OllamaPropertyDefinition
                     {
-                        Type = propType == "integer" ? "integer" : "string",
+                        Type = schemaType,
                         Description = $"The {prop.Name} parameter"
                     };
                     
@@ -292,22 +306,40 @@ namespace LocalPilot.Services
         public WriteFileTool(ToolRegistry registry) => _registry = registry;
 
         public string Name => "write_file";
-        public string Description => "Writes content to a file. By default, fails if file exists unless 'overwrite' is true. Creates directories if needed. Also ensures the file is part of the Visual Studio project.";
-        public string ParameterSchema => "{ \"path\": \"string\", \"content\": \"string\", \"overwrite\": \"boolean\" }";
+        public string Description => "Writes content to a file. Overwrites if file exists. Creates directories if needed. Also ensures the file is part of the Visual Studio project.";
+        public string ParameterSchema => "{ \"path\": \"string\", \"content\": \"string\", \"overwrite (optional)\": \"boolean\" }";
 
         public async Task<ToolResponse> ExecuteAsync(Dictionary<string, object> args, CancellationToken ct)
         {
             if (!args.TryGetValue("path", out var pathObj) || pathObj == null)
-                return new ToolResponse { IsError = true, Output = "Missing 'path' argument." };
+            {
+                if (!args.TryGetValue("TargetFile", out pathObj) || pathObj == null)
+                {
+                    if (!args.TryGetValue("file", out pathObj) || pathObj == null)
+                    {
+                        return new ToolResponse { IsError = true, Output = "Missing 'path' argument." };
+                    }
+                }
+            }
             
             if (!args.TryGetValue("content", out var contentObj) || contentObj == null)
-                return new ToolResponse { IsError = true, Output = "Missing 'content' argument." };
+            {
+                if (!args.TryGetValue("CodeContent", out contentObj) || contentObj == null)
+                {
+                    if (!args.TryGetValue("new_text", out contentObj) || contentObj == null)
+                    {
+                        return new ToolResponse { IsError = true, Output = "Missing 'content' argument." };
+                    }
+                }
+            }
 
-            bool overwrite = false;
+            // 🚀 By default, write_file overwrites. Permission check gates file modification.
+            bool overwrite = true;
             if (args.TryGetValue("overwrite", out var overwriteObj) && overwriteObj != null)
             {
                 if (overwriteObj is bool b) overwrite = b;
                 else if (bool.TryParse(overwriteObj.ToString(), out bool pb)) overwrite = pb;
+                else if (int.TryParse(overwriteObj.ToString(), out int pi)) overwrite = pi != 0;
             }
 
             var path = _registry.ResolvePath(pathObj.ToString());
@@ -318,7 +350,7 @@ namespace LocalPilot.Services
                 bool exists = File.Exists(path);
                 if (exists && !overwrite)
                 {
-                    return new ToolResponse { IsError = true, Output = $"Error: File already exists at '{path}'. If you intend to overwrite it, set 'overwrite': true in your tool call." };
+                    return new ToolResponse { IsError = true, Output = $"Error: File already exists at '{path}' and overwrite was set to false." };
                 }
 
                 var dir = Path.GetDirectoryName(path);
@@ -352,6 +384,10 @@ namespace LocalPilot.Services
                         await project.AddExistingFilesAsync(path);
                     }
                 }
+
+                // 🛡️ WORKSPACE SYNC: Ensure Roslyn sees this non-native edit
+                var roslyn = SymbolIndexService.Instance.GetRoslynProvider();
+                if (roslyn != null) await roslyn.SynchronizeDocumentAsync(path);
 
                 return new ToolResponse { Output = isNew ? "File created and added to project successfully." : "File updated successfully (overwritten)." };
             }
@@ -537,10 +573,27 @@ namespace LocalPilot.Services
         public async Task<ToolResponse> ExecuteAsync(Dictionary<string, object> args, CancellationToken ct)
         {
             if (!args.TryGetValue("path", out var pathObj) || pathObj == null)
+            {
+                if (!args.TryGetValue("TargetFile", out pathObj) || pathObj == null)
+                    args.TryGetValue("file", out pathObj);
+            }
+            if (pathObj == null)
                 return new ToolResponse { IsError = true, Output = "Missing 'path' argument." };
+
             if (!args.TryGetValue("old_text", out var oldObj) || oldObj == null)
+                args.TryGetValue("target_text", out oldObj);
+            if (oldObj == null)
                 return new ToolResponse { IsError = true, Output = "Missing 'old_text' argument." };
+
             if (!args.TryGetValue("new_text", out var newObj) || newObj == null)
+            {
+                if (!args.TryGetValue("replacement_text", out newObj) || newObj == null)
+                {
+                    if (!args.TryGetValue("ReplacementContent", out newObj) || newObj == null)
+                        args.TryGetValue("content", out newObj);
+                }
+            }
+            if (newObj == null)
                 return new ToolResponse { IsError = true, Output = "Missing 'new_text' argument." };
 
             var path = _registry.ResolvePath(pathObj.ToString());

@@ -655,7 +655,8 @@ namespace LocalPilot.Services
                                        toolCall.Name == "run_terminal" ||
                                        toolCall.Name == "write_to_file" ||
                                        toolCall.Name == "replace_file_content";
-                        if (isRisky && RequestPermissionAsync != null)
+                        bool requiresApproval = Settings.LocalPilotSettings.Instance?.RequireApprovalForWrites ?? true;
+                        if (isRisky && requiresApproval && RequestPermissionAsync != null)
                         {
                             OnStatusUpdate?.Invoke(AgentStatus.ActionPending, $"Waiting for permission to {toolCall.Name}...");
                             bool granted = await RequestPermissionAsync(toolCall);
@@ -663,6 +664,11 @@ namespace LocalPilot.Services
                             {
                                 messages.Add(new ChatMessage { Role = "tool", Content = "Error: User denied permission to execute this tool." });
                                 continue;
+                            }
+                            if (toolCall.Name == "write_file" || toolCall.Name == "write_to_file")
+                            {
+                                if (toolCall.Arguments == null) toolCall.Arguments = new Dictionary<string, object>();
+                                toolCall.Arguments["overwrite"] = true;
                             }
                         }
 
@@ -678,7 +684,7 @@ namespace LocalPilot.Services
 
                         if (isWrite)
                         {
-                            target = GetSafeToolArg(toolCall, "path") ?? GetSafeToolArg(toolCall, "TargetFile");
+                            target = GetSafeToolArg(toolCall, "path") ?? GetSafeToolArg(toolCall, "TargetFile") ?? GetSafeToolArg(toolCall, "file");
                             
                             string rawCode = GetSafeToolArg(toolCall, "content") ?? 
                                              GetSafeToolArg(toolCall, "new_text") ?? 
@@ -688,7 +694,7 @@ namespace LocalPilot.Services
                             // 🚀 INTELLIGENT STAGING: For replacements, calculate the FULL NEW CONTENT for the diff
                             if (toolCall.Name == "replace_text" || toolCall.Name == "replace_file_content")
                             {
-                                string oldText = GetSafeToolArg(toolCall, "old_text");
+                                string oldText = GetSafeToolArg(toolCall, "old_text") ?? GetSafeToolArg(toolCall, "target_text");
                                 string absPath = _toolRegistry.ResolvePath(target);
                                 string currentContent = "";
                                 
@@ -697,8 +703,8 @@ namespace LocalPilot.Services
                                     
                                     // Capture original for the WHOLE TURN (first touch)
                                     lock (_stagedChanges) {
-                                        if (!_stagedChanges.ContainsKey(target)) {
-                                            _stagedChanges[target] = (currentContent, "");
+                                        if (!_stagedChanges.ContainsKey(absPath)) {
+                                            _stagedChanges[absPath] = (currentContent, "");
                                         }
                                     }
 
@@ -717,19 +723,19 @@ namespace LocalPilot.Services
                             // 🚀 STAGING: Track changes for UI review or post-process validation
                             if (!string.IsNullOrEmpty(target) && !string.IsNullOrEmpty(code))
                             {
+                                string absPath = _toolRegistry.ResolvePath(target);
                                 lock (_stagedChanges) {
-                                    bool hasExisting = _stagedChanges.ContainsKey(target);
-                                    string originalCode = hasExisting ? _stagedChanges[target].original : null;
+                                    bool hasExisting = _stagedChanges.ContainsKey(absPath);
+                                    string originalCode = hasExisting ? _stagedChanges[absPath].original : null;
                                     
                                     if (!hasExisting) {
                                         // If we didn't capture original yet (e.g. write_file vs replace_text)
                                         try {
-                                             string absPath = _toolRegistry.ResolvePath(target);
                                              if (File.Exists(absPath)) originalCode = File.ReadAllText(absPath);
                                              else originalCode = ""; // New file original is empty
                                         } catch { originalCode = ""; }
                                     }
-                                    _stagedChanges[target] = (originalCode ?? "", code);
+                                    _stagedChanges[absPath] = (originalCode ?? "", code);
                                 }
                             }
                         }
