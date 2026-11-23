@@ -150,11 +150,11 @@
                         <Grid>
                             <!-- 💎 Minimalist Placeholder -->
                             <TextBlock x:Name="Placeholder"
-                                       Text="Ask anything"
+                                       Text="Ask LocalPilot or type '/' for actions..."
                                        Foreground="{DynamicResource LpMutedFgBrush}"
                                        VerticalAlignment="Top"
                                        IsHitTestVisible="False"
-                                       Margin="14,10,0,0">
+                                       Margin="16,12,0,0">
                                 <TextBlock.Style>
                                     <Style TargetType="TextBlock">
                                         <Setter Property="Visibility" Value="Collapsed"/>
@@ -545,6 +545,138 @@
             </Style.Triggers>
         </Style>
 
+        <!-- ═══ Hero Card Button Style (Action suggestions on empty state) ═══ -->
+        <Style x:Key="HeroCardButtonStyle" TargetType="Button">
+            <Setter Property="Background"      Value="{DynamicResource LpMenuBgBrush}"/>
+            <Setter Property="BorderBrush"     Value="{DynamicResource LpMenuBorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Foreground"      Value="{DynamicResource LpWindowFgBrush}"/>
+            <Setter Property="Padding"         Value="14,10"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="CardBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="8"
+                                Padding="{TemplateBinding Padding}"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="CardBorder" Property="Background" Value="{DynamicResource LpHoverBgBrush}"/>
+                                <Setter TargetName="CardBorder" Property="BorderBrush" Value="{DynamicResource LpAccentBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="CardBorder" Property="Opacity" Value="0.75"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ═══ Themed ComboBox Styles (Model Selector) ═══ -->
+        <ControlTemplate x:Key="ThemedComboBoxToggleTemplate" TargetType="ToggleButton">
+            <Border x:Name="templateRoot" Background="{TemplateBinding Background}" 
+                    BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" 
+                    CornerRadius="4" SnapsToDevicePixels="True">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="16"/>
+                    </Grid.ColumnDefinitions>
+                    <Path x:Name="arrow" Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center" 
+                          Data="M 0 0 L 3.5 3.5 L 7 0 Z" Fill="{DynamicResource LpMutedFgBrush}"/>
+                </Grid>
+            </Border>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter TargetName="templateRoot" Property="Background" Value="{DynamicResource LpHoverBgBrush}"/>
+                    <Setter TargetName="arrow" Property="Fill" Value="{DynamicResource LpWindowFgBrush}"/>
+                </Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate>
+
+        <Style x:Key="ThemedComboBoxItemStyle" TargetType="ComboBoxItem">
+            <Setter Property="Foreground" Value="{DynamicResource LpWindowFgBrush}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Padding" Value="8,5"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBoxItem">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="Left" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource LpHoverBgBrush}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource LpAccentBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource LpMenuBorderBrush}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource LpAccentBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="{DynamicResource LpMutedFgBrush}"/>
+                                <Setter Property="Opacity" Value="0.6"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="ThemedComboBoxStyle" TargetType="ComboBox">
+            <Setter Property="Foreground" Value="{DynamicResource LpWindowFgBrush}"/>
+            <Setter Property="Background" Value="{DynamicResource LpMenuBgBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource LpMenuBorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="6,2,2,2"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="ItemContainerStyle" Value="{StaticResource ThemedComboBoxItemStyle}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid x:Name="templateRoot" SnapsToDevicePixels="True">
+                            <ToggleButton x:Name="toggleButton" Background="{TemplateBinding Background}" 
+                                          BorderBrush="{TemplateBinding BorderBrush}" 
+                                          BorderThickness="{TemplateBinding BorderThickness}" 
+                                          Template="{StaticResource ThemedComboBoxToggleTemplate}" 
+                                          IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"/>
+                            <ContentPresenter x:Name="contentPresenter" Margin="{TemplateBinding Padding}" 
+                                              HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" 
+                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}" 
+                                              Content="{TemplateBinding SelectionBoxItem}" 
+                                              ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}" 
+                                              ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}" 
+                                              IsHitTestVisible="False"/>
+                            <Popup x:Name="PART_Popup" AllowsTransparency="True" IsOpen="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}}" 
+                                   Placement="Bottom" PopupAnimation="Slide">
+                                <Border x:Name="dropDownBorder" MaxHeight="{TemplateBinding MaxDropDownHeight}" 
+                                        MinWidth="{Binding ActualWidth, ElementName=templateRoot}" 
+                                        Background="{DynamicResource LpMenuBgBrush}" 
+                                        BorderBrush="{DynamicResource LpMenuBorderBrush}" 
+                                        BorderThickness="1" CornerRadius="4" Margin="0,2,0,0">
+                                    <ScrollViewer x:Name="DropDownScrollViewer">
+                                        <Grid RenderOptions.ClearTypeHint="Enabled">
+                                            <Canvas Height="0" Width="0" HorizontalAlignment="Left" VerticalAlignment="Top"/>
+                                            <ItemsPresenter x:Name="ItemsPresenter" KeyboardNavigation.DirectionalNavigation="Contained"/>
+                                        </Grid>
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
     </UserControl.Resources>
 
     <Grid x:Name="RootGrid" Background="{DynamicResource LpWindowBgBrush}">
@@ -625,23 +757,138 @@
                 </ListBox.ItemsPanel>
             </ListBox>
 
-            <!-- Welcome prompt — Copilot style: subtle, centred, muted -->
-            <StackPanel x:Name="WelcomePanel"
-                        IsHitTestVisible="False"
-                        VerticalAlignment="Top"
-                        Visibility="Visible"
-                        Margin="0,8,0,0">
-                <TextBlock Text="What's on your mind?"
-                           FontSize="12"
-                           Foreground="{DynamicResource LpMutedFgBrush}"
-                           Margin="24,12,24,8"
-                           TextWrapping="Wrap"/>
-                <TextBlock Text="Tip: use slash actions like /explain, /fix, /review, or /test."
-                           FontSize="10"
-                           Foreground="{DynamicResource LpMutedFgBrush}"
-                           Margin="24,0,24,10"
-                           TextWrapping="Wrap"/>
-            </StackPanel>
+            <!-- ═══════════════════════  HERO WELCOME PANEL  ═══════════════════════ -->
+            <ScrollViewer x:Name="WelcomePanel"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled"
+                          Visibility="Visible">
+                <StackPanel VerticalAlignment="Center"
+                            HorizontalAlignment="Stretch"
+                            Margin="20,16"
+                            MaxWidth="440">
+
+                    <!-- Logo Badge -->
+                    <Border Width="48" Height="48" CornerRadius="24"
+                            Background="{DynamicResource LpMenuBgBrush}"
+                            BorderBrush="{DynamicResource LpMenuBorderBrush}"
+                            BorderThickness="1"
+                            HorizontalAlignment="Center"
+                            Margin="0,0,0,12">
+                        <Image Source="/LocalPilot;component/Assets/Logo_Concept_Minimalist.png"
+                               Width="24" Height="24"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center"/>
+                    </Border>
+
+                    <!-- Title & Tagline -->
+                    <TextBlock Text="How can I help you today?"
+                               FontSize="16" FontWeight="SemiBold"
+                               Foreground="{DynamicResource LpWindowFgBrush}"
+                               HorizontalAlignment="Center"
+                               TextAlignment="Center"/>
+
+                    <TextBlock Text="Local, private AI coding assistant"
+                               FontSize="11.5"
+                               Foreground="{DynamicResource LpMutedFgBrush}"
+                               HorizontalAlignment="Center"
+                               TextAlignment="Center"
+                               Margin="0,4,0,20"/>
+
+                    <!-- Action Suggestion Cards -->
+                    <StackPanel>
+                        <!-- Explain Code -->
+                        <Button Style="{StaticResource HeroCardButtonStyle}"
+                                Tag="explain"
+                                Click="HeroCard_Click"
+                                Margin="0,0,0,8"
+                                ToolTip="Explain selected code or ask for explanation">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="&#xE9CE;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                           Foreground="{DynamicResource LpAccentBrush}"
+                                           VerticalAlignment="Center" Margin="2,0,12,0"/>
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                    <TextBlock Text="Explain code" FontWeight="SemiBold" FontSize="12"
+                                               Foreground="{DynamicResource LpWindowFgBrush}"/>
+                                    <TextBlock Text="Understand logic, algorithms &amp; architecture"
+                                               FontSize="10.5" Foreground="{DynamicResource LpMutedFgBrush}" Margin="0,2,0,0"/>
+                                </StackPanel>
+                            </Grid>
+                        </Button>
+
+                        <!-- Refactor Selection -->
+                        <Button Style="{StaticResource HeroCardButtonStyle}"
+                                Tag="refactor"
+                                Click="HeroCard_Click"
+                                Margin="0,0,0,8"
+                                ToolTip="Refactor and improve highlighted code">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="&#xE945;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                           Foreground="{DynamicResource LpAccentBrush}"
+                                           VerticalAlignment="Center" Margin="2,0,12,0"/>
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                    <TextBlock Text="Refactor code" FontWeight="SemiBold" FontSize="12"
+                                               Foreground="{DynamicResource LpWindowFgBrush}"/>
+                                    <TextBlock Text="Improve readability, structure &amp; performance"
+                                               FontSize="10.5" Foreground="{DynamicResource LpMutedFgBrush}" Margin="0,2,0,0"/>
+                                </StackPanel>
+                            </Grid>
+                        </Button>
+
+                        <!-- Generate Tests -->
+                        <Button Style="{StaticResource HeroCardButtonStyle}"
+                                Tag="test"
+                                Click="HeroCard_Click"
+                                Margin="0,0,0,8"
+                                ToolTip="Generate comprehensive unit tests">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="&#xE9DB;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                           Foreground="{DynamicResource LpAccentBrush}"
+                                           VerticalAlignment="Center" Margin="2,0,12,0"/>
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                    <TextBlock Text="Generate unit tests" FontWeight="SemiBold" FontSize="12"
+                                               Foreground="{DynamicResource LpWindowFgBrush}"/>
+                                    <TextBlock Text="Create test cases covering edge cases &amp; inputs"
+                                               FontSize="10.5" Foreground="{DynamicResource LpMutedFgBrush}" Margin="0,2,0,0"/>
+                                </StackPanel>
+                            </Grid>
+                        </Button>
+
+                        <!-- Review Changes -->
+                        <Button Style="{StaticResource HeroCardButtonStyle}"
+                                Tag="review"
+                                Click="HeroCard_Click"
+                                ToolTip="Review code for bugs and security vulnerabilities">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="&#xE890;" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                                           Foreground="{DynamicResource LpAccentBrush}"
+                                           VerticalAlignment="Center" Margin="2,0,12,0"/>
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                    <TextBlock Text="Review code" FontWeight="SemiBold" FontSize="12"
+                                               Foreground="{DynamicResource LpWindowFgBrush}"/>
+                                    <TextBlock Text="Find potential bugs, security issues &amp; code smells"
+                                               FontSize="10.5" Foreground="{DynamicResource LpMutedFgBrush}" Margin="0,2,0,0"/>
+                                </StackPanel>
+                            </Grid>
+                        </Button>
+                    </StackPanel>
+                </StackPanel>
+            </ScrollViewer>
         </Grid>
 
         <!-- ═══════════════════════  DIAGNOSTIC CONSOLE  ═══════════════════════ -->
@@ -706,6 +953,7 @@
 
                             <TextBlock x:Name="TxtAgentStatus" Text="{Binding AgentTurn.StatusText}" Foreground="{DynamicResource LpWindowFgBrush}" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
                             <TextBlock x:Name="TxtAgentDetail" Text="{Binding AgentTurn.DetailText}" Foreground="{DynamicResource LpMutedFgBrush}" FontSize="11" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="TxtAgentTimer" Foreground="{DynamicResource LpMutedFgBrush}" FontSize="11" Margin="8,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold" Opacity="0.85"/>
                         </StackPanel>
                     </Grid>
                 </Border>
@@ -856,15 +1104,15 @@
                 <!-- 🚀 Floating Pill HUD -->
                 <Border x:Name="InputHudBorder" Style="{StaticResource InputHudBorderStyle}">
                     <Grid>
-                        <TextBox x:Name="TxtInput" Style="{StaticResource ChatInputStyle}" MinHeight="80" MaxHeight="200" 
-                                 Padding="18,12,80,12" AcceptsReturn="True" TextWrapping="Wrap" PreviewKeyDown="TxtInput_PreviewKeyDown"
-                                 FontSize="14"
+                        <TextBox x:Name="TxtInput" Style="{StaticResource ChatInputStyle}" MinHeight="66" MaxHeight="200" 
+                                 Padding="16,12,72,12" AcceptsReturn="True" TextWrapping="Wrap" PreviewKeyDown="TxtInput_PreviewKeyDown"
+                                 FontSize="13.5"
                                  IsEnabled="{Binding IsInputEnabled}"
                                  Opacity="{Binding InputOpacity}"/>
                         
-                        <StackPanel Panel.ZIndex="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,10,10" IsHitTestVisible="True">
-                            <Button x:Name="BtnQuickActions" Style="{StaticResource IconButtonStyle}" Click="BtnQuickActions_Click" Margin="0,0,0,0" Width="24" Height="24" ToolTip="Slash Actions">
-                                <TextBlock Text="&#xE945;" FontFamily="Segoe MDL2 Assets" FontSize="11" Foreground="{DynamicResource LpMutedFgBrush}"/>
+                        <StackPanel Panel.ZIndex="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,8,8" IsHitTestVisible="True">
+                            <Button x:Name="BtnQuickActions" Style="{StaticResource IconButtonStyle}" Click="BtnQuickActions_Click" Margin="0,0,4,0" Width="26" Height="26" ToolTip="Quick Actions (/)">
+                                <TextBlock Text="&#xE945;" FontFamily="Segoe MDL2 Assets" FontSize="12" Foreground="{DynamicResource LpMutedFgBrush}"/>
                                 <Button.ContextMenu>
                                     <ContextMenu x:Name="QuickActionsMenu" Style="{StaticResource ThemedContextMenuStyle}">
                                         <MenuItem Header="Explain Code" Tag="explain" Click="MenuQuickAction_Click" Style="{StaticResource ThemedMenuItemStyle}">
@@ -900,27 +1148,38 @@
                                     </ContextMenu>
                                 </Button.ContextMenu>
                             </Button>
-                             <Button x:Name="BtnSend" Style="{StaticResource LpSendButtonStyle}" Click="BtnSend_Click" Width="24" Height="24" UseLayoutRounding="True">
+                            <Button x:Name="BtnSend" Style="{StaticResource LpSendButtonStyle}" Click="BtnSend_Click" Width="26" Height="26" UseLayoutRounding="True" ToolTip="Send message (Enter)">
                                  <Path x:Name="BtnSendIcon" Data="M12,4L10.59,5.41L16.17,11H4V13H16.17L10.59,18.59L12,20L20,12L12,4Z" 
                                        Fill="{DynamicResource LpSendIconBrush}" 
-                                       Width="10" Height="10" Stretch="Uniform"
+                                       Width="11" Height="11" Stretch="Uniform"
                                        SnapsToDevicePixels="True"/>
                             </Button>
                         </StackPanel>
                     </Grid>
                 </Border>
-                <Grid Margin="2,8,2,0">
+                <Grid Margin="2,8,2,2">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <TextBlock Text="Enter to send · Shift+Enter for newline"
-                               Foreground="{DynamicResource LpMutedFgBrush}"
-                               FontSize="10"
-                               VerticalAlignment="Center"/>
+                    
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock Text="Enter" FontWeight="SemiBold" FontSize="10" Foreground="{DynamicResource LpMutedFgBrush}" VerticalAlignment="Center"/>
+                        <TextBlock Text=" to send · " FontSize="10" Foreground="{DynamicResource LpMutedFgBrush}" VerticalAlignment="Center"/>
+                        <TextBlock Text="Shift+Enter" FontWeight="SemiBold" FontSize="10" Foreground="{DynamicResource LpMutedFgBrush}" VerticalAlignment="Center"/>
+                        <TextBlock Text=" for newline" FontSize="10" Foreground="{DynamicResource LpMutedFgBrush}" VerticalAlignment="Center"/>
+                    </StackPanel>
+
                     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                        <TextBlock Text="Model: " Foreground="{DynamicResource LpMutedFgBrush}" FontSize="10" VerticalAlignment="Center" Margin="0,0,4,0"/>
-                        <ComboBox x:Name="CmbChatModelSelector" Width="130" Height="20" FontSize="10" SelectionChanged="CmbChatModelSelector_SelectionChanged" Focusable="false" BorderThickness="0" Background="{DynamicResource LpMenuBgBrush}" Foreground="{DynamicResource LpWindowFgBrush}"/>
+                        <TextBlock Text="&#xE9CE;" FontFamily="Segoe MDL2 Assets" FontSize="10" 
+                                   Foreground="{DynamicResource LpAccentBrush}" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                        <TextBlock Text="Model:" Foreground="{DynamicResource LpMutedFgBrush}" FontSize="10.5" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                        <ComboBox x:Name="CmbChatModelSelector" 
+                                  Style="{StaticResource ThemedComboBoxStyle}"
+                                  MinWidth="120" MaxWidth="190" Height="24" FontSize="11" 
+                                  SelectionChanged="CmbChatModelSelector_SelectionChanged" 
+                                  Focusable="false"
+                                  ToolTip="Active Chat Model"/>
                     </StackPanel>
                 </Grid>
             </StackPanel>

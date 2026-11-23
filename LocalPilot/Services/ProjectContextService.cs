@@ -46,7 +46,7 @@ namespace LocalPilot.Services
 
         private ProjectContextService() { }
 
-        public async Task IndexSolutionAsync(OllamaService ollama, CancellationToken ct = default)
+        public async Task IndexSolutionAsync(ILlmService ollama, CancellationToken ct = default)
         {
             if (_isIndexing) return;
             if (!await _indexLock.WaitAsync(0)) return;
@@ -194,7 +194,7 @@ namespace LocalPilot.Services
             catch { return string.Empty; }
         }
 
-        private async Task ParallelUpdateAsync(List<string> files, OllamaService ollama, CancellationToken ct)
+        private async Task ParallelUpdateAsync(List<string> files, ILlmService ollama, CancellationToken ct)
         {
             int concurrency = Math.Max(1, Math.Min(8, LocalPilotSettings.Instance.BackgroundIndexingConcurrency));
             int batchSize = 50; // Process 50 files per transaction batch
@@ -390,7 +390,7 @@ namespace LocalPilot.Services
             return chunks.Distinct().ToList();
         }
 
-        public async Task<string> SearchContextAsync(OllamaService ollama, string query, int topN = 5, CancellationToken ct = default)
+        public async Task<string> SearchContextAsync(ILlmService ollama, string query, int topN = 5, CancellationToken ct = default)
         {
             if (string.IsNullOrWhiteSpace(query)) return string.Empty;
 
@@ -598,7 +598,7 @@ namespace LocalPilot.Services
             catch { }
         }
 
-        private void SetupIncrementalWatcher(OllamaService ollama)
+        private void SetupIncrementalWatcher(ILlmService ollama)
         {
             if (_watcher != null) return;
             try

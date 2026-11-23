@@ -16,6 +16,7 @@ using System.Windows.Controls;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using Community.VisualStudio.Toolkit;
 using System.Linq;
 
@@ -23,7 +24,7 @@ namespace LocalPilot.Chat
 {
     public partial class LocalPilotChatControl : UserControl
     {
-        private readonly OllamaService _ollama;
+        private readonly ILlmService _ollama;
         private readonly List<ChatMessage> _history = new List<ChatMessage>();
         private CancellationTokenSource _cts;
         private string _lastAuthoringCode = null; // Buffer for original code during Refactor/Fix
@@ -35,6 +36,10 @@ namespace LocalPilot.Chat
         private TaskCompletionSource<bool> _permissionTcs;
         private StackPanel _agentCurrentContainer;
         private StackPanel _agentTurnContainer;
+        private FrameworkElement _currentTurnStatusHeader;
+        private TextBlock _currentTurnTimerText;
+        private readonly System.Diagnostics.Stopwatch _taskStopwatch = new System.Diagnostics.Stopwatch();
+        private string _lastFormattedElapsed;
 
         private bool _isStreaming = false;
         private readonly ChatSessionViewModel _sessionViewModel;
@@ -95,7 +100,7 @@ namespace LocalPilot.Chat
             _agentTurnLayoutBuilder = new AgentTurnLayoutBuilder();
             _projectContext = ProjectContextService.Instance;
             DataContext = _sessionViewModel;
-            _ollama = new OllamaService(LocalPilotSettings.Instance.OllamaBaseUrl);
+            _ollama = LlmProviderFactory.GetService();
             
             // Initialize Agent Services
             _toolRegistry = new ToolRegistry();
@@ -576,13 +581,9 @@ namespace LocalPilot.Chat
                 Content = PromptLoader.GetPrompt("SystemPrompt")
             });
 
-            // Modern introductory text is now partly in XAML, but we can add a greet
-            AppendAIBubble("Hi, I am ready to help with your code. Select text and use the actions above, or ask a question below.");
-
-            if (string.IsNullOrEmpty(LocalPilotSettings.Instance.EmbeddingModel))
-            {
-                AppendAIBanner("Configure an Embedding Model (e.g. nomic-embed-text) in settings to unlock full codebase awareness and faster RAG search.", "Dismiss", () => { }, "PRO TIP");
-            }
+            MessagesContainer.Items.Clear();
+            if (WelcomePanel != null)
+                WelcomePanel.Visibility = Visibility.Visible;
         }
 
         // ── Send message ──────────────────────────────────────────────────────
@@ -728,6 +729,9 @@ namespace LocalPilot.Chat
 
         private void StartNewAgentTurn()
         {
+            if (WelcomePanel != null && WelcomePanel.Visibility == Visibility.Visible)
+                WelcomePanel.Visibility = Visibility.Collapsed;
+
             _currentChunkSb.Clear();
             _currentNarrativeContainer = null;
             
@@ -736,7 +740,7 @@ namespace LocalPilot.Chat
                 _agentTurnCoordinator.BuildStatusState(LocalPilotSettings.Instance.ChatModel, AgentStatus.Thinking, string.Empty, _currentAction).HeaderText :
                 "Thinking...";
 
-            var layout = _agentTurnLayoutBuilder.BuildTurnLayout(() => CreateAIHeader(out _, initialStatus), this.Resources);
+            var layout = _agentTurnLayoutBuilder.BuildTurnLayout(() => CreateAIHeader(out _currentTurnStatusHeader, initialStatus), this.Resources);
             _agentTurnContainer = layout.TurnContainer;
             _agentCurrentContainer = layout.CurrentContainer;
             _currentActivityContainer = layout.ActivityContainer;
@@ -812,6 +816,23 @@ namespace LocalPilot.Chat
 
         private void OnStreamingTimerTick(object sender, EventArgs e)
         {
+            if (_taskStopwatch.IsRunning)
+            {
+                string formatted = AgentUiRenderer.FormatDuration(_taskStopwatch.ElapsedMilliseconds);
+                if (formatted != _lastFormattedElapsed)
+                {
+                    _lastFormattedElapsed = formatted;
+                    if (_currentTurnTimerText != null)
+                    {
+                        _currentTurnTimerText.Text = "  " + formatted;
+                    }
+                    if (TxtAgentTimer != null)
+                    {
+                        TxtAgentTimer.Text = "·  " + formatted;
+                    }
+                }
+            }
+
             if (!_isStreaming && _streamingBuffer.Length == 0) return;
 
             string newText = null;
@@ -1089,6 +1110,11 @@ namespace LocalPilot.Chat
                         _agentCurrentContainer = null;
                         _lastStagedChanges = null; // 🛡️ Prevent stale changes from appearing in UI
 
+                        if (_taskStopwatch.IsRunning && _taskStopwatch.ElapsedMilliseconds > statusState.LatencyMs)
+                        {
+                            statusState.LatencyMs = _taskStopwatch.ElapsedMilliseconds;
+                        }
+
                         if (container != null)
                         {
                             var badge = _agentUiRenderer.CreateTerminalBadge(statusState, this.Resources, out _);
@@ -1112,6 +1138,11 @@ namespace LocalPilot.Chat
                 else
                 {
                     // 🏁 Task Completed Successfully - Clean exit
+                    if (_taskStopwatch.IsRunning && _taskStopwatch.ElapsedMilliseconds > statusState.LatencyMs)
+                    {
+                        statusState.LatencyMs = _taskStopwatch.ElapsedMilliseconds;
+                    }
+
                     if (_agentTurnContainer != null)
                     {
                         var badge = _agentUiRenderer.CreateTerminalBadge(statusState, this.Resources, out var acceptBtn);
@@ -1143,6 +1174,35 @@ namespace LocalPilot.Chat
             var btn = (Button)sender;
             var action = btn.Tag?.ToString() ?? string.Empty;
             _ = HandleQuickActionAsync(action);
+        }
+
+        private void HeroCard_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button btn && btn.Tag is string action)
+            {
+                _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+                {
+                    try
+                    {
+                        string selection = await TryGetEditorSelectionAsync().ConfigureAwait(false);
+                        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                        if (!string.IsNullOrWhiteSpace(selection))
+                        {
+                            _ = HandleQuickActionAsync(action, selection);
+                        }
+                        else
+                        {
+                            TxtInput.Text = $"/{action} ";
+                            TxtInput.Focus();
+                            TxtInput.CaretIndex = TxtInput.Text.Length;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        LocalPilotLogger.LogError($"[Chat] Error in HeroCard_Click for {action}", ex);
+                    }
+                });
+            }
         }
 
 
@@ -1297,6 +1357,9 @@ namespace LocalPilot.Chat
 
         private void AppendUserBubble(string text)
         {
+            if (WelcomePanel != null && WelcomePanel.Visibility == Visibility.Visible)
+                WelcomePanel.Visibility = Visibility.Collapsed;
+
             var row = new Grid { Margin = new Thickness(0, 8, 4, 16) };
             
             var bubble = new Border
@@ -1327,7 +1390,7 @@ namespace LocalPilot.Chat
         }
 
 
-        private StackPanel CreateAIHeader(out TextBlock statusLabelRef, string status = null)
+        private StackPanel CreateAIHeader(out FrameworkElement statusLabelRef, string status = null)
         {
             statusLabelRef = null;
             var labelRow = new StackPanel
@@ -1360,16 +1423,96 @@ namespace LocalPilot.Chat
 
             if (!string.IsNullOrEmpty(status))
             {
-                var statusLabel = new TextBlock
+                var statusPanel = new StackPanel
                 {
-                    Text              = $"  ·  {status}",
-                    FontSize          = 11,
-                    FontStyle         = FontStyles.Italic,
-                    Foreground        = (Brush)this.Resources["LpMutedFgBrush"],
+                    Orientation = Orientation.Horizontal,
                     VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(6, 0, 0, 0)
                 };
-                labelRow.Children.Add(statusLabel);
-                statusLabelRef = statusLabel;
+
+                var dotSep = new TextBlock
+                {
+                    Text = "·  ",
+                    FontSize = 11,
+                    Foreground = (Brush)this.Resources["LpMutedFgBrush"],
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                statusPanel.Children.Add(dotSep);
+
+                // Strip trailing dots since we'll animate them dynamically
+                string displayText = status.TrimEnd('.');
+                var statusText = new TextBlock
+                {
+                    Text = displayText,
+                    FontSize = 11,
+                    FontStyle = FontStyles.Italic,
+                    Foreground = (Brush)this.Resources["LpMutedFgBrush"],
+                    VerticalAlignment = VerticalAlignment.Center
+                };
+                statusPanel.Children.Add(statusText);
+
+                // Animated Dots Container (staggered wave)
+                var dotsPanel = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(1, 0, 0, 0)
+                };
+
+                for (int i = 0; i < 3; i++)
+                {
+                    var dot = new TextBlock
+                    {
+                        Text = ".",
+                        FontSize = 12,
+                        FontWeight = FontWeights.Bold,
+                        FontStyle = FontStyles.Normal,
+                        Foreground = (Brush)this.Resources["LpMutedFgBrush"],
+                        VerticalAlignment = VerticalAlignment.Center,
+                        Opacity = 0.2
+                    };
+
+                    var anim = new DoubleAnimationUsingKeyFrames
+                    {
+                        Duration = TimeSpan.FromMilliseconds(1200),
+                        RepeatBehavior = RepeatBehavior.Forever
+                    };
+
+                    double delayMs = i * 200;
+                    anim.KeyFrames.Add(new LinearDoubleKeyFrame(0.2, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(delayMs))));
+                    anim.KeyFrames.Add(new LinearDoubleKeyFrame(1.0, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(delayMs + 300))));
+                    anim.KeyFrames.Add(new LinearDoubleKeyFrame(0.2, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(delayMs + 600))));
+                    anim.KeyFrames.Add(new LinearDoubleKeyFrame(0.2, KeyTime.FromTimeSpan(TimeSpan.FromMilliseconds(1200))));
+
+                    dot.BeginAnimation(UIElement.OpacityProperty, anim);
+                    dotsPanel.Children.Add(dot);
+                }
+                statusPanel.Children.Add(dotsPanel);
+
+                // Live running timer text (ticks 1s, 2s... 3m 5s, 3m 6s)
+                var timerBlock = new TextBlock
+                {
+                    Text = "  0s",
+                    FontSize = 11,
+                    FontFamily = ConsoleFont,
+                    Foreground = (Brush)this.Resources["LpMutedFgBrush"],
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Margin = new Thickness(4, 0, 0, 0),
+                    Opacity = 0.85
+                };
+                statusPanel.Children.Add(timerBlock);
+                _currentTurnTimerText = timerBlock;
+
+                // Breathing pulse animation for the status text
+                var pulse = new DoubleAnimation(1.0, 0.4, new Duration(TimeSpan.FromMilliseconds(900)))
+                {
+                    AutoReverse = true,
+                    RepeatBehavior = RepeatBehavior.Forever
+                };
+                statusText.BeginAnimation(UIElement.OpacityProperty, pulse);
+
+                labelRow.Children.Add(statusPanel);
+                statusLabelRef = statusPanel;
             }
 
             return labelRow;
@@ -1377,6 +1520,9 @@ namespace LocalPilot.Chat
 
         private StackPanel AppendAIBubble(string text)
         {
+            if (WelcomePanel != null && WelcomePanel.Visibility == Visibility.Visible)
+                WelcomePanel.Visibility = Visibility.Collapsed;
+
             // AI message: minimalist flat layout matching VS Code / Antigravity
             var msgContainer = new StackPanel { Margin = new Thickness(12, 8, 12, 12) };
 
@@ -2126,6 +2272,8 @@ namespace LocalPilot.Chat
 
                 if (streaming)
                 {
+                    _taskStopwatch.Restart();
+                    _lastFormattedElapsed = null;
                     _streamingTimer.Start();
                     AgentStatusBar.Visibility = streamingState.ShowStatusBar ? Visibility.Visible : Visibility.Collapsed;
                     _sessionViewModel.AgentTurn.StatusText = streamingState.StatusText;
@@ -2140,6 +2288,10 @@ namespace LocalPilot.Chat
                 }
                 else
                 {
+                    _taskStopwatch.Stop();
+                    _currentTurnTimerText = null;
+                    if (TxtAgentTimer != null) TxtAgentTimer.Text = string.Empty;
+
                     AgentStatusBar.Visibility = Visibility.Collapsed;
 
                     BtnSendIcon.Data = Geometry.Parse("M12,4L10.59,5.41L16.17,11H4V13H16.17L10.59,18.59L12,20L20,12L12,4Z");
@@ -2148,6 +2300,12 @@ namespace LocalPilot.Chat
                     BtnSend.ClearValue(Button.BackgroundProperty);
                     BtnSend.ClearValue(Button.BorderBrushProperty);
                     BtnSend.ClearValue(Button.BorderThicknessProperty);
+
+                    if (_currentTurnStatusHeader != null)
+                    {
+                        _currentTurnStatusHeader.Visibility = Visibility.Collapsed;
+                        _currentTurnStatusHeader = null;
+                    }
                 }
 
                 BtnSend.IsEnabled = true;
@@ -2190,11 +2348,7 @@ namespace LocalPilot.Chat
                 if (ReviewPanel != null) ReviewPanel.Visibility = Visibility.Collapsed;
                 if (ConfirmationPanel != null) ConfirmationPanel.Visibility = Visibility.Collapsed;
 
-                MessagesContainer.Items.Clear();
-                WelcomePanel.Visibility = Visibility.Visible;
-                _history.Clear();
                 ShowWelcomeMessage();
-                AppendAIBubble("Conversation cleared. Project context will still be used if indexed.");
             }
             catch (Exception ex)
             {
@@ -2398,6 +2552,9 @@ namespace LocalPilot.Chat
         {
             // 🛡️ DYNAMIC SUPPRESSION: Don't interrupt the user if the agent is already busy
             if (_isStreaming) return;
+
+            if (WelcomePanel != null && WelcomePanel.Visibility == Visibility.Visible)
+                WelcomePanel.Visibility = Visibility.Collapsed;
 
              var banner = new Border
             {

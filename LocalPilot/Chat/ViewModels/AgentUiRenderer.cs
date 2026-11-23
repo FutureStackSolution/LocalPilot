@@ -116,19 +116,7 @@ namespace LocalPilot.Chat.ViewModels
 
             if (statusState.LatencyMs > 0)
             {
-                string timeDisplay;
-                if (statusState.LatencyMs < 1000)
-                {
-                    timeDisplay = $"{statusState.LatencyMs}ms";
-                }
-                else if (statusState.LatencyMs < 60000)
-                {
-                    timeDisplay = $"{(statusState.LatencyMs / 1000.0):F1}s";
-                }
-                else
-                {
-                    timeDisplay = $"{(statusState.LatencyMs / 60000.0):F1}m";
-                }
+                string timeDisplay = FormatDuration(statusState.LatencyMs);
 
                 sp.Children.Add(new TextBlock
                 {
@@ -224,6 +212,26 @@ namespace LocalPilot.Chat.ViewModels
             if (args == null) return null;
             if (!args.TryGetValue(key, out var val) || val == null) return null;
             return val.ToString();
+        }
+
+        /// <summary>
+        /// Formats elapsed duration into human-readable representation:
+        /// 450ms, 45s, 1m 20s, 3m 5s, 1h 2m 5s (matching Antigravity / Gemini UI standard).
+        /// </summary>
+        public static string FormatDuration(long milliseconds)
+        {
+            if (milliseconds < 0) milliseconds = 0;
+            if (milliseconds < 1000) return $"{milliseconds}ms";
+            var ts = TimeSpan.FromMilliseconds(milliseconds);
+            if (ts.TotalMinutes < 1)
+            {
+                return $"{(int)ts.TotalSeconds}s";
+            }
+            if (ts.TotalHours < 1)
+            {
+                return $"{(int)ts.TotalMinutes}m {ts.Seconds}s";
+            }
+            return $"{(int)ts.TotalHours}h {ts.Minutes}m {ts.Seconds}s";
         }
 
         private static string FileNameFromArg(Dictionary<string, object> args, string key)

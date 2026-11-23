@@ -15,7 +15,7 @@ namespace LocalPilot.Services
     /// Communicates with a local Ollama instance over HTTP.
     /// Supports streaming completions, chat with native tool calling, and model listing.
     /// </summary>
-    public class OllamaService
+    public class OllamaService : ILlmService
     {
         private static readonly HttpClient _httpClient = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
         private static readonly HttpClient _backgroundHttpClient = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };

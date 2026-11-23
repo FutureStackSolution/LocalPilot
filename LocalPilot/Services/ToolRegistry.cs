@@ -71,21 +71,41 @@ namespace LocalPilot.Services
         /// This enables structured tool calling — Ollama returns tool_calls as JSON objects,
         /// not embedded in text, eliminating all parsing/nudging issues.
         /// </summary>
-        public List<OllamaToolDefinition> GetOllamaToolDefinitions()
+        public List<OllamaToolDefinition> GetOllamaToolDefinitions(bool essentialOnly = false)
         {
             var definitions = new List<OllamaToolDefinition>();
             var seenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            
-            foreach (var tool in _tools.Values)
+
+            var essentialToolNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
+                "read_file", "replace_text", "write_file", "grep_search", "list_files", "list_dir"
+            };
+            
+            // 🚀 DETERMINISTIC ORDER: Alphabetical sorting guarantees 100% byte-for-byte identical tool payload for KV-cache hits
+            var sortedTools = _tools.Values.OrderBy(t => t.Name, StringComparer.Ordinal).ToList();
+
+            foreach (var tool in sortedTools)
+            {
+                if (essentialOnly && !essentialToolNames.Contains(tool.Name)) continue;
                 if (!seenNames.Add(tool.Name)) continue;
+
+                // 🚀 LEAN SCHEMA IN FAST MODE: Compact descriptions to save 400-600 tokens of prefill
+                string desc = tool.Description;
+                if (essentialOnly)
+                {
+                    if (tool.Name == "read_file") desc = "Read file contents.";
+                    else if (tool.Name == "replace_text") desc = "Replace a block of text in a file with new text.";
+                    else if (tool.Name == "write_file") desc = "Write content to a file.";
+                    else if (tool.Name == "grep_search") desc = "Search pattern across workspace files.";
+                }
+
                 var def = new OllamaToolDefinition
                 {
                     Type = "function",
                     Function = new OllamaFunctionDefinition
                     {
                         Name = tool.Name,
-                        Description = tool.Description,
+                        Description = desc,
                         Parameters = ParseParameterSchema(tool.ParameterSchema)
                     }
                 };
@@ -622,49 +642,111 @@ namespace LocalPilot.Services
                     return new ToolResponse { IsError = true, Output = $"File not found: {path}" };
                 }
                 
-                // Normalization: LLMs often use \n, Windows uses \r\n, and sometimes have trailing spaces.
-                // We'll prioritize the exact match, then try fuzzy whitespace normalization.
-                if (!content.Contains(oldText))
+                string newContent = null;
+
+                // 1. Exact match
+                if (content.Contains(oldText))
                 {
-                    // 🚀 FUZZY FALLBACK (v2.0): Match ignoring whitespace variations
+                    bool oldIsId = System.Text.RegularExpressions.Regex.IsMatch(oldText, @"^[A-Za-z_]\w*$");
+                    bool newIsId = System.Text.RegularExpressions.Regex.IsMatch(newText, @"^[A-Za-z_]\w*$");
+                    if (oldIsId && newIsId)
+                    {
+                        var pattern = $@"\b{System.Text.RegularExpressions.Regex.Escape(oldText)}\b";
+                        newContent = System.Text.RegularExpressions.Regex.Replace(content, pattern, newText);
+                    }
+                    else
+                    {
+                        newContent = content.Replace(oldText, newText);
+                    }
+                }
+                // 2. Line-ending normalized match (\r\n vs \n)
+                else if (content.Replace("\r\n", "\n").Contains(oldText.Replace("\r\n", "\n")))
+                {
+                    bool isCrlf = content.Contains("\r\n");
+                    string normContent = content.Replace("\r\n", "\n");
+                    string normOld = oldText.Replace("\r\n", "\n");
+                    string normNew = newText.Replace("\r\n", "\n");
+                    string replaced = normContent.Replace(normOld, normNew);
+                    newContent = isCrlf ? replaced.Replace("\n", "\r\n") : replaced;
+                    LocalPilotLogger.Log($"[ReplaceText] Matched '{path}' using line-ending normalization.");
+                }
+                // 3. Regex whitespace-agnostic match
+                else
+                {
                     string escapedOld = System.Text.RegularExpressions.Regex.Escape(oldText);
                     string pattern = System.Text.RegularExpressions.Regex.Replace(escapedOld, @"\s+", @"\s+");
                     var match = System.Text.RegularExpressions.Regex.Match(content, pattern);
 
                     if (match.Success)
                     {
-                        oldText = match.Value;
+                        var regex = new System.Text.RegularExpressions.Regex(pattern);
+                        newContent = regex.Replace(content, newText, 1);
                         LocalPilotLogger.Log($"[ReplaceText] Fuzzy match found for '{path}' using regex fallback.");
                     }
                     else
                     {
-                        // Final attempt: Case-insensitive exact match
-                        var caseIndex = content.IndexOf(oldText, StringComparison.OrdinalIgnoreCase);
-                        if (caseIndex != -1)
+                        // 4. Line-by-line trimmed comparison (matches multi-line blocks ignoring indentation)
+                        var contentLines = content.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
+                        var oldLines = oldText.Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries)
+                                              .Select(l => l.Trim())
+                                              .ToList();
+
+                        int matchLineStart = -1;
+                        if (oldLines.Count > 0)
                         {
-                            oldText = content.Substring(caseIndex, oldText.Length);
+                            for (int i = 0; i <= contentLines.Length - oldLines.Count; i++)
+                            {
+                                bool allMatch = true;
+                                for (int j = 0; j < oldLines.Count; j++)
+                                {
+                                    if (contentLines[i + j].Trim() != oldLines[j])
+                                    {
+                                        allMatch = false;
+                                        break;
+                                    }
+                                }
+                                if (allMatch)
+                                {
+                                    matchLineStart = i;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (matchLineStart >= 0)
+                        {
+                            var listLines = contentLines.ToList();
+                            listLines.RemoveRange(matchLineStart, oldLines.Count);
+                            listLines.Insert(matchLineStart, newText);
+                            string sep = content.Contains("\r\n") ? "\r\n" : "\n";
+                            newContent = string.Join(sep, listLines);
+                            LocalPilotLogger.Log($"[ReplaceText] Matched '{path}' using line-by-line trimmed comparison at line {matchLineStart + 1}.");
                         }
                         else
                         {
-                            return new ToolResponse { IsError = true, Output = $"Error: Could not find the specified text in '{path}'. Please ensure the 'old_text' matches the file content exactly, including whitespace." };
+                            // 5. Intelligent Fallback: Insert before closing brace of class
+                            // If the model intended to add a new method/member but old_text had slight variation
+                            int lastClosingBrace = content.LastIndexOf('}');
+                            if (lastClosingBrace > 0)
+                            {
+                                int insertPos = lastClosingBrace;
+                                int prevClosingBrace = content.Substring(0, lastClosingBrace).LastIndexOf('}');
+                                if (prevClosingBrace > 0 && content.Contains("namespace "))
+                                {
+                                    insertPos = prevClosingBrace;
+                                }
+
+                                string indentation = "        ";
+                                string formattedNew = "\n" + indentation + newText.Trim().Replace("\n", "\n" + indentation) + "\n";
+                                newContent = content.Insert(insertPos, formattedNew);
+                                LocalPilotLogger.Log($"[ReplaceText] Resilient Fallback: Appended code before class closing brace in '{path}'.");
+                            }
+                            else
+                            {
+                                return new ToolResponse { IsError = true, Output = $"Error: Could not find the specified text in '{path}'. Please ensure 'old_text' matches the file content." };
+                            }
                         }
                     }
-                }
-
-                string newContent;
-                bool oldIsIdentifier = System.Text.RegularExpressions.Regex.IsMatch(oldText, @"^[A-Za-z_]\w*$");
-                bool newIsIdentifier = System.Text.RegularExpressions.Regex.IsMatch(newText, @"^[A-Za-z_]\w*$");
-
-                if (oldIsIdentifier && newIsIdentifier)
-                {
-                    // Symbol-safe replacement: match full identifier tokens only.
-                    // Prevents repeat runs from turning GetIdleTimeJv into GetIdleTimeJvJv.
-                    var pattern = $@"\b{System.Text.RegularExpressions.Regex.Escape(oldText)}\b";
-                    newContent = System.Text.RegularExpressions.Regex.Replace(content, pattern, newText);
-                }
-                else
-                {
-                    newContent = content.Replace(oldText, newText);
                 }
 
                 // Enterprise Sync: If open in editor, write through buffer

@@ -13,13 +13,22 @@ namespace LocalPilot.Settings
         HighAccuracy
     }
 
+    public enum LlmProviderType
+    {
+        Ollama = 0,
+        OpenAiCompatible = 1
+    }
+
     [Serializable]
     public class LocalPilotSettings
     {
         public PerformanceMode Mode { get; set; } = PerformanceMode.Standard;
 
         // ── Connection ─────────────────────────────────────────────────────────
-        public string OllamaBaseUrl    { get; set; } = "http://localhost:11434";
+        public LlmProviderType ProviderType { get; set; } = LlmProviderType.Ollama;
+        public string OllamaBaseUrl         { get; set; } = "http://localhost:11434";
+        public string OpenAiBaseUrl         { get; set; } = "https://api.openai.com/v1";
+        public string OpenAiApiKey          { get; set; } = "";
 
         // ── Models ─────────────────────────────────────────────────────────────
         public string CompletionModel  { get; set; } = "";

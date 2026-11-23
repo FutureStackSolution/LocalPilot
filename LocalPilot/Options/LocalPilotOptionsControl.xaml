@@ -154,15 +154,18 @@
             <Setter Property="Background"    Value="#7C6AF7"/>
             <Setter Property="Foreground"    Value="White"/>
             <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="Padding"       Value="16,7"/>
+            <Setter Property="Padding"       Value="14,4"/>
             <Setter Property="FontWeight"    Value="SemiBold"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
             <Setter Property="Cursor"        Value="Hand"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
                         <Border Background="{TemplateBinding Background}"
                                 CornerRadius="5" Padding="{TemplateBinding Padding}">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" 
+                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="#9B8FFB"/></Trigger>
@@ -178,7 +181,9 @@
             <Setter Property="Foreground" Value="{DynamicResource LpWindowFgBrush}"/>
             <Setter Property="BorderBrush" Value="{DynamicResource LpMenuBorderBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Padding"         Value="14,7"/>
+            <Setter Property="Padding"         Value="12,3"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="HorizontalContentAlignment" Value="Center"/>
             <Setter Property="Cursor"          Value="Hand"/>
             <Setter Property="Template">
                 <Setter.Value>
@@ -187,7 +192,8 @@
                                 BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}"
                                 CornerRadius="5" Padding="{TemplateBinding Padding}">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" 
+                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Bd" Property="Background" Value="{DynamicResource LpHoverBgBrush}"/></Trigger>
@@ -312,18 +318,34 @@
                 <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="0,0,16,0">
                     <StackPanel>
                         <!-- Connection -->
-                        <TextBlock Text="🔗  Connection" Style="{DynamicResource LpSectionHeader}"/>
-                        <Grid>
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="150"/></Grid.ColumnDefinitions>
-                            <StackPanel Grid.Column="0" Margin="0,0,8,0">
-                                <TextBlock Text="Ollama Base URL" Style="{DynamicResource LpLabelStyle}"/>
-                                <TextBox x:Name="TxtBaseUrl" Style="{DynamicResource LpInputStyle}" ToolTip="Default: http://localhost:11434"/>
+                        <TextBlock Text="🔗  Provider &amp; Connection" Style="{DynamicResource LpSectionHeader}"/>
+                        <Grid Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="140"/></Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Margin="0,0,10,0">
+                                <TextBlock Text="LLM Backend Provider" Style="{DynamicResource LpLabelStyle}"/>
+                                <ComboBox x:Name="CmbProviderType" Height="28" SelectionChanged="CmbProviderType_SelectionChanged"
+                                          ToolTip="Select your LLM backend. Ollama for local models, or OpenAI Compatible for LM Studio, vLLM, DeepSeek, Groq, OpenAI, etc.">
+                                    <ComboBoxItem Content="Ollama (Local Default)"/>
+                                    <ComboBoxItem Content="OpenAI Compatible (LM Studio, vLLM, Groq, etc.)"/>
+                                </ComboBox>
                             </StackPanel>
                             <StackPanel Grid.Column="1" VerticalAlignment="Bottom">
-                                <Button Content="Test Connection" Style="{DynamicResource LpSecondaryBtn}" x:Name="BtnTestConnection" Click="BtnTestConnection_Click" Height="32"/>
+                                <Button Content="Test Connection" Style="{DynamicResource LpSecondaryBtn}" x:Name="BtnTestConnection" Click="BtnTestConnection_Click" Height="28" Padding="10,2"/>
                             </StackPanel>
                         </Grid>
-                        <TextBlock x:Name="TxtConnectionResult" Foreground="#4EC9B0" FontSize="11" Margin="0,4,0,0" Visibility="Collapsed"/>
+
+                        <Grid Margin="0,0,0,6">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                                <TextBlock x:Name="LblBaseUrl" Text="Endpoint Base URL" Style="{DynamicResource LpLabelStyle}"/>
+                                <TextBox x:Name="TxtBaseUrl" Style="{DynamicResource LpInputStyle}" ToolTip="Ollama: http://localhost:11434 · LM Studio: http://localhost:1234/v1 · OpenAI: https://api.openai.com/v1"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Margin="8,0,0,0" x:Name="PnlApiKey">
+                                <TextBlock Text="API Key (Optional for local LM Studio / llama.cpp)" Style="{DynamicResource LpLabelStyle}"/>
+                                <PasswordBox x:Name="TxtApiKey" Height="28" Background="{DynamicResource LpInputBgBrush}" Foreground="{DynamicResource LpWindowFgBrush}" BorderBrush="{DynamicResource LpInputBorderBrush}" BorderThickness="1" Padding="6,2" VerticalContentAlignment="Center"/>
+                            </StackPanel>
+                        </Grid>
+                        <TextBlock x:Name="TxtConnectionResult" Foreground="#4EC9B0" FontSize="11" Margin="0,2,0,8" Visibility="Collapsed"/>
 
                         <!-- Core Models -->
                         <TextBlock Text="🤖  Core Models" Style="{DynamicResource LpSectionHeader}"/>
@@ -331,19 +353,19 @@
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0" Margin="0,0,8,10">
                                 <TextBlock Text="Inline Completion Model" Style="{DynamicResource LpLabelStyle}"/>
-                                <ComboBox x:Name="CmbCompletionModel" Height="28"/></StackPanel>
+                                <ComboBox x:Name="CmbCompletionModel" Height="28" IsEditable="True"/></StackPanel>
                             <StackPanel Grid.Column="1" Margin="8,0,0,10">
                                 <TextBlock Text="Chat Model" Style="{DynamicResource LpLabelStyle}"/>
-                                <ComboBox x:Name="CmbChatModel" Height="28"/></StackPanel>
+                                <ComboBox x:Name="CmbChatModel" Height="28" IsEditable="True"/></StackPanel>
                         </Grid>
                         <Grid>
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0" Margin="0,0,8,10">
                                 <TextBlock Text="Embedding Model (RAG / Semantic Search)" Style="{DynamicResource LpLabelStyle}"/>
-                                <ComboBox x:Name="CmbEmbeddingModel" Height="28" ToolTip="Used for semantic indexing and vector search. Should be a dedicated embed model, e.g. nomic-embed-text. Never set this to your chat model."/>
+                                <ComboBox x:Name="CmbEmbeddingModel" Height="28" IsEditable="True" ToolTip="Used for semantic indexing and vector search. Dedicated embed models, e.g. nomic-embed-text or text-embedding-3-small."/>
                             </StackPanel>
                             <StackPanel Grid.Column="1" Margin="8,0,0,10" VerticalAlignment="Bottom">
-                                <TextBlock Text="ℹ️ Use a dedicated embed model (e.g. nomic-embed-text). Setting your Chat Model here will break RAG." 
+                                <TextBlock Text="ℹ️ Use a dedicated embed model (e.g. nomic-embed-text or text-embedding-3-small)." 
                                            Style="{DynamicResource LpMutedLabel}" TextWrapping="Wrap" FontSize="11"/>
                             </StackPanel>
                         </Grid>
@@ -354,16 +376,16 @@
                             <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                             <StackPanel Grid.Column="0" Grid.Row="0" Margin="0,0,8,10">
                                 <TextBlock Text="Explain Code Model" Style="{DynamicResource LpLabelStyle}"/>
-                                <ComboBox x:Name="CmbExplainModel" Height="28"/></StackPanel>
+                                <ComboBox x:Name="CmbExplainModel" Height="28" IsEditable="True"/></StackPanel>
                             <StackPanel Grid.Column="1" Grid.Row="0" Margin="8,0,0,10">
                                 <TextBlock Text="Refactor Model" Style="{DynamicResource LpLabelStyle}"/>
-                                <ComboBox x:Name="CmbRefactorModel" Height="28"/></StackPanel>
+                                <ComboBox x:Name="CmbRefactorModel" Height="28" IsEditable="True"/></StackPanel>
                             <StackPanel Grid.Column="0" Grid.Row="1" Margin="0,0,8,10">
                                 <TextBlock Text="Doc Generation Model" Style="{DynamicResource LpLabelStyle}"/>
-                                <ComboBox x:Name="CmbDocModel" Height="28"/></StackPanel>
+                                <ComboBox x:Name="CmbDocModel" Height="28" IsEditable="True"/></StackPanel>
                             <StackPanel Grid.Column="1" Grid.Row="1" Margin="8,0,0,10">
                                 <TextBlock Text="Code Review Model" Style="{DynamicResource LpLabelStyle}"/>
-                                <ComboBox x:Name="CmbReviewModel" Height="28"/></StackPanel>
+                                <ComboBox x:Name="CmbReviewModel" Height="28" IsEditable="True"/></StackPanel>
                         </Grid>
                         <Button x:Name="BtnRefreshModels" Content="↻  Refresh Model List" Style="{DynamicResource LpSecondaryBtn}" HorizontalAlignment="Left" Click="BtnRefreshModels_Click" Margin="0,2,0,10"/>
 

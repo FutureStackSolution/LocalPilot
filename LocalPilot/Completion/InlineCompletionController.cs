@@ -25,8 +25,8 @@ namespace LocalPilot.Completion
         [Import] internal ITextDocumentFactoryService TextDocumentFactory { get; set; }
         [Import] internal ICompletionBroker CompletionBroker { get; set; }
 
-        // Shared OllamaService instance across all editor tabs to unify circuit breaker state
-        private static readonly OllamaService _sharedOllama = new OllamaService(LocalPilotSettings.Instance.OllamaBaseUrl);
+        // Shared ILlmService instance across all editor tabs to unify circuit breaker state
+        private static ILlmService SharedLlmService => LlmProviderFactory.GetService();
 
         private IWpfTextView _view;
         private ITextDocument _document;
@@ -176,12 +176,12 @@ namespace LocalPilot.Completion
                         Stop = new System.Collections.Generic.List<string> { "\n\n\n", "</MID>" }
                     };
 
-                    _sharedOllama.UpdateBaseUrl(LocalPilotSettings.Instance.OllamaBaseUrl);
+                    var llm = SharedLlmService;
 
                     var sb = new StringBuilder(256);
                     DateTime lastUiUpdate = DateTime.MinValue;
 
-                    await foreach (var chunk in _sharedOllama.StreamCompletionAsync(
+                    await foreach (var chunk in llm.StreamCompletionAsync(
                         LocalPilotSettings.Instance.CompletionModel, prompt, opts, token).ConfigureAwait(false))
                     {
                         if (token.IsCancellationRequested) break;
