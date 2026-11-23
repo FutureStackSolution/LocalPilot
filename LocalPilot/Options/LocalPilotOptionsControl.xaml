@@ -460,7 +460,9 @@
                                 <TextBlock Text="Use -1 to keep loaded indefinitely · 0 to unload immediately" Style="{DynamicResource LpMutedLabel}" FontSize="11" Margin="0,2,0,0"/>
                             </StackPanel>
                             <StackPanel Grid.Column="1" Margin="8,0,0,0">
-                                <!-- empty slot for alignment -->
+                                <TextBlock Text="Memory Management" Style="{DynamicResource LpLabelStyle}"/>
+                                <Button x:Name="BtnUnloadModels" Content="⚡  Unload Models from VRAM" Style="{DynamicResource LpSecondaryBtn}" HorizontalAlignment="Left" Click="BtnUnloadModels_Click" Height="30" ToolTip="Immediately unloads all running models from GPU/system memory."/>
+                                <TextBlock x:Name="TxtUnloadStatus" Style="{DynamicResource LpMutedLabel}" FontSize="11" Margin="0,2,0,0" Visibility="Collapsed"/>
                             </StackPanel>
                         </Grid>
 

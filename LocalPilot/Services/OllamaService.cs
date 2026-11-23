@@ -49,7 +49,7 @@ namespace LocalPilot.Services
             if (string.IsNullOrEmpty(model) || CircuitBreakerTripped) return;
             try
             {
-                var payload = new { model, prompt = "Hi", stream = false, keep_alive = LocalPilot.Settings.LocalPilotSettings.Instance.KeepAliveDuration ?? "15m" };
+                var payload = new { model, prompt = "Hi", stream = false, keep_alive = LocalPilot.Settings.LocalPilotSettings.Instance.GetEffectiveKeepAlive() };
                 var content = new StringContent(JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
                 using (var localCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
                 {
@@ -174,7 +174,7 @@ namespace LocalPilot.Services
             try
             {
                 // Try /api/embed (Batch supported)
-                var payload = new { model, input = missingPrompts, keep_alive = LocalPilot.Settings.LocalPilotSettings.Instance.KeepAliveDuration ?? "15m" };
+                var payload = new { model, input = missingPrompts, keep_alive = LocalPilot.Settings.LocalPilotSettings.Instance.GetEffectiveKeepAlive() };
                 var body = JsonConvert.SerializeObject(payload);
                 var content = new StringContent(body, Encoding.UTF8, "application/json");
 
@@ -235,7 +235,7 @@ namespace LocalPilot.Services
         {
             try
             {
-                var payload = new { model, prompt, keep_alive = LocalPilot.Settings.LocalPilotSettings.Instance.KeepAliveDuration ?? "15m" };
+                var payload = new { model, prompt, keep_alive = LocalPilot.Settings.LocalPilotSettings.Instance.GetEffectiveKeepAlive() };
                 var body = JsonConvert.SerializeObject(payload);
                 var content = new StringContent(body, Encoding.UTF8, "application/json");
 
@@ -294,7 +294,7 @@ namespace LocalPilot.Services
                 prompt,
                 stream  = true,
                 options = options ?? new OllamaOptions(),
-                keep_alive = LocalPilot.Settings.LocalPilotSettings.Instance.KeepAliveDuration ?? "15m"
+                keep_alive = LocalPilot.Settings.LocalPilotSettings.Instance.GetEffectiveKeepAlive()
             };
 
             var body    = JsonConvert.SerializeObject(payload);
@@ -404,7 +404,7 @@ namespace LocalPilot.Services
                     tools,
                     stream = true,
                     options = options ?? new OllamaOptions(),
-                    keep_alive = LocalPilot.Settings.LocalPilotSettings.Instance.KeepAliveDuration ?? "15m"
+                    keep_alive = LocalPilot.Settings.LocalPilotSettings.Instance.GetEffectiveKeepAlive()
                 };
 
                 string jsonPayload = JsonConvert.SerializeObject(payload, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore });
@@ -460,7 +460,7 @@ namespace LocalPilot.Services
                 if (toolSupportFailed)
                 {
                     yield return ChatStreamResult.Text("\n> [!NOTE]\n> The selected model does not support native tool calling. Falling back to text parsing.\n\n");
-                    var fallbackPayload = new { model, messages, stream = true, options = options ?? new OllamaOptions(), keep_alive = LocalPilot.Settings.LocalPilotSettings.Instance.KeepAliveDuration ?? "15m" };
+                    var fallbackPayload = new { model, messages, stream = true, options = options ?? new OllamaOptions(), keep_alive = LocalPilot.Settings.LocalPilotSettings.Instance.GetEffectiveKeepAlive() };
                     var fallbackContent = new StringContent(JsonConvert.SerializeObject(fallbackPayload), Encoding.UTF8, "application/json");
                     response = await _httpClient.PostAsync($"{_baseUrl}/api/chat", fallbackContent, requestCts.Token).ConfigureAwait(false);
                     response.EnsureSuccessStatusCode();
@@ -588,6 +588,69 @@ namespace LocalPilot.Services
             catch { return new VramStatus { IsHealthy = true }; }
         }
 
+        /// <summary>
+        /// Immediately unloads a specific model from Ollama memory/VRAM.
+        /// </summary>
+        public async Task<bool> UnloadModelAsync(string model, CancellationToken ct = default)
+        {
+            if (string.IsNullOrEmpty(model)) return false;
+            try
+            {
+                var payload = new { model, keep_alive = 0 };
+                var content = new StringContent(JsonConvert.SerializeObject(payload), Encoding.UTF8, "application/json");
+                using (var localCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
+                {
+                    localCts.CancelAfter(TimeSpan.FromSeconds(10));
+                    var resp = await _httpClient.PostAsync($"{_baseUrl}/api/generate", content, localCts.Token).ConfigureAwait(false);
+                    return resp.IsSuccessStatusCode;
+                }
+            }
+            catch (Exception ex)
+            {
+                LocalPilotLogger.Log($"[Ollama] Failed to unload model '{model}': {ex.Message}", LogCategory.Ollama, LogSeverity.Warning);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Queries all active models from /api/ps and unloads each from VRAM immediately.
+        /// </summary>
+        public async Task<int> UnloadAllModelsAsync(CancellationToken ct = default)
+        {
+            int unloadedCount = 0;
+            try
+            {
+                using (var localCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
+                {
+                    localCts.CancelAfter(TimeSpan.FromSeconds(5));
+                    var response = await _httpClient.GetAsync($"{_baseUrl}/api/ps", localCts.Token).ConfigureAwait(false);
+                    if (!response.IsSuccessStatusCode) return 0;
+
+                    var json = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                    var obj = JObject.Parse(json);
+                    var models = obj["models"] as JArray;
+                    if (models == null || models.Count == 0) return 0;
+
+                    foreach (var m in models)
+                    {
+                        string name = m["name"]?.ToString() ?? m["model"]?.ToString();
+                        if (!string.IsNullOrEmpty(name))
+                        {
+                            if (await UnloadModelAsync(name, ct).ConfigureAwait(false))
+                            {
+                                unloadedCount++;
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                LocalPilotLogger.Log($"[Ollama] Failed to unload models: {ex.Message}", LogCategory.Ollama, LogSeverity.Warning);
+            }
+            return unloadedCount;
+        }
+
     }
 
     // ── Supporting types ───────────────────────────────────────────────────────
@@ -690,8 +753,8 @@ namespace LocalPilot.Services
         [JsonProperty("stop")]
         public List<string> Stop { get; set; } = new List<string>();
 
-        [JsonProperty("keep_alive")]
-        public string KeepAlive { get; set; } = "5m";
+        [JsonIgnore]
+        public string KeepAlive { get; set; } = "15m";
 
         /// <summary>Internal: Total time to wait for the request to complete.</summary>
         [JsonIgnore]

@@ -100,7 +100,7 @@ namespace LocalPilot.Options
             TxtNumCtx.Text            = s.ContextWindowSize.ToString();
             TxtNumPredict.Text        = s.MaxOutputTokens.ToString();
             TxtRequestTimeout.Text    = s.RequestTimeoutSeconds.ToString();
-            TxtKeepAlive.Text         = s.KeepAliveDuration ?? "15m";
+            TxtKeepAlive.Text         = string.IsNullOrWhiteSpace(s.KeepAliveDuration) ? "15m" : s.KeepAliveDuration;
 
             // Populate model combos with current value; 
             // full list populated after async fetch
@@ -168,11 +168,57 @@ namespace LocalPilot.Options
                     if (TxtNumCtx != null && int.TryParse(TxtNumCtx.Text, out int nc) && nc >= 512) s.ContextWindowSize = nc;
                     if (TxtNumPredict != null && int.TryParse(TxtNumPredict.Text, out int np) && np >= 128) s.MaxOutputTokens = np;
                     if (TxtRequestTimeout != null && int.TryParse(TxtRequestTimeout.Text, out int rt) && rt >= 0) s.RequestTimeoutSeconds = rt;
-                    if (TxtKeepAlive != null) s.KeepAliveDuration = TxtKeepAlive.Text.Trim();
+                    if (TxtKeepAlive != null)
+                    {
+                        string val = TxtKeepAlive.Text.Trim();
+                        s.KeepAliveDuration = string.IsNullOrWhiteSpace(val) ? "15m" : val;
+                    }
                 }
 
                 // Persist to disk
                 SettingsPersistence.Save(s);
+            });
+        }
+
+        private void BtnUnloadModels_Click(object sender, RoutedEventArgs e)
+        {
+            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+            {
+                try
+                {
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    BtnUnloadModels.IsEnabled = false;
+                    BtnUnloadModels.Content = "Unloading...";
+                    TxtUnloadStatus.Text = "Sending unload signal to Ollama...";
+                    TxtUnloadStatus.Foreground = (Brush)this.Resources["LpMutedFgBrush"];
+                    TxtUnloadStatus.Visibility = Visibility.Visible;
+
+                    string url = TxtBaseUrl?.Text?.Trim();
+                    if (!string.IsNullOrEmpty(url) && url.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+                    {
+                        _ollama.UpdateBaseUrl(url);
+                    }
+
+                    int count = await _ollama.UnloadAllModelsAsync();
+
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    TxtUnloadStatus.Text = count > 0 
+                        ? $"✓ Unloaded {count} model(s) from VRAM." 
+                        : "✓ No active models were loaded in VRAM.";
+                    TxtUnloadStatus.Foreground = new SolidColorBrush(Color.FromRgb(0x4E, 0xC9, 0xB0));
+                }
+                catch (Exception ex)
+                {
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    TxtUnloadStatus.Text = $"✗ Failed to unload: {ex.Message}";
+                    TxtUnloadStatus.Foreground = Brushes.Red;
+                }
+                finally
+                {
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    BtnUnloadModels.IsEnabled = true;
+                    BtnUnloadModels.Content = "⚡  Unload Models from VRAM";
+                }
             });
         }
 

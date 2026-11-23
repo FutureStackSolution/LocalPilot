@@ -63,6 +63,23 @@ namespace LocalPilot.Settings
         public int    RequestTimeoutSeconds { get; set; } = 0;
         public string KeepAliveDuration { get; set; } = "15m";
 
+        /// <summary>
+        /// Returns a safe, validated keep_alive duration string for Ollama.
+        /// Defaults to "15m" if null, empty, or whitespace. Normalizes raw integer seconds.
+        /// </summary>
+        public string GetEffectiveKeepAlive()
+        {
+            if (string.IsNullOrWhiteSpace(KeepAliveDuration)) return "15m";
+            string val = KeepAliveDuration.Trim();
+            if (int.TryParse(val, out int num))
+            {
+                if (num == -1) return "-1";
+                if (num == 0) return "0";
+                if (num > 0) return $"{num}s";
+            }
+            return val;
+        }
+
         // ── Agent ─────────────────────────────────────────────────────────────
         public bool   AutonomousModeEnabled    { get; set; } = true;
         public bool   RequireApprovalForWrites { get; set; } = true;
