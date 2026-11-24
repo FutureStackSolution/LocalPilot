@@ -17,8 +17,11 @@ namespace LocalPilot.Services
     {
         public static string Skeletonize(string code, string targetKeyword = null, int focusLine = -1)
         {
-            if (string.IsNullOrEmpty(code) || code.Length < 4000)
-                return code; // Small file: keep in full
+            // 🛡️ ACCURACY SAFEGUARD: Files under 1,500 chars are already tiny and kept in full.
+            // For files > 1,500 chars, non-target method bodies are skeletonized while the
+            // TARGET reference method (e.g. GetNames) is kept 100% in full with real code.
+            if (string.IsNullOrEmpty(code) || code.Length < 1500)
+                return code;
 
             try
             {
@@ -26,7 +29,7 @@ namespace LocalPilot.Services
                 var root = tree.GetRoot();
 
                 var methods = root.DescendantNodes().OfType<MethodDeclarationSyntax>().ToList();
-                if (methods.Count <= 2)
+                if (methods.Count <= 3)
                     return code; // Few methods: keep in full
 
                 var rewriter = new MethodBodySkeletonRewriter(targetKeyword, focusLine);
@@ -53,10 +56,16 @@ namespace LocalPilot.Services
             public override SyntaxNode VisitMethodDeclaration(MethodDeclarationSyntax node)
             {
                 bool isTarget = false;
-                if (!string.IsNullOrEmpty(_targetKeyword) &&
-                    node.Identifier.Text.IndexOf(_targetKeyword, StringComparison.OrdinalIgnoreCase) >= 0)
+                string methodName = node.Identifier.Text;
+                
+                // Match if target keyword contains method name, or method name contains target keyword
+                if (!string.IsNullOrEmpty(_targetKeyword) && !string.IsNullOrEmpty(methodName))
                 {
-                    isTarget = true;
+                    if (_targetKeyword.IndexOf(methodName, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        methodName.IndexOf(_targetKeyword, StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        isTarget = true;
+                    }
                 }
 
                 if (_focusLine > 0)
@@ -74,8 +83,8 @@ namespace LocalPilot.Services
                     return base.VisitMethodDeclaration(node);
                 }
 
-                // Replace non-target method body with compact single-line placeholder statement
-                var placeholderStatement = SyntaxFactory.ParseStatement("/* [Method body hidden to save context] */ throw null;\r\n");
+                // Replace non-target method body with compact single-line throw statement
+                var placeholderStatement = SyntaxFactory.ParseStatement("throw null;\r\n");
                 var block = SyntaxFactory.Block(placeholderStatement);
                 return node.WithBody(block).WithExpressionBody(null).WithSemicolonToken(SyntaxFactory.Token(SyntaxKind.None));
             }

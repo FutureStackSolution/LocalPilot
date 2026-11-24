@@ -37,6 +37,7 @@ namespace LocalPilot.Chat.ViewModels
             else if (status == AgentStatus.Completed) statusString = "Completed";
 
             var lastMetric = PerformanceTracer.Instance.GetLastMetric();
+            int taskTokens = PerformanceTracer.Instance.GetCurrentTaskTokens();
 
             return new AgentStatusViewState
             {
@@ -48,7 +49,7 @@ namespace LocalPilot.Chat.ViewModels
                 IsFailure = status == AgentStatus.Failed,
                 IsCancelled = status == AgentStatus.Idle,
                 LatencyMs = lastMetric?.DurationMs ?? 0,
-                TokenCount = lastMetric?.TokenCount ?? 0
+                TokenCount = taskTokens > 0 ? taskTokens : (lastMetric?.TokenCount ?? 0)
             };
         }
 

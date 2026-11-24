@@ -26,9 +26,29 @@ namespace LocalPilot.Services
 
         private readonly ConcurrentQueue<PerformanceMetrics> _history = new ConcurrentQueue<PerformanceMetrics>();
         private const int MaxHistorySize = 100;
+        private long _currentTaskTotalTokens = 0;
+
+        public void StartNewTask()
+        {
+            System.Threading.Interlocked.Exchange(ref _currentTaskTotalTokens, 0);
+        }
+
+        public void AddTaskTokens(int tokens)
+        {
+            if (tokens > 0)
+            {
+                System.Threading.Interlocked.Add(ref _currentTaskTotalTokens, tokens);
+            }
+        }
+
+        public int GetCurrentTaskTokens()
+        {
+            return (int)System.Threading.Interlocked.Read(ref _currentTaskTotalTokens);
+        }
 
         public void RecordTurn(string taskId, int turn, long ms, int tokens, string model)
         {
+            AddTaskTokens(tokens);
             var metric = new PerformanceMetrics
             {
                 TaskId = taskId,

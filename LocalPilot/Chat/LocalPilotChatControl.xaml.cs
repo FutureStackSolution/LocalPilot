@@ -688,6 +688,7 @@ namespace LocalPilot.Chat
 
             // 🚀 STATE RESET: Ensure no stale modifications from previous turns leak into this one
             _lastStagedChanges = null;
+            PerformanceTracer.Instance.StartNewTask();
             SetStreaming(true, modelOverride);
             StartNewAgentTurn();
 
@@ -1110,9 +1111,14 @@ namespace LocalPilot.Chat
                         _agentCurrentContainer = null;
                         _lastStagedChanges = null; // 🛡️ Prevent stale changes from appearing in UI
 
-                        if (_taskStopwatch.IsRunning && _taskStopwatch.ElapsedMilliseconds > statusState.LatencyMs)
+                        if (_taskStopwatch.ElapsedMilliseconds > 0)
                         {
                             statusState.LatencyMs = _taskStopwatch.ElapsedMilliseconds;
+                        }
+                        int cancelledTokens = PerformanceTracer.Instance.GetCurrentTaskTokens();
+                        if (cancelledTokens > 0)
+                        {
+                            statusState.TokenCount = cancelledTokens;
                         }
 
                         if (container != null)
@@ -1138,9 +1144,14 @@ namespace LocalPilot.Chat
                 else
                 {
                     // 🏁 Task Completed Successfully - Clean exit
-                    if (_taskStopwatch.IsRunning && _taskStopwatch.ElapsedMilliseconds > statusState.LatencyMs)
+                    if (_taskStopwatch.ElapsedMilliseconds > 0)
                     {
                         statusState.LatencyMs = _taskStopwatch.ElapsedMilliseconds;
+                    }
+                    int taskTokens = PerformanceTracer.Instance.GetCurrentTaskTokens();
+                    if (taskTokens > 0)
+                    {
+                        statusState.TokenCount = taskTokens;
                     }
 
                     if (_agentTurnContainer != null)

@@ -71,10 +71,16 @@ namespace LocalPilot.Services
         /// This enables structured tool calling — Ollama returns tool_calls as JSON objects,
         /// not embedded in text, eliminating all parsing/nudging issues.
         /// </summary>
-        public List<OllamaToolDefinition> GetOllamaToolDefinitions(bool essentialOnly = false)
+        public List<OllamaToolDefinition> GetOllamaToolDefinitions(bool essentialOnly = false, IEnumerable<string> allowedToolNames = null)
         {
             var definitions = new List<OllamaToolDefinition>();
             var seenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            HashSet<string> filterNames = null;
+            if (allowedToolNames != null)
+            {
+                filterNames = new HashSet<string>(allowedToolNames, StringComparer.OrdinalIgnoreCase);
+            }
 
             var essentialToolNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
@@ -86,7 +92,8 @@ namespace LocalPilot.Services
 
             foreach (var tool in sortedTools)
             {
-                if (essentialOnly && !essentialToolNames.Contains(tool.Name)) continue;
+                if (filterNames != null && !filterNames.Contains(tool.Name)) continue;
+                if (filterNames == null && essentialOnly && !essentialToolNames.Contains(tool.Name)) continue;
                 if (!seenNames.Add(tool.Name)) continue;
 
                 // 🚀 LEAN SCHEMA IN FAST MODE: Compact descriptions to save 400-600 tokens of prefill

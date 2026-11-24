@@ -7,9 +7,15 @@
     <AssemblyName>LocalPilot</AssemblyName>
     
     <!-- VSIX settings -->
+    <CreateVsixContainer>true</CreateVsixContainer>
+    <DeployExtension>false</DeployExtension>
+    <TargetVsixContainer>bin\Debug\net48\LocalPilot.vsix</TargetVsixContainer>
     <VSSDKBuildToolsAutoSetup>true</VSSDKBuildToolsAutoSetup>
-    <VsixDeployOnDebug>true</VsixDeployOnDebug>
+    <VsixDeployOnDebug>false</VsixDeployOnDebug>
     <GeneratePkgDefFile>true</GeneratePkgDefFile>
+    <StartAction>Program</StartAction>
+    <StartProgram Condition="'$(DevEnvDir)' != ''">$(DevEnvDir)devenv.exe</StartProgram>
+    <StartArguments>/rootsuffix Exp</StartArguments>
     
     <!-- Retained from previous csproj for behavior parity -->
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
