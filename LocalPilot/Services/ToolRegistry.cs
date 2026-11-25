@@ -65,7 +65,7 @@ namespace LocalPilot.Services
 
         public IEnumerable<IAgentTool> GetAllTools() => _tools.Values;
 
-        public bool HasTool(string name) => _tools.ContainsKey(name);
+        public bool HasTool(string name) => !string.IsNullOrEmpty(name) && _tools.ContainsKey(name);
 
         /// <summary>
         /// Generates tool definitions in Ollama's native format for the /api/chat tools parameter.
@@ -174,9 +174,9 @@ namespace LocalPilot.Services
 
         public async Task<ToolResponse> ExecuteToolAsync(string name, Dictionary<string, object> args, CancellationToken ct)
         {
-            if (!_tools.TryGetValue(name, out var tool))
+            if (string.IsNullOrEmpty(name) || !_tools.TryGetValue(name, out var tool))
             {
-                return new ToolResponse { IsError = true, Output = $"Tool '{name}' not found." };
+                return new ToolResponse { IsError = true, Output = $"Tool '{name ?? "(null)"}' not found." };
             }
 
             try
@@ -755,7 +755,7 @@ namespace LocalPilot.Services
                     if (match.Success)
                     {
                         var regex = new System.Text.RegularExpressions.Regex(pattern);
-                        newContent = regex.Replace(content, newText, 1);
+                        newContent = regex.Replace(content, (newText ?? "").Replace("$", "$$"), 1);
                         LocalPilotLogger.Log($"[ReplaceText] Fuzzy match found for '{path}' using regex fallback.");
                     }
                     else
@@ -822,6 +822,14 @@ namespace LocalPilot.Services
                             }
                         }
                     }
+                }
+
+                // In-memory Roslyn syntax check for C# files before touching the editor buffer
+                if (path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
+                {
+                    string syntaxError = ToolRegistry.ValidateCSharpSyntax(content, newContent);
+                    if (syntaxError != null)
+                        return new ToolResponse { IsError = true, Output = $"Syntax error in edit (file not modified): {syntaxError}" };
                 }
 
                 // Enterprise Sync: If open in editor, write through buffer
@@ -1083,17 +1091,20 @@ namespace LocalPilot.Services
 
                 using (var proc = System.Diagnostics.Process.Start(startInfo))
                 {
-                    string output = await proc.StandardOutput.ReadToEndAsync();
-                    string error = await proc.StandardError.ReadToEndAsync();
-                    
-                    var waitTask = Task.Run(() => proc.WaitForExit(300000)); // 300s timeout
-                    await waitTask;
+                    var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+                    var stderrTask = proc.StandardError.ReadToEndAsync();
+                    var allStreamsTask = Task.WhenAll(stdoutTask, stderrTask);
 
-                    if (!proc.HasExited)
+                    if (await Task.WhenAny(allStreamsTask, Task.Delay(300000, ct)) != allStreamsTask)
                     {
-                        proc.Kill();
+                        try { if (!proc.HasExited) proc.Kill(); } catch { }
                         return new ToolResponse { IsError = true, Output = $"{cmd} timed out after 300 seconds." };
                     }
+
+                    await allStreamsTask;
+                    string output = await stdoutTask;
+                    string error = await stderrTask;
+                    proc.WaitForExit(5000);
 
                     if (proc.ExitCode != 0)
                     {

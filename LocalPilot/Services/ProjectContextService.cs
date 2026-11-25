@@ -302,7 +302,8 @@ namespace LocalPilot.Services
                                 {
                                     pChunkP.Value = item.path;
                                     pChunkC.Value = item.chunks[j];
-                                    pChunkV.Value = item.vectors[j] != null ? (object)GetRawBytes(item.vectors[j]) : DBNull.Value;
+                                    float[] vec = (item.vectors != null && j < item.vectors.Count) ? item.vectors[j] : null;
+                                    pChunkV.Value = vec != null ? (object)GetRawBytes(vec) : DBNull.Value;
                                     long chunkId = (long)await insChunkCmd.ExecuteScalarAsync(ct);
 
                                     pSearchC.Value = item.chunks[j];

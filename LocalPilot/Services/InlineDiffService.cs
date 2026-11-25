@@ -158,8 +158,8 @@ namespace LocalPilot.Services
             var oldLines = original.Replace("\r\n", "\n").Split('\n');
             var newLines = improved.Replace("\r\n", "\n").Split('\n');
 
-            // Fast LCS for files up to 2000 lines; fallback to single-span diff for huge files
-            if (oldLines.Length * newLines.Length > 2_000_000)
+            // Fast LCS for files up to 2000 lines; fallback to single-span diff for huge files (use long to prevent int overflow)
+            if ((long)oldLines.Length * newLines.Length > 2_000_000L)
             {
                 return new List<DiffHunk>
                 {

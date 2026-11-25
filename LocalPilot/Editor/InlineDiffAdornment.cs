@@ -49,6 +49,10 @@ namespace LocalPilot.Editor
         private static readonly Brush PillBgBrush = new SolidColorBrush(Color.FromArgb(0xEE, 0x1E, 0x1E, 0x26));
         private static readonly Brush PillBorderBrush = new SolidColorBrush(Color.FromArgb(0xCC, 0x45, 0x47, 0x5A));
 
+        private static readonly Brush RemovedFgBrush = new SolidColorBrush(Color.FromRgb(0xF8, 0x51, 0x49));
+        private static readonly Brush KeepBtnBrush = new SolidColorBrush(Color.FromRgb(0x23, 0x86, 0x36));
+        private static readonly Brush UndoBtnBrush = new SolidColorBrush(Color.FromRgb(0xDA, 0x36, 0x33));
+
         static InlineDiffAdornmentManager()
         {
             AddedBgBrush.Freeze();
@@ -56,6 +60,9 @@ namespace LocalPilot.Editor
             RemovedBgBrush.Freeze();
             PillBgBrush.Freeze();
             PillBorderBrush.Freeze();
+            RemovedFgBrush.Freeze();
+            KeepBtnBrush.Freeze();
+            UndoBtnBrush.Freeze();
         }
 
         public InlineDiffAdornmentManager(IWpfTextView view, ITextDocument document)
@@ -117,7 +124,9 @@ namespace LocalPilot.Editor
 
                 var startViewLine = _view.GetTextViewLineContainingBufferPosition(startSnapLine.Start);
                 var endViewLine = _view.GetTextViewLineContainingBufferPosition(endSnapLine.Start);
-                if (startViewLine == null || endViewLine == null) continue;
+                if (startViewLine == null || endViewLine == null ||
+                    startViewLine.VisibilityState == Microsoft.VisualStudio.Text.Formatting.VisibilityState.Unattached)
+                    continue;
 
                 double top = startViewLine.Top;
                 double height = Math.Max(startViewLine.Height, (endViewLine.Bottom - startViewLine.Top));
@@ -157,7 +166,7 @@ namespace LocalPilot.Editor
                 panel.Children.Add(new TextBlock
                 {
                     Text = $"-{hunk.RemovedLines.Count}",
-                    Foreground = new SolidColorBrush(Color.FromRgb(0xF8, 0x51, 0x49)),
+                    Foreground = RemovedFgBrush,
                     Background = RemovedBgBrush,
                     FontSize = 10,
                     Padding = new Thickness(4, 1, 4, 1),
@@ -173,7 +182,7 @@ namespace LocalPilot.Editor
                 Padding = new Thickness(6, 2, 6, 2),
                 Margin = new Thickness(0, 0, 4, 0),
                 Foreground = Brushes.White,
-                Background = new SolidColorBrush(Color.FromRgb(0x23, 0x86, 0x36)),
+                Background = KeepBtnBrush,
                 BorderThickness = new Thickness(0),
                 Cursor = System.Windows.Input.Cursors.Hand
             };
@@ -188,7 +197,7 @@ namespace LocalPilot.Editor
                 FontSize = 10,
                 Padding = new Thickness(6, 2, 6, 2),
                 Foreground = Brushes.White,
-                Background = new SolidColorBrush(Color.FromRgb(0xDA, 0x36, 0x33)),
+                Background = UndoBtnBrush,
                 BorderThickness = new Thickness(0),
                 Cursor = System.Windows.Input.Cursors.Hand
             };

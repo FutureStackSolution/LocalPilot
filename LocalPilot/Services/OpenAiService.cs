@@ -315,13 +315,18 @@ namespace LocalPilot.Services
                          errBody.IndexOf("unrecognized", StringComparison.OrdinalIgnoreCase) >= 0))
                     {
                         LocalPilotLogger.Log($"[OpenAI] Server rejected tools parameter. Retrying without tools: {errBody}", LogCategory.Ollama, LogSeverity.Warning);
+                        response.Dispose();
                         requestBody.Remove("tools");
                         requestBody.Remove("tool_choice");
                         string retryJson = JsonConvert.SerializeObject(requestBody, _ignoreNullSettings);
                         var retryContent = new StringContent(retryJson, Encoding.UTF8, "application/json");
-                        using (var retryReq = CreateRequest(HttpMethod.Post, "chat/completions", retryContent))
+                        using (var retryHeaderCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
                         {
-                            response = await _httpClient.SendAsync(retryReq, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+                            retryHeaderCts.CancelAfter(inactivityTimeout);
+                            using (var retryReq = CreateRequest(HttpMethod.Post, "chat/completions", retryContent))
+                            {
+                                response = await _httpClient.SendAsync(retryReq, HttpCompletionOption.ResponseHeadersRead, retryHeaderCts.Token).ConfigureAwait(false);
+                            }
                         }
 
                         if (!response.IsSuccessStatusCode)
@@ -372,6 +377,7 @@ namespace LocalPilot.Services
             int lastReportedToolChars = -24;
             bool streamTimedOut = false;
 
+            using (response)
             using (var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false))
             using (var reader = new StreamReader(stream, Encoding.UTF8))
             {
@@ -391,7 +397,22 @@ namespace LocalPilot.Services
                         break;
                     }
 
-                    string line = await readTask.ConfigureAwait(false);
+                    string line;
+                    try
+                    {
+                        line = await readTask.ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        break;
+                    }
+                    catch (Exception ex)
+                    {
+                        LocalPilotLogger.LogError("[OpenAI] Stream read failed", ex, LogCategory.Ollama);
+                        HandleFailure();
+                        streamTimedOut = true;
+                        break;
+                    }
                     if (line == null) break;
                     if (string.IsNullOrWhiteSpace(line)) continue;
                     if (!line.StartsWith("data:", StringComparison.OrdinalIgnoreCase)) continue;

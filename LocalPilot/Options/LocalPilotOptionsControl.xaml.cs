@@ -186,8 +186,7 @@ namespace LocalPilot.Options
 
                 var s = LocalPilotSettings.Instance;
 
-                // Only save fields from the active tab to prevent multi-page overwrites
-                if (MainTabControl.SelectedIndex == 0) // General
+                // Save all fields from both tabs (both tabs are populated by LoadSettings)
                 {
                     if (CmbProviderType != null)
                     {
@@ -225,9 +224,8 @@ namespace LocalPilot.Options
                     if (CmbDocModel != null)        s.DocModel        = (CmbDocModel.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? CmbDocModel.Text;
                     if (CmbReviewModel != null)     s.ReviewModel     = (CmbReviewModel.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? CmbReviewModel.Text;
                 }
-                else if (MainTabControl.SelectedIndex == 1) // Advanced
                 {
-                    if (CmbPerformanceMode != null) s.Mode = (PerformanceMode)CmbPerformanceMode.SelectedIndex;
+                    if (CmbPerformanceMode != null && CmbPerformanceMode.SelectedIndex >= 0) s.Mode = (PerformanceMode)CmbPerformanceMode.SelectedIndex;
                     if (ChkEnableProjectMap != null) s.EnableProjectMap = ChkEnableProjectMap.IsChecked == true;
                     if (SldConcurrency != null) s.BackgroundIndexingConcurrency = (int)SldConcurrency.Value;
                     
@@ -528,11 +526,7 @@ namespace LocalPilot.Options
 
         private void CmbPerformanceMode_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            if (CmbPerformanceMode == null || CmbPerformanceMode.SelectedIndex == -1) return;
-            
-            var selectedMode = (PerformanceMode)CmbPerformanceMode.SelectedIndex;
-            var s = LocalPilotSettings.Instance;
-            s.Mode = selectedMode; 
+            // Mode is applied and persisted when the user confirms via SaveSettings()
         }
 
         // ── Helpers ───────────────────────────────────────────────────────────

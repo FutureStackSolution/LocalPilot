@@ -18,6 +18,7 @@ namespace LocalPilot.Completion
     /// Ghost-text is displayed as an adornment (see GhostTextAdornment).
     /// </summary>
     [Export(typeof(IWpfTextViewCreationListener))]
+    [PartCreationPolicy(CreationPolicy.NonShared)]
     [ContentType("code")]
     [TextViewRole(PredefinedTextViewRoles.Editable)]
     internal sealed class InlineCompletionController : IWpfTextViewCreationListener
@@ -55,8 +56,12 @@ namespace LocalPilot.Completion
         {
             if (!LocalPilotSettings.Instance.EnableInlineCompletion) return;
 
-            // Dismiss existing ghost text on any edit
-            _ghostAdornment?.HideGhost();
+            // Dismiss existing ghost text on any edit (marshal to UI thread if needed)
+            _ = Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+            {
+                await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                if (_view != null && !_view.IsClosed) _ghostAdornment?.HideGhost();
+            });
 
             var mode = LocalPilotSettings.Instance.Mode;
             var delay = mode switch
@@ -100,7 +105,7 @@ namespace LocalPilot.Completion
             CancellationToken token;
             lock (_lock)
             {
-                _cts?.Cancel();
+                try { _cts?.Cancel(); _cts?.Dispose(); } catch { }
                 _cts = new CancellationTokenSource();
                 token = _cts.Token;
             }
@@ -197,8 +202,8 @@ namespace LocalPilot.Completion
                             string currentText = sb.ToString();
                             _ = Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
                             {
-                                await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                                if (!token.IsCancellationRequested && LocalPilotSettings.Instance.ShowCompletionGhost)
+                                await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync(token);
+                                if (!token.IsCancellationRequested && _view != null && !_view.IsClosed && LocalPilotSettings.Instance.ShowCompletionGhost)
                                 {
                                     _ghostAdornment?.ShowGhost(currentText);
                                 }
@@ -210,7 +215,12 @@ namespace LocalPilot.Completion
 
                 if (!LocalPilotSettings.Instance.EnableInlineCompletion || token.IsCancellationRequested) return;
 
-                // Ghost text is now handled incrementally during the stream above.
+                // Ensure final accumulated completion text (including fast <50ms completions) is rendered
+                if (!string.IsNullOrEmpty(completionText) && _view != null && !_view.IsClosed && LocalPilotSettings.Instance.ShowCompletionGhost)
+                {
+                    await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync(token);
+                    _ghostAdornment?.ShowGhost(completionText);
+                }
             }
             catch (OperationCanceledException) { /* user typed again — expected */ }
             catch (Exception ex)
@@ -225,9 +235,10 @@ namespace LocalPilot.Completion
             _view.Caret.PositionChanged -= OnCaretPositionChanged;
             _view.Closed -= OnViewClosed;
 
-            _cts?.Cancel();
             lock (_lock)
             {
+                try { _cts?.Cancel(); _cts?.Dispose(); } catch { }
+                _cts = null;
                 _debounceTimer?.Dispose();
                 _debounceTimer = null;
             }

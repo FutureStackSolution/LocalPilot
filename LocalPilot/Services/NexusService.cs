@@ -76,7 +76,7 @@ namespace LocalPilot.Services
                                 Id = reader.GetString(0),
                                 Name = reader.GetString(1),
                                 Type = (NexusNodeType)Enum.Parse(typeof(NexusNodeType), reader.GetString(2)),
-                                FilePath = reader.GetString(3) // Using Metadata column for FilePath
+                                FilePath = await reader.IsDBNullAsync(3).ConfigureAwait(false) ? null : reader.GetString(3) // Using Metadata column for FilePath
                             });
                         }
                     }
@@ -133,12 +133,11 @@ namespace LocalPilot.Services
                     await Task.Delay(5000, _cts.Token);
                     if (_pendingFiles.IsEmpty) continue;
 
-                    var files = _pendingFiles.Keys.ToList();
-                    _pendingFiles.Clear();
-
                     if (!await _lock.WaitAsync(0)) continue;
                     try
                     {
+                        var files = _pendingFiles.Keys.ToList();
+                        foreach (var f in files) _pendingFiles.TryRemove(f, out _);
                         foreach (var file in files) await UpdateGraphForFileAsync(file);
                         await RefreshGraphFromDbAsync();
                     }
@@ -187,9 +186,9 @@ namespace LocalPilot.Services
 
         private async Task UpdateGraphForFileAsync(string filePath)
         {
-            // 1. Clear old data for this file
-            await _storage.ExecuteAsync("DELETE FROM NexusNodes WHERE Metadata = @Path", new { Path = filePath }).ConfigureAwait(false);
+            // 1. Clear old edges BEFORE deleting nodes so the subquery finds matching TargetIds
             await _storage.ExecuteAsync("DELETE FROM NexusEdges WHERE SourceId = @Path OR TargetId IN (SELECT Id FROM NexusNodes WHERE Metadata = @Path)", new { Path = filePath }).ConfigureAwait(false);
+            await _storage.ExecuteAsync("DELETE FROM NexusNodes WHERE Metadata = @Path", new { Path = filePath }).ConfigureAwait(false);
 
             if (!File.Exists(filePath)) return;
 

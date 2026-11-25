@@ -149,17 +149,22 @@ namespace LocalPilot.Services
             try
             {
                 _connection?.Close();
+                _connection?.Dispose();
                 _connection = null;
+                SqliteConnection.ClearAllPools();
 
-                if (File.Exists(_dbPath))
+                foreach (var dbFile in new[] { _dbPath, _dbPath + "-wal", _dbPath + "-shm" })
                 {
-                    try { File.Delete(_dbPath); }
-                    catch (IOException ioEx) 
-                    { 
-                        LocalPilotLogger.Log($"[Storage] Could not delete database file (locked by another process). Proceeding with current file: {ioEx.Message}", LogCategory.Storage, LogSeverity.Warning); 
+                    if (File.Exists(dbFile))
+                    {
+                        try { File.Delete(dbFile); }
+                        catch (IOException ioEx)
+                        {
+                            LocalPilotLogger.Log($"[Storage] Could not delete '{dbFile}' (locked): {ioEx.Message}", LogCategory.Storage, LogSeverity.Warning);
+                        }
                     }
-                    LocalPilotLogger.Log("[Storage] Corrupt database file deleted to allow clean re-initialization.", LogCategory.Storage, LogSeverity.Warning);
                 }
+                LocalPilotLogger.Log("[Storage] Corrupt database files deleted to allow clean re-initialization.", LogCategory.Storage, LogSeverity.Warning);
             }
             catch (Exception ex)
             {

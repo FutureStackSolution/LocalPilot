@@ -285,8 +285,13 @@ namespace LocalPilot.Services
         {
             if (CircuitBreakerTripped)
             {
-                yield return "\n[LocalPilot] Ollama is currently unreachable. Please check if Ollama is running.";
-                yield break;
+                if (DateTime.Now < _circuitBreakerCooldownUntil)
+                {
+                    yield return "\n[LocalPilot] Ollama is currently unreachable. Please check if Ollama is running.";
+                    yield break;
+                }
+                CircuitBreakerTripped = false;
+                _consecutiveFailures = 0;
             }
             var payload = new
             {
@@ -326,6 +331,7 @@ namespace LocalPilot.Services
                 yield break;
             }
 
+            using (response)
             using (var stream = await response.Content.ReadAsStreamAsync())
             using (var reader = new StreamReader(stream))
             using (var jsonReader = new JsonTextReader(reader) { SupportMultipleContent = true })
@@ -343,6 +349,8 @@ namespace LocalPilot.Services
                     if (obj["done"]?.Value<bool>() == true)
                         break;
                 }
+                _consecutiveFailures = 0;
+                CircuitBreakerTripped = false;
             }
         }
 
@@ -375,8 +383,13 @@ namespace LocalPilot.Services
         {
             if (CircuitBreakerTripped)
             {
-                yield return ChatStreamResult.Text("\n⚠️ **LocalPilot Error:** Ollama is currently unreachable. The circuit breaker is tripped due to multiple connection failures.\n\nPlease ensure Ollama is running and accessible at " + _baseUrl);
-                yield break;
+                if (DateTime.Now < _circuitBreakerCooldownUntil)
+                {
+                    yield return ChatStreamResult.Text("\n⚠️ **LocalPilot Error:** Ollama is currently unreachable. The circuit breaker is tripped due to multiple connection failures.\n\nPlease ensure Ollama is running and accessible at " + _baseUrl);
+                    yield break;
+                }
+                CircuitBreakerTripped = false;
+                _consecutiveFailures = 0;
             }
 
             // ── GUARD: Detect embedding-only models early ─────────────────────────
@@ -459,6 +472,7 @@ namespace LocalPilot.Services
                 // 🚀 FALLBACK: If tools caused a 400, retry without tools
                 if (toolSupportFailed)
                 {
+                    response?.Dispose();
                     yield return ChatStreamResult.Text("\n> [!NOTE]\n> The selected model does not support native tool calling. Falling back to text parsing.\n\n");
                     var fallbackPayload = new { model, messages, stream = true, options = options ?? new OllamaOptions(), keep_alive = LocalPilot.Settings.LocalPilotSettings.Instance.GetEffectiveKeepAlive() };
                     var fallbackContent = new StringContent(JsonConvert.SerializeObject(fallbackPayload), Encoding.UTF8, "application/json");
@@ -466,6 +480,7 @@ namespace LocalPilot.Services
                     response.EnsureSuccessStatusCode();
                 }
 
+                using (response)
                 using (var stream = await response.Content.ReadAsStreamAsync())
                 using (var reader = new StreamReader(stream))
                 using (var jsonReader = new JsonTextReader(reader) { SupportMultipleContent = true })

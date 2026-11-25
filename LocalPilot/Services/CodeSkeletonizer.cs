@@ -42,6 +42,94 @@ namespace LocalPilot.Services
             }
         }
 
+        /// <summary>
+        /// Skeletonizes non-target method bodies while preserving EXACT 1-based line numbers
+        /// from the original file so line-numbered edits (edit_lines) always target the real line.
+        /// </summary>
+        public static string SkeletonizeWithLineNumbers(string code, string targetKeyword = null, int focusLine = -1)
+        {
+            if (string.IsNullOrEmpty(code)) return code;
+            var origLines = code.Replace("\r\n", "\n").Split('\n');
+
+            var omittedRanges = new List<(int startLine, int endLine)>();
+            if (code.Length >= 1500)
+            {
+                try
+                {
+                    var tree = CSharpSyntaxTree.ParseText(code);
+                    var root = tree.GetRoot();
+                    var methods = root.DescendantNodes().OfType<MethodDeclarationSyntax>().ToList();
+                    if (methods.Count > 3)
+                    {
+                        foreach (var method in methods)
+                        {
+                            if (method.Body == null && method.ExpressionBody == null) continue;
+                            if (IsTargetMethod(method, targetKeyword, focusLine)) continue;
+
+                            SyntaxNode bodyNode = (SyntaxNode)method.Body ?? method.ExpressionBody;
+                            var span = bodyNode.GetLocation().GetLineSpan();
+                            int s = span.StartLinePosition.Line; // 0-based
+                            int e = span.EndLinePosition.Line;
+                            if (e > s)
+                            {
+                                omittedRanges.Add((s, e));
+                            }
+                        }
+                    }
+                }
+                catch { }
+            }
+
+            var sb = new System.Text.StringBuilder(code.Length);
+            int i = 0;
+            while (i < origLines.Length)
+            {
+                var range = omittedRanges.FirstOrDefault(r => r.startLine == i);
+                if (range.endLine > range.startLine)
+                {
+                    if (sb.Length > 0) sb.Append('\n');
+                    string startText = origLines[i];
+                    int braceIdx = startText.IndexOf('{');
+                    string prefix = (braceIdx > 0 && startText.Substring(0, braceIdx).Trim().Length > 0)
+                        ? startText.Substring(0, braceIdx)
+                        : string.Empty;
+                    sb.Append(i + 1).Append(": ").Append(prefix)
+                      .Append("{ /* ... lines ").Append(i + 1).Append('-').Append(range.endLine + 1).Append(" omitted ... */ }");
+                    i = range.endLine + 1;
+                }
+                else
+                {
+                    if (sb.Length > 0) sb.Append('\n');
+                    sb.Append(i + 1).Append(": ").Append(origLines[i]);
+                    i++;
+                }
+            }
+            return sb.ToString();
+        }
+
+        internal static bool IsTargetMethod(MethodDeclarationSyntax node, string targetKeyword, int focusLine)
+        {
+            string methodName = node.Identifier.Text;
+            if (!string.IsNullOrEmpty(targetKeyword) && !string.IsNullOrEmpty(methodName))
+            {
+                if (targetKeyword.IndexOf(methodName, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    methodName.IndexOf(targetKeyword, StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return true;
+                }
+            }
+
+            if (focusLine > 0)
+            {
+                var lineSpan = node.GetLocation().GetLineSpan();
+                if (focusLine >= lineSpan.StartLinePosition.Line && focusLine <= lineSpan.EndLinePosition.Line)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         private class MethodBodySkeletonRewriter : CSharpSyntaxRewriter
         {
             private readonly string _targetKeyword;

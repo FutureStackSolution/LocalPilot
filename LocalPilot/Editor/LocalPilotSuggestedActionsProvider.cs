@@ -272,15 +272,26 @@ namespace LocalPilot.Editor
             CancellationTokenSource cts;
             lock (_actionLock)
             {
-                try { _activeActionCts?.Cancel(); _activeActionCts?.Dispose(); } catch { }
-                _activeActionCts = new CancellationTokenSource(TimeSpan.FromSeconds(120));
-                cts = _activeActionCts;
+                try { _activeActionCts?.Cancel(); } catch { }
+                cts = new CancellationTokenSource(TimeSpan.FromSeconds(120));
+                _activeActionCts = cts;
             }
 
             _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
             {
-                await ExecuteInBackgroundAsync(
-                    filePath, originalFullText, targetCode, spanStart, spanLength, versionNumber, cts.Token);
+                try
+                {
+                    await ExecuteInBackgroundAsync(
+                        filePath, originalFullText, targetCode, spanStart, spanLength, versionNumber, cts.Token);
+                }
+                finally
+                {
+                    lock (_actionLock)
+                    {
+                        if (_activeActionCts == cts) _activeActionCts = null;
+                    }
+                    cts.Dispose();
+                }
             });
         }
 
@@ -411,8 +422,12 @@ namespace LocalPilot.Editor
         {
             if (_textView?.Selection != null && !_textView.Selection.IsEmpty)
             {
-                return _textView.Selection.StreamSelectionSpan.SnapshotSpan;
+                return _textView.Selection.StreamSelectionSpan.SnapshotSpan.TranslateTo(snapshot, SpanTrackingMode.EdgeInclusive);
             }
+
+            SnapshotSpan translatedRange = _range.Snapshot != snapshot
+                ? _range.TranslateTo(snapshot, SpanTrackingMode.EdgeInclusive)
+                : _range;
 
             if (filePath.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
             {
@@ -420,7 +435,7 @@ namespace LocalPilot.Editor
                 {
                     var tree = CSharpSyntaxTree.ParseText(fullText);
                     var root = tree.GetRoot();
-                    var token = root.FindToken(_range.Start.Position);
+                    var token = root.FindToken(translatedRange.Start.Position);
                     var method = token.Parent?.AncestorsAndSelf().OfType<MethodDeclarationSyntax>().FirstOrDefault();
                     if (method != null)
                     {
@@ -434,8 +449,8 @@ namespace LocalPilot.Editor
                 catch { }
             }
 
-            var startLine = _range.Start.GetContainingLine();
-            var endLine = _range.End.GetContainingLine();
+            var startLine = translatedRange.Start.GetContainingLine();
+            var endLine = translatedRange.End.GetContainingLine();
             return new SnapshotSpan(startLine.Start, endLine.End);
         }
 

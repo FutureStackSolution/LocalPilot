@@ -304,12 +304,17 @@ namespace LocalPilot.Chat
         private void OnUnloaded(object sender, RoutedEventArgs e)
         {
             VSColorTheme.ThemeChanged -= OnThemeChanged;
-            _scanCts?.Cancel();
-            _scanCts?.Dispose();
+            _streamingTimer?.Stop();
+
+            try { _permissionTcs?.TrySetResult(false); } catch { }
+
+            try { _shadowSearchCts?.Cancel(); _shadowSearchCts?.Dispose(); } catch { }
+            _shadowSearchCts = null;
+
+            try { _scanCts?.Cancel(); _scanCts?.Dispose(); } catch { }
             _scanCts = null;
 
-            _cts?.Cancel();
-            _cts?.Dispose();
+            try { _cts?.Cancel(); _cts?.Dispose(); } catch { }
             _cts = null;
         }
 
@@ -650,52 +655,52 @@ namespace LocalPilot.Chat
 
         private async Task RunAgentTaskAsync(string task, string modelOverride = null)
         {
-            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-            ReviewPanel.Visibility = Visibility.Collapsed;
-
-            if (WelcomePanel.Visibility == Visibility.Visible)
-                WelcomePanel.Visibility = Visibility.Collapsed;
-
-            // 🛡️ UI SANITIZATION: Don't show the raw technical XML block if it's a prompt template
-            bool isTechnicalPrompt = task.Trim().StartsWith("<task_type>");
-
-            // Ensure bubble is added if it hasn't been added by queue logic already
-            if ((_requestQueue.Count == 0 || !_isProcessingQueue) && !isTechnicalPrompt)
-            {
-                AppendUserBubble(task);
-            }
-
-            // 🛡️ VALIDATION: Ensure model is selected and Ollama is reachable
-            var settings = LocalPilotSettings.Instance;
-            string modelToUse = modelOverride ?? settings.ChatModel;
-
-            if (string.IsNullOrWhiteSpace(modelToUse))
-            {
-                string actionName = modelOverride != null ? "This action" : "Chat";
-                AppendAIBubble($"⚠️ **No Model Selected.**\n\n{actionName} requires a configured model. Please go to **Tools → Options → LocalPilot** and select a model.");
-                return;
-            }
-
-            // Quick connectivity check if this is the first message
-            if (_history.Count <= 1)
-            {
-                bool isOllamaRunning = await _ollama.IsAvailableAsync();
-                if (!isOllamaRunning)
-                {
-                    AppendAIBubble($"❌ **Cannot reach Ollama.**\n\nEnsure Ollama is running at `{settings.OllamaBaseUrl}`. You can download it from [ollama.com](https://ollama.com).");
-                    return;
-                }
-            }
-
-            // 🚀 STATE RESET: Ensure no stale modifications from previous turns leak into this one
-            _lastStagedChanges = null;
-            _lastTurnCheckpointId = null;
-            PerformanceTracer.Instance.StartNewTask();
-            SetStreaming(true, modelOverride);
-            StartNewAgentTurn();
-
             try
             {
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                ReviewPanel.Visibility = Visibility.Collapsed;
+
+                if (WelcomePanel.Visibility == Visibility.Visible)
+                    WelcomePanel.Visibility = Visibility.Collapsed;
+
+                // 🛡️ UI SANITIZATION: Don't show the raw technical XML block if it's a prompt template
+                bool isTechnicalPrompt = task.Trim().StartsWith("<task_type>");
+
+                // Ensure bubble is added if it hasn't been added by queue logic already
+                if ((_requestQueue.Count == 0 || !_isProcessingQueue) && !isTechnicalPrompt)
+                {
+                    AppendUserBubble(task);
+                }
+
+                // 🛡️ VALIDATION: Ensure model is selected and Ollama is reachable
+                var settings = LocalPilotSettings.Instance;
+                string modelToUse = modelOverride ?? settings.ChatModel;
+
+                if (string.IsNullOrWhiteSpace(modelToUse))
+                {
+                    string actionName = modelOverride != null ? "This action" : "Chat";
+                    AppendAIBubble($"⚠️ **No Model Selected.**\n\n{actionName} requires a configured model. Please go to **Tools → Options → LocalPilot** and select a model.");
+                    return;
+                }
+
+                // Quick connectivity check if this is the first message
+                if (_history.Count <= 1)
+                {
+                    bool isOllamaRunning = await _ollama.IsAvailableAsync();
+                    if (!isOllamaRunning)
+                    {
+                        AppendAIBubble($"❌ **Cannot reach Ollama.**\n\nEnsure Ollama is running at `{settings.OllamaBaseUrl}`. You can download it from [ollama.com](https://ollama.com).");
+                        return;
+                    }
+                }
+
+                // 🚀 STATE RESET: Ensure no stale modifications from previous turns leak into this one
+                _lastStagedChanges = null;
+                _lastTurnCheckpointId = null;
+                PerformanceTracer.Instance.StartNewTask();
+                SetStreaming(true, modelOverride);
+                StartNewAgentTurn();
+
                 _cts?.Dispose();
                 _cts = new CancellationTokenSource();
                 
@@ -1320,15 +1325,15 @@ namespace LocalPilot.Chat
                     return;
                 }
 
-                if (_history.Count == 0 && WelcomePanel.Visibility == Visibility.Visible)
-                    WelcomePanel.Visibility = Visibility.Collapsed;
-
                 _currentAction = action; // 🚀 STORE THE ACTION CONTEXT
                 _lastAuthoringCode = selectedCode; // 🛡️ Buffer for Diff View logic
 
                 // 2. Prepare Prompt
                 string prompt = BuildActionPrompt(action, selectedCode);
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+
+                if (_history.Count == 0 && WelcomePanel.Visibility == Visibility.Visible)
+                    WelcomePanel.Visibility = Visibility.Collapsed;
                 
                 // 3. UI Update: Show the user's request with context for visual clarity
                 string fileName = string.Empty;
@@ -2061,14 +2066,18 @@ namespace LocalPilot.Chat
                     var copyText = new TextBlock { Text = "COPY", FontSize = 8, FontWeight = FontWeights.Bold, VerticalAlignment = VerticalAlignment.Center };
                     copyStack.Children.Add(copyText);
                     copyBtn.Content = copyStack;
-                    copyBtn.Click += (s, e) => { 
-                        Clipboard.SetText(cleanCode); 
-                        copyText.Text = "COPIED!";
-                        _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () => {
-                            await Task.Delay(2000);
-                            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                            copyText.Text = "COPY";
-                        });
+                    copyBtn.Click += (s, e) => {
+                        try
+                        {
+                            Clipboard.SetText(cleanCode);
+                            copyText.Text = "COPIED!";
+                            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () => {
+                                await Task.Delay(2000);
+                                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                                copyText.Text = "COPY";
+                            });
+                        }
+                        catch { }
                     };
                     headerStack.Children.Add(copyBtn);
 
@@ -2412,11 +2421,18 @@ namespace LocalPilot.Chat
                 }
             }
 
-            ThreadHelper.JoinableTaskFactory.Run(async () =>
+            if (ThreadHelper.CheckAccess())
             {
-                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                 Apply();
-            });
+            }
+            else
+            {
+                _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+                {
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    Apply();
+                });
+            }
         }
 
         // ── Toolbar events ────────────────────────────────────────────────────

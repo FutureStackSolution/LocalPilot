@@ -103,6 +103,9 @@ namespace LocalPilot.Services
         /// </summary>
         public async Task RunTaskAsync(string taskDescription, List<ChatMessage> messages, CancellationToken ct, string modelOverride = null, string contextOverride = null)
         {
+            taskDescription = taskDescription ?? string.Empty;
+            if (messages == null) messages = new List<ChatMessage>();
+
             if (_ollama.CircuitBreakerTripped)
             {
                 OnStatusUpdate?.Invoke(AgentStatus.Failed, "Ollama is unreachable (Circuit Breaker tripped). Please check your connection.");
@@ -425,9 +428,9 @@ namespace LocalPilot.Services
                             // 🚀 ROSLYN AST SKELETONIZATION: Compress non-target method bodies for files >1,500 chars
                             // Keeps the target method (GetNames) 100% intact while dropping thousands of mock data tokens.
                             string deliveredContent = targetDocContent;
+                            int cursorLine = 0;
                             if (targetDocPath.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) && deliveredContent.Length > 1500)
                             {
-                                int cursorLine = 0;
                                 if (targetDocPath.Equals(activeDocPath, StringComparison.OrdinalIgnoreCase))
                                 {
                                     try {
@@ -435,15 +438,18 @@ namespace LocalPilot.Services
                                         if (sel?.ActivePoint != null) cursorLine = sel.ActivePoint.Position.GetContainingLine().LineNumber;
                                     } catch { }
                                 }
-                                deliveredContent = CodeSkeletonizer.Skeletonize(deliveredContent, taskDescription, cursorLine);
+                                deliveredContent = CodeSkeletonizer.SkeletonizeWithLineNumbers(deliveredContent, taskDescription, cursorLine);
+                            }
+                            else
+                            {
+                                deliveredContent = AddLineNumbers(deliveredContent);
                             }
 
                             if (deliveredContent.Length <= 25000)
                             {
-                                string numberedContent = AddLineNumbers(deliveredContent);
                                 messages.Add(new ChatMessage { 
                                     Role = "system", 
-                                    Content = $"## TARGET FILE CONTENT ({Path.GetFileName(targetDocPath)})\nPath: {targetDocPath}\nCode (with 1-based line numbers):\n```\n{numberedContent}\n```\nIMPORTANT: The target file is provided above. You ALREADY have the complete context. DO NOT call 'read_file'. Execute 'edit_lines' or 'replace_text' directly on Turn 1!" 
+                                    Content = $"## TARGET FILE CONTENT ({Path.GetFileName(targetDocPath)})\nPath: {targetDocPath}\nCode (with 1-based line numbers):\n```\n{deliveredContent}\n```\nIMPORTANT: The target file is provided above. You ALREADY have the complete context. DO NOT call 'read_file'. Execute 'edit_lines' or 'replace_text' directly on Turn 1!" 
                                 });
                             }
                         }
@@ -534,18 +540,22 @@ namespace LocalPilot.Services
 
                 using (var discoveryCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
                 {
-                    discoveryCts.CancelAfter(5000); 
-                    foreach (var name in PascalNames)
+                    discoveryCts.CancelAfter(5000);
+                    try
                     {
-                        if (discoveryCts.Token.IsCancellationRequested) break;
-                        
-                        var locs = await SymbolIndexService.Instance.FindDefinitionsAsync(name, discoveryCts.Token);
-                        if (locs != null && locs.Any())
+                        foreach (var name in PascalNames)
                         {
-                            var loc = locs.First();
-                            messages.Add(new ChatMessage { Role = "system", Content = $"[LSP CONTEXT] Symbol '{name}' ({loc.Kind}) is defined at: {loc.FilePath}:{loc.Line}" });
+                            if (discoveryCts.Token.IsCancellationRequested) break;
+                            
+                            var locs = await SymbolIndexService.Instance.FindDefinitionsAsync(name, discoveryCts.Token);
+                            if (locs != null && locs.Any())
+                            {
+                                var loc = locs.First();
+                                messages.Add(new ChatMessage { Role = "system", Content = $"[LSP CONTEXT] Symbol '{name}' ({loc.Kind}) is defined at: {loc.FilePath}:{loc.Line}" });
+                            }
                         }
                     }
+                    catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
                 }
 
                 // Inject known symbols summary for fuzzy matching
@@ -815,6 +825,7 @@ namespace LocalPilot.Services
                     }
 
                     // 2. Execute Risky Tools Sequentially (Safety first)
+                    bool shouldFastComplete = false;
                     foreach (ToolCallRequest toolCall in riskyTools)
                     {
                         if (ct.IsCancellationRequested) break;
@@ -1008,6 +1019,18 @@ namespace LocalPilot.Services
                         // 🛡️ ERROR FEEDBACK: Ensure model doesn't hallucinate success
                         if (result.IsError)
                         {
+                            // Roll back speculative staging if tool execution failed
+                            if (isWrite && !string.IsNullOrEmpty(target))
+                            {
+                                try
+                                {
+                                    string failedAbsPath = _toolRegistry.ResolvePath(target);
+                                    lock (_stagedChanges) { _stagedChanges.Remove(failedAbsPath); }
+                                    turnFileCache.Remove(failedAbsPath);
+                                }
+                                catch { }
+                            }
+
                             lock (messages)
                             {
                                 messages.Add(new ChatMessage 
@@ -1019,7 +1042,7 @@ namespace LocalPilot.Services
                         }
                         else 
                         {
-                            if (result.Output != "No matches found." && !result.Output.Contains("not found"))
+                            if (!string.IsNullOrEmpty(result.Output) && result.Output != "No matches found." && !result.Output.Contains("not found"))
                             {
                                 stepHasMeaningfulResult = true;
                             }
@@ -1042,28 +1065,32 @@ namespace LocalPilot.Services
                                 
                                 if (hasErrors) 
                                 {
+                                    shouldFastComplete = false;
                                     LocalPilotLogger.Log("[Agent] Build errors detected after write. Triggering Smart Fix protocol feedback.", LogCategory.Build, LogSeverity.Warning);
                                 }
                                 else
                                 {
                                     LocalPilotLogger.Log("[Agent] Write verified. No build errors detected.", LogCategory.Build, LogSeverity.Info);
 
-                                    // 🚀 FAST-PATH COMPLETION: If the code edit succeeded and verified with 0 build errors,
-                                    // finish immediately! Eliminates a full redundant 3-4 minute LLM turn just to say "Done."
+                                    // 🚀 FAST-PATH COMPLETION: Mark ready to finish once all risky tools in this turn complete
                                     if (_stagedChanges.Count > 0 && (fastMode || isDirectFileAction || step >= 1))
                                     {
-                                        isDone = true;
-                                        OnTurnModificationsPending?.Invoke(new Dictionary<string, (string original, string improved)>(_stagedChanges));
-                                        _stagedChanges.Clear();
-                                        string doneMsg = "Done. Code updated and verified with 0 errors.";
-                                        OnMessageFragment?.Invoke(doneMsg);
-                                        OnMessageCompleted?.Invoke(doneMsg);
-                                        OnStatusUpdate?.Invoke(AgentStatus.Completed, "Task completed successfully.");
-                                        break;
+                                        shouldFastComplete = true;
                                     }
                                 }
                             }
                         }
+                    }
+
+                    if (shouldFastComplete && _stagedChanges.Count > 0)
+                    {
+                        isDone = true;
+                        OnTurnModificationsPending?.Invoke(new Dictionary<string, (string original, string improved)>(_stagedChanges));
+                        _stagedChanges.Clear();
+                        string doneMsg = "Done. Code updated and verified with 0 errors.";
+                        OnMessageFragment?.Invoke(doneMsg);
+                        OnMessageCompleted?.Invoke(doneMsg);
+                        OnStatusUpdate?.Invoke(AgentStatus.Completed, "Task completed successfully.");
                     }
 
                     if (!stepHasMeaningfulResult && !ct.IsCancellationRequested)

@@ -342,7 +342,7 @@
                             </StackPanel>
                             <StackPanel Grid.Column="1" Margin="8,0,0,0" x:Name="PnlApiKey">
                                 <TextBlock Text="API Key (Optional for local LM Studio / llama.cpp)" Style="{DynamicResource LpLabelStyle}"/>
-                                <PasswordBox x:Name="TxtApiKey" Height="28" Background="{DynamicResource LpInputBgBrush}" Foreground="{DynamicResource LpWindowFgBrush}" BorderBrush="{DynamicResource LpInputBorderBrush}" BorderThickness="1" Padding="6,2" VerticalContentAlignment="Center"/>
+                                <PasswordBox x:Name="TxtApiKey" Height="28" Background="{DynamicResource LpWindowBgBrush}" Foreground="{DynamicResource LpWindowFgBrush}" BorderBrush="{DynamicResource LpMenuBorderBrush}" BorderThickness="1" Padding="6,2" VerticalContentAlignment="Center"/>
                             </StackPanel>
                         </Grid>
                         <TextBlock x:Name="TxtConnectionResult" Foreground="#4EC9B0" FontSize="11" Margin="0,2,0,8" Visibility="Collapsed"/>
