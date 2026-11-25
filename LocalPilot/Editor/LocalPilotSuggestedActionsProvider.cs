@@ -80,8 +80,8 @@ namespace LocalPilot.Editor
                 var lineSpan = ExpandToLineSpan(range);
                 if (HasErrorTag(lineSpan)) return Task.FromResult(true);
 
-                // Selection or non-trivial code line -> allow Refactor / Generate Unit Tests
-                if (_textView?.Selection != null && !_textView.Selection.IsEmpty)
+                // Thread-safe SnapshotSpan check (avoid UI-affined _textView.Selection on background thread)
+                if (range.Length > 0)
                     return Task.FromResult(true);
 
                 string lineText = lineSpan.GetText();

@@ -635,22 +635,30 @@ namespace LocalPilot.Services
                 
                 // Start the background processing loop with quiet-window debouncing
                 _ = Task.Run(async () => {
-                    // Brief startup grace window to let VS finish opening files without storming
-                    await Task.Delay(3000, _watcherCts.Token).ConfigureAwait(false);
-                    while (!_watcherCts.IsCancellationRequested)
+                    try
                     {
+                        // Brief startup grace window to let VS finish opening files without storming
                         await Task.Delay(3000, _watcherCts.Token).ConfigureAwait(false);
-                        if (_pendingFiles.IsEmpty) continue;
-
-                        // Wait until filesystem activity settles for at least 1.5s
-                        if ((DateTime.UtcNow - _lastWatcherEventUtc).TotalMilliseconds < 1500) continue;
-
-                        while (_pendingFiles.TryRemove(_pendingFiles.Keys.FirstOrDefault() ?? "", out _))
+                        while (!_watcherCts.IsCancellationRequested)
                         {
+                            await Task.Delay(3000, _watcherCts.Token).ConfigureAwait(false);
+                            if (_pendingFiles.IsEmpty) continue;
+
+                            // Wait until filesystem activity settles for at least 1.5s
+                            if ((DateTime.UtcNow - _lastWatcherEventUtc).TotalMilliseconds < 1500) continue;
+
+                            while (_pendingFiles.TryRemove(_pendingFiles.Keys.FirstOrDefault() ?? "", out _))
+                            {
+                            }
+                            
+                            LocalPilotLogger.Log("Incremental changes detected. Re-indexing...", LogCategory.Storage);
+                            await IndexSolutionAsync(ollama, _watcherCts.Token);
                         }
-                        
-                        LocalPilotLogger.Log("Incremental changes detected. Re-indexing...", LogCategory.Storage);
-                        await IndexSolutionAsync(ollama, _watcherCts.Token);
+                    }
+                    catch (OperationCanceledException) { }
+                    catch (Exception ex)
+                    {
+                        LocalPilotLogger.LogError("[RAG] Watcher loop error", ex);
                     }
                 });
             }

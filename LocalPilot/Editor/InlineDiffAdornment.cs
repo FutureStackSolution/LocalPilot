@@ -49,6 +49,15 @@ namespace LocalPilot.Editor
         private static readonly Brush PillBgBrush = new SolidColorBrush(Color.FromArgb(0xEE, 0x1E, 0x1E, 0x26));
         private static readonly Brush PillBorderBrush = new SolidColorBrush(Color.FromArgb(0xCC, 0x45, 0x47, 0x5A));
 
+        static InlineDiffAdornmentManager()
+        {
+            AddedBgBrush.Freeze();
+            AddedBorderBrush.Freeze();
+            RemovedBgBrush.Freeze();
+            PillBgBrush.Freeze();
+            PillBorderBrush.Freeze();
+        }
+
         public InlineDiffAdornmentManager(IWpfTextView view, ITextDocument document)
         {
             _view = view;

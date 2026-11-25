@@ -228,6 +228,8 @@ namespace LocalPilot.Services
                     }
                 }
 
+                var turnFileCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
                 // 🚀 FAST MODE 2-ZONE KV-CACHE HISTORY:
                 // Strip stale system prompts, old file dumps, and raw tool outputs from prior turns,
                 // while preserving the last 2 user/assistant exchanges (compact) so follow-ups still work!
@@ -380,7 +382,6 @@ namespace LocalPilot.Services
                         // NEVER inject both files at the same time, which was bloating input to 2,100+ tokens!
                         string targetDocPath = null;
                         string targetDocContent = null;
-                        var turnFileCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
                         if (!string.IsNullOrEmpty(solutionPath) && !string.IsNullOrEmpty(taskDescription))
                         {
@@ -872,7 +873,11 @@ namespace LocalPilot.Services
                                 string currentContent = "";
                                 
                                 try {
-                                    if (File.Exists(absPath)) currentContent = File.ReadAllText(absPath);
+                                    if (!turnFileCache.TryGetValue(absPath, out currentContent))
+                                    {
+                                        currentContent = File.Exists(absPath) ? File.ReadAllText(absPath) : "";
+                                        turnFileCache[absPath] = currentContent;
+                                    }
                                     
                                     // Capture original for the WHOLE TURN (first touch)
                                     lock (_stagedChanges) {
@@ -886,6 +891,7 @@ namespace LocalPilot.Services
                                         code = currentContent.Replace(oldText, rawCode ?? "");
                                     else
                                         code = rawCode;
+                                    if (!string.IsNullOrEmpty(code)) turnFileCache[absPath] = code;
                                 } catch { code = rawCode; }
                             }
                             else if (toolCall.Name == "edit_lines")
@@ -894,7 +900,11 @@ namespace LocalPilot.Services
                                 string currentContent = "";
                                 try
                                 {
-                                    if (File.Exists(absPath)) currentContent = File.ReadAllText(absPath);
+                                    if (!turnFileCache.TryGetValue(absPath, out currentContent))
+                                    {
+                                        currentContent = File.Exists(absPath) ? File.ReadAllText(absPath) : "";
+                                        turnFileCache[absPath] = currentContent;
+                                    }
                                     lock (_stagedChanges)
                                     {
                                         if (!_stagedChanges.ContainsKey(absPath))
@@ -914,6 +924,7 @@ namespace LocalPilot.Services
                                             if (!string.IsNullOrEmpty(rawCode))
                                                 lines.InsertRange(sLine - 1, rawCode.Replace("\r\n", "\n").Split('\n'));
                                             code = string.Join(sep, lines);
+                                            turnFileCache[absPath] = code;
                                         }
                                         else code = rawCode;
                                     }
