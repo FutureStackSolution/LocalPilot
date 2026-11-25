@@ -380,12 +380,19 @@ namespace LocalPilot.Services
                         // NEVER inject both files at the same time, which was bloating input to 2,100+ tokens!
                         string targetDocPath = null;
                         string targetDocContent = null;
+                        var turnFileCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
                         if (!string.IsNullOrEmpty(solutionPath) && !string.IsNullOrEmpty(taskDescription))
                         {
                             try
                             {
                                 var nexus = NexusService.Instance.GetGraph();
+                                if (nexus?.Nodes == null || nexus.Nodes.Count == 0)
+                                {
+                                    await NexusService.Instance.InitializeAsync(solutionPath);
+                                    await NexusService.Instance.RebuildGraphAsync(ct);
+                                    nexus = NexusService.Instance.GetGraph();
+                                }
                                 if (nexus?.Nodes != null)
                                 {
                                     var targetNode = nexus.Nodes.FirstOrDefault(n => 
@@ -397,6 +404,7 @@ namespace LocalPilot.Services
                                     {
                                         targetDocPath = targetNode.FilePath;
                                         targetDocContent = File.ReadAllText(targetDocPath);
+                                        turnFileCache[targetDocPath] = targetDocContent;
                                     }
                                 }
                             }
@@ -408,6 +416,7 @@ namespace LocalPilot.Services
                         {
                             targetDocPath = activeDocPath;
                             targetDocContent = activeDocContent;
+                            turnFileCache[targetDocPath] = targetDocContent;
                         }
 
                         if (!string.IsNullOrEmpty(targetDocContent) && !string.IsNullOrEmpty(targetDocPath))

@@ -439,12 +439,15 @@ namespace LocalPilot.Editor
             return new SnapshotSpan(startLine.Start, endLine.End);
         }
 
+        private static readonly Regex FenceStartRegex = new Regex(@"^```[a-zA-Z0-9#+-]*\s*\r?\n", RegexOptions.Compiled);
+        private static readonly Regex FenceEndRegex = new Regex(@"\r?\n```\s*$", RegexOptions.Compiled);
+
         private static string StripCodeFences(string text)
         {
             if (string.IsNullOrWhiteSpace(text)) return text;
             string trimmed = text.Trim();
-            trimmed = Regex.Replace(trimmed, @"^```[a-zA-Z0-9#+-]*\s*\r?\n", "");
-            trimmed = Regex.Replace(trimmed, @"\r?\n```\s*$", "");
+            trimmed = FenceStartRegex.Replace(trimmed, "");
+            trimmed = FenceEndRegex.Replace(trimmed, "");
             return trimmed.TrimEnd();
         }
 

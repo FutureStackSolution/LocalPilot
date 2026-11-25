@@ -23,6 +23,7 @@ namespace LocalPilot.Services
         private string _apiKey;
 
         private volatile bool _circuitBreakerTripped = false;
+        private static readonly JsonSerializerSettings _ignoreNullSettings = new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore };
         public bool CircuitBreakerTripped
         {
             get => _circuitBreakerTripped;
@@ -284,7 +285,7 @@ namespace LocalPilot.Services
                 requestBody["tool_choice"] = "auto";
             }
 
-            string jsonPayload = JsonConvert.SerializeObject(requestBody, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore });
+            string jsonPayload = JsonConvert.SerializeObject(requestBody, _ignoreNullSettings);
 
             HttpResponseMessage response = null;
             string errorDetails = null;
@@ -316,7 +317,7 @@ namespace LocalPilot.Services
                         LocalPilotLogger.Log($"[OpenAI] Server rejected tools parameter. Retrying without tools: {errBody}", LogCategory.Ollama, LogSeverity.Warning);
                         requestBody.Remove("tools");
                         requestBody.Remove("tool_choice");
-                        string retryJson = JsonConvert.SerializeObject(requestBody, new JsonSerializerSettings { NullValueHandling = NullValueHandling.Ignore });
+                        string retryJson = JsonConvert.SerializeObject(requestBody, _ignoreNullSettings);
                         var retryContent = new StringContent(retryJson, Encoding.UTF8, "application/json");
                         using (var retryReq = CreateRequest(HttpMethod.Post, "chat/completions", retryContent))
                         {

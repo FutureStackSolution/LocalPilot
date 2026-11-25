@@ -1132,8 +1132,16 @@ namespace LocalPilot.Chat
             PerformanceWarningBanner.Visibility = Visibility.Collapsed;
         }
 
+        private DateTime _lastStatusDispatchUtc = DateTime.MinValue;
+
         private void OnAgentStatusUpdate(AgentStatus status, string detail)
         {
+            if (status == AgentStatus.Thinking && (DateTime.UtcNow - _lastStatusDispatchUtc).TotalMilliseconds < 150)
+            {
+                return;
+            }
+            _lastStatusDispatchUtc = DateTime.UtcNow;
+
             _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
             {
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();

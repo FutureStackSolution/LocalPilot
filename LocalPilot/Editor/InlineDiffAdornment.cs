@@ -76,6 +76,8 @@ namespace LocalPilot.Editor
 
         private void OnLayoutChanged(object sender, TextViewLayoutChangedEventArgs e)
         {
+            if (_layer.IsEmpty && InlineDiffService.Instance.GetHunks(_document?.FilePath).Count == 0)
+                return;
             RenderHunks();
         }
 
