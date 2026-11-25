@@ -77,9 +77,10 @@ namespace LocalPilot.Chat.ViewModels
             return info;
         }
 
-        public Border CreateTerminalBadge(AgentStatusViewState statusState, ResourceDictionary resources, out Button acceptButton)
+        public Border CreateTerminalBadge(AgentStatusViewState statusState, ResourceDictionary resources, out Button acceptButton, out Button revertButton)
         {
             acceptButton = null;
+            revertButton = null;
             var badge = new Border
             {
                 Background = resources["LpMenuBgBrush"] as Brush,
@@ -135,12 +136,23 @@ namespace LocalPilot.Chat.ViewModels
                 {
                     Content = "Accept All",
                     Style = resources["LpPrimaryActionButtonStyle"] as Style,
-                    Margin = new Thickness(16, -4, -4, -4), // Nested alignment
+                    Margin = new Thickness(16, -4, 4, -4), // Nested alignment
                     Padding = new Thickness(10, 4, 10, 4),
                     FontSize = 10,
                     Height = 24
                 };
                 sp.Children.Add(acceptButton);
+
+                revertButton = new Button
+                {
+                    Content = "↺ Revert Turn",
+                    Style = resources["LpButtonStyle"] as Style,
+                    Margin = new Thickness(2, -4, -4, -4),
+                    Padding = new Thickness(8, 4, 8, 4),
+                    FontSize = 10,
+                    Height = 24
+                };
+                sp.Children.Add(revertButton);
             }
 
             badge.Child = sp;

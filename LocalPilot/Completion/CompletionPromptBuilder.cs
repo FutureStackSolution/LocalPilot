@@ -17,15 +17,24 @@ namespace LocalPilot.Completion
 
         /// <summary>
         /// Build a FIM-style prompt from the text before and after the cursor.
+        /// Uses native FIM tokens for coder models (Qwen/DeepSeek/StarCoder) to cut prefill latency.
         /// </summary>
         public string Build(string fileExtension, string prefix, string suffix, string filePath)
         {
+            bool isFast = _settings?.Mode == PerformanceMode.Fast;
+            int maxBefore = isFast ? 32 : 64;
+            int maxAfter = isFast ? 8 : 16;
+
+            prefix = TrimLines(prefix, maxBefore, fromEnd: true);
+            suffix = TrimLines(suffix, maxAfter, fromEnd: false);
+
+            string model = _settings?.CompletionModel ?? "";
+            if (SupportsQwenFim(model))
+            {
+                return $"<|fim_prefix|>{prefix}<|fim_suffix|>{suffix}<|fim_middle|>";
+            }
+
             string langHint = GetLanguageHint(fileExtension);
-
-            // Trim to configured context window (Golden Ratio: 64 before, 16 after)
-            prefix = TrimLines(prefix, 64, fromEnd: true);
-            suffix = TrimLines(suffix, 16, fromEnd: false);
-
             var vars = new System.Collections.Generic.Dictionary<string, string>
             {
                 { "Language", langHint },
@@ -35,6 +44,14 @@ namespace LocalPilot.Completion
             };
 
             return Services.PromptLoader.GetPrompt("CompletionPrompt", vars);
+        }
+
+        private static bool SupportsQwenFim(string model)
+        {
+            if (string.IsNullOrEmpty(model)) return false;
+            return model.IndexOf("qwen", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   model.IndexOf("starcoder", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   model.IndexOf("coder", System.StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         private static string TrimLines(string text, int maxLines, bool fromEnd)

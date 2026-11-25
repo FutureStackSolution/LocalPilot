@@ -123,6 +123,7 @@ namespace LocalPilot.Chat
             _agentOrchestrator.OnMessageFragment += OnAgentMessageFragment;
             _agentOrchestrator.OnMessageCompleted += OnAgentMessageCompleted;
             _agentOrchestrator.OnTurnModificationsPending += OnAgentModificationsPending;
+            _agentOrchestrator.OnPerformanceWarning += OnAgentPerformanceWarning;
             _agentOrchestrator.RequestPermissionAsync = HandlePermissionRequestAsync;
 
 
@@ -688,6 +689,7 @@ namespace LocalPilot.Chat
 
             // 🚀 STATE RESET: Ensure no stale modifications from previous turns leak into this one
             _lastStagedChanges = null;
+            _lastTurnCheckpointId = null;
             PerformanceTracer.Instance.StartNewTask();
             SetStreaming(true, modelOverride);
             StartNewAgentTurn();
@@ -867,11 +869,18 @@ namespace LocalPilot.Chat
         }
 
         private Dictionary<string, (string original, string improved)> _lastStagedChanges;
+        private string _lastTurnCheckpointId;
 
         private void OnAgentModificationsPending(Dictionary<string, (string original, string improved)> stagedChanges)
         {
             if (stagedChanges == null || stagedChanges.Count == 0) return;
             _lastStagedChanges = new Dictionary<string, (string original, string improved)>(stagedChanges, StringComparer.OrdinalIgnoreCase);
+            _lastTurnCheckpointId = TurnCheckpointService.Instance.SaveCheckpoint(_lastStagedChanges);
+
+            foreach (var kvp in _lastStagedChanges)
+            {
+                InlineDiffService.Instance.SetFileDiff(kvp.Key, kvp.Value.original, kvp.Value.improved);
+            }
 
             _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
             {
@@ -920,47 +929,62 @@ namespace LocalPilot.Chat
         {
             ReviewPanel.Visibility = Visibility.Collapsed;
             _lastStagedChanges = null;
+            InlineDiffService.Instance.ClearAll();
             AppendAIBubble("Changes accepted.");
         }
 
         private void BtnRejectAll_Click(object sender, RoutedEventArgs e)
         {
-            if (_lastStagedChanges == null) return;
+            if (_lastStagedChanges == null && string.IsNullOrEmpty(_lastTurnCheckpointId)) return;
             ReviewPanel.Visibility = Visibility.Collapsed;
+
+            string checkpointId = _lastTurnCheckpointId;
+            _lastTurnCheckpointId = null;
+            var fallbackChanges = _lastStagedChanges;
+            _lastStagedChanges = null;
 
             _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
             {
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                foreach (var kvp in _lastStagedChanges)
+                if (!string.IsNullOrEmpty(checkpointId) && TurnCheckpointService.Instance.HasCheckpoint(checkpointId))
                 {
-                    try
+                    await TurnCheckpointService.Instance.RevertCheckpointAsync(checkpointId);
+                }
+                else if (fallbackChanges != null)
+                {
+                    foreach (var kvp in fallbackChanges)
                     {
-                        string path = kvp.Key;
-                        string original = kvp.Value.original;
-                        if (string.IsNullOrEmpty(original)) continue;
-
-                        // Revert by writing original content back
-                        var docView = await VS.Documents.GetDocumentViewAsync(path);
-                        if (docView?.TextBuffer != null)
+                        try
                         {
-                            using (var edit = docView.TextBuffer.CreateEdit())
+                            string path = kvp.Key;
+                            string original = kvp.Value.original;
+                            if (original == null)
                             {
-                                edit.Replace(0, docView.TextBuffer.CurrentSnapshot.Length, original);
-                                edit.Apply();
+                                if (System.IO.File.Exists(path)) System.IO.File.Delete(path);
+                                continue;
+                            }
+                            var docView = await VS.Documents.GetDocumentViewAsync(path);
+                            if (docView?.TextBuffer != null)
+                            {
+                                using (var edit = docView.TextBuffer.CreateEdit())
+                                {
+                                    edit.Replace(0, docView.TextBuffer.CurrentSnapshot.Length, original);
+                                    edit.Apply();
+                                }
+                            }
+                            else
+                            {
+                                System.IO.File.WriteAllText(path, original);
                             }
                         }
-                        else
+                        catch (Exception ex)
                         {
-                            System.IO.File.WriteAllText(path, original);
+                            LocalPilotLogger.LogError($"[Review] Failed to revert {kvp.Key}", ex);
                         }
                     }
-                    catch (Exception ex)
-                    {
-                        LocalPilotLogger.LogError($"[Review] Failed to revert {kvp.Key}", ex);
-                    }
+                    InlineDiffService.Instance.ClearAll();
                 }
 
-                _lastStagedChanges = null;
                 AppendAIBubble("Changes reverted.");
             });
         }
@@ -1092,6 +1116,22 @@ namespace LocalPilot.Chat
         }
 
 
+        private void OnAgentPerformanceWarning(string warning)
+        {
+            if (string.IsNullOrWhiteSpace(warning)) return;
+            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+            {
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                TxtPerfWarningMsg.Text = warning;
+                PerformanceWarningBanner.Visibility = Visibility.Visible;
+            });
+        }
+
+        private void BtnDismissPerfWarning_Click(object sender, RoutedEventArgs e)
+        {
+            PerformanceWarningBanner.Visibility = Visibility.Collapsed;
+        }
+
         private void OnAgentStatusUpdate(AgentStatus status, string detail)
         {
             _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
@@ -1109,7 +1149,9 @@ namespace LocalPilot.Chat
                     {
                         var container = _agentTurnContainer;
                         _agentCurrentContainer = null;
-                        _lastStagedChanges = null; // 🛡️ Prevent stale changes from appearing in UI
+                        _lastStagedChanges = null;
+                _lastTurnCheckpointId = null;
+                InlineDiffService.Instance.ClearAll(); // 🛡️ Prevent stale changes from appearing in UI
 
                         if (_taskStopwatch.ElapsedMilliseconds > 0)
                         {
@@ -1123,7 +1165,7 @@ namespace LocalPilot.Chat
 
                         if (container != null)
                         {
-                            var badge = _agentUiRenderer.CreateTerminalBadge(statusState, this.Resources, out _);
+                            var badge = _agentUiRenderer.CreateTerminalBadge(statusState, this.Resources, out _, out _);
                             container.Children.Add(badge);
                         }
                         else
@@ -1156,9 +1198,10 @@ namespace LocalPilot.Chat
 
                     if (_agentTurnContainer != null)
                     {
-                        var badge = _agentUiRenderer.CreateTerminalBadge(statusState, this.Resources, out var acceptBtn);
+                        var badge = _agentUiRenderer.CreateTerminalBadge(statusState, this.Resources, out var acceptBtn, out var revertBtn);
+                        string turnCheckpointId = _lastTurnCheckpointId;
                         
-                        // Only show the Accept button if we have pending changes.
+                        // Only show the Accept / Revert buttons if we have pending changes.
                         if (acceptBtn != null)
                         {
                             if (_lastStagedChanges == null || _lastStagedChanges.Count == 0)
@@ -1168,6 +1211,35 @@ namespace LocalPilot.Chat
                             else
                             {
                                 acceptBtn.Click += (s, ev) => BtnAcceptAll_Click(s, ev);
+                            }
+                        }
+
+                        if (revertBtn != null)
+                        {
+                            if (string.IsNullOrEmpty(turnCheckpointId) || !TurnCheckpointService.Instance.HasCheckpoint(turnCheckpointId))
+                            {
+                                revertBtn.Visibility = Visibility.Collapsed;
+                            }
+                            else
+                            {
+                                revertBtn.Click += (s, ev) =>
+                                {
+                                    revertBtn.IsEnabled = false;
+                                    _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+                                    {
+                                        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                                        int reverted = await TurnCheckpointService.Instance.RevertCheckpointAsync(turnCheckpointId);
+                                        revertBtn.Content = reverted > 0 ? "Reverted" : "No changes";
+                                        if (acceptBtn != null) acceptBtn.Visibility = Visibility.Collapsed;
+                                        ReviewPanel.Visibility = Visibility.Collapsed;
+                                        if (_lastTurnCheckpointId == turnCheckpointId)
+                                        {
+                                            _lastTurnCheckpointId = null;
+                                            _lastStagedChanges = null;
+                                        }
+                                        AppendAIBubble($"Reverted {reverted} {(reverted == 1 ? "file" : "files")} to pre-turn checkpoint.");
+                                    });
+                                };
                             }
                         }
 
@@ -2355,6 +2427,8 @@ namespace LocalPilot.Chat
                 _currentNarrativeContainer = null;
                 _currentActivityContainer = null;
                 _lastStagedChanges = null;
+                _lastTurnCheckpointId = null;
+                InlineDiffService.Instance.ClearAll();
 
                 if (ReviewPanel != null) ReviewPanel.Visibility = Visibility.Collapsed;
                 if (ConfirmationPanel != null) ConfirmationPanel.Visibility = Visibility.Collapsed;

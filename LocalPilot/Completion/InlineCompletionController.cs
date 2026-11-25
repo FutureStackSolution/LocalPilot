@@ -61,9 +61,9 @@ namespace LocalPilot.Completion
             var mode = LocalPilotSettings.Instance.Mode;
             var delay = mode switch
             {
-                PerformanceMode.Fast => 300,
-                PerformanceMode.HighAccuracy => 1000,
-                _ => 600
+                PerformanceMode.Fast => 200,
+                PerformanceMode.HighAccuracy => 800,
+                _ => 450
             };
 
             lock (_lock)
@@ -137,9 +137,9 @@ namespace LocalPilot.Completion
                 // 2. Offload network request and heavy text processing to background thread
                 var completionText = await Task.Run(async () =>
                 {
-                    // Context window: 64 lines before, 16 after cursor
-                    const int beforeLines = 64;
-                    const int afterLines = 16;
+                    // Context window: leaner in Fast mode for <150ms prefill
+                    int beforeLines = LocalPilotSettings.Instance.Mode == PerformanceMode.Fast ? 32 : 64;
+                    int afterLines = LocalPilotSettings.Instance.Mode == PerformanceMode.Fast ? 8 : 16;
 
                     int startPos = Math.Max(0, caretPos);
                     int linesFound = 0;
@@ -164,16 +164,19 @@ namespace LocalPilot.Completion
                     var perfMode = LocalPilotSettings.Instance.Mode;
                     var maxTokens = perfMode switch
                     {
-                        PerformanceMode.Fast => 128,
-                        PerformanceMode.HighAccuracy => 512,
-                        _ => 256
+                        PerformanceMode.Fast => 64,
+                        PerformanceMode.HighAccuracy => 256,
+                        _ => 128
                     };
 
                     var opts = new OllamaOptions
                     {
-                        Temperature = perfMode == PerformanceMode.Fast ? 0.4 : (perfMode == PerformanceMode.HighAccuracy ? 0.1 : 0.2),
+                        Temperature = perfMode == PerformanceMode.Fast ? 0.1 : (perfMode == PerformanceMode.HighAccuracy ? 0.1 : 0.2),
                         NumPredict = maxTokens,
-                        Stop = new System.Collections.Generic.List<string> { "\n\n\n", "</MID>" }
+                        Stop = new System.Collections.Generic.List<string>
+                        {
+                            "\n\n\n", "</MID>", "<|endoftext|>", "<|file_sep|>", "<|fim_pad|>", "```"
+                        }
                     };
 
                     var llm = SharedLlmService;

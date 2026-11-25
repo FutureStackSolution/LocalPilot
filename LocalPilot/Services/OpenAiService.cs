@@ -30,6 +30,47 @@ namespace LocalPilot.Services
         }
         private int _consecutiveFailures = 0;
         private volatile bool _embeddingsNotSupported = false;
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _unsupportedEmbeddingEndpoints
+            = LoadUnsupportedEmbeddingEndpoints();
+
+        private static string GetEmbeddingCapabilityCachePath()
+        {
+            string appData = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "LocalPilot");
+            if (!System.IO.Directory.Exists(appData)) System.IO.Directory.CreateDirectory(appData);
+            return System.IO.Path.Combine(appData, "unsupported_embeddings.txt");
+        }
+
+        private static System.Collections.Concurrent.ConcurrentDictionary<string, byte> LoadUnsupportedEmbeddingEndpoints()
+        {
+            var dict = new System.Collections.Concurrent.ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                string path = GetEmbeddingCapabilityCachePath();
+                if (System.IO.File.Exists(path))
+                {
+                    foreach (var line in System.IO.File.ReadAllLines(path))
+                    {
+                        var trimmed = line?.Trim();
+                        if (!string.IsNullOrEmpty(trimmed)) dict.TryAdd(trimmed, 0);
+                    }
+                }
+            }
+            catch { }
+            return dict;
+        }
+
+        private static void MarkEndpointEmbeddingsUnsupported(string baseUrl)
+        {
+            if (string.IsNullOrWhiteSpace(baseUrl)) return;
+            if (_unsupportedEmbeddingEndpoints.TryAdd(baseUrl, 0))
+            {
+                try
+                {
+                    System.IO.File.WriteAllLines(GetEmbeddingCapabilityCachePath(), _unsupportedEmbeddingEndpoints.Keys);
+                }
+                catch { }
+            }
+        }
 
         public OpenAiService(string baseUrl = "https://api.openai.com/v1", string apiKey = "")
         {
@@ -45,7 +86,7 @@ namespace LocalPilot.Services
         {
             _baseUrl = baseUrl?.TrimEnd('/') ?? "https://api.openai.com/v1";
             _apiKey = apiKey?.Trim() ?? "";
-            _embeddingsNotSupported = false;
+            _embeddingsNotSupported = _unsupportedEmbeddingEndpoints.ContainsKey(_baseUrl);
         }
 
         private HttpRequestMessage CreateRequest(HttpMethod method, string relativePath, HttpContent content = null)
@@ -247,13 +288,19 @@ namespace LocalPilot.Services
 
             HttpResponseMessage response = null;
             string errorDetails = null;
+            int inactivitySeconds = Math.Max(60, Math.Min(300, options?.RequestTimeoutSeconds ?? 120));
+            TimeSpan inactivityTimeout = TimeSpan.FromSeconds(inactivitySeconds);
 
             try
             {
                 var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
-                using (var req = CreateRequest(HttpMethod.Post, "chat/completions", content))
+                using (var headerCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
                 {
-                    response = await _httpClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+                    headerCts.CancelAfter(inactivityTimeout);
+                    using (var req = CreateRequest(HttpMethod.Post, "chat/completions", content))
+                    {
+                        response = await _httpClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, headerCts.Token).ConfigureAwait(false);
+                    }
                 }
 
                 if (!response.IsSuccessStatusCode)
@@ -300,7 +347,12 @@ namespace LocalPilot.Services
             }
             catch (OperationCanceledException)
             {
-                yield break;
+                if (ct.IsCancellationRequested)
+                {
+                    yield break;
+                }
+                errorDetails = $"Request timed out after {inactivitySeconds}s waiting for server response.";
+                HandleFailure();
             }
             catch (Exception ex)
             {
@@ -315,14 +367,31 @@ namespace LocalPilot.Services
             }
 
             var accumulatedToolCalls = new Dictionary<int, (string name, StringBuilder args)>();
+            int totalToolArgChars = 0;
+            int lastReportedToolChars = -24;
+            bool streamTimedOut = false;
 
             using (var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false))
             using (var reader = new StreamReader(stream, Encoding.UTF8))
             {
-                string line;
-                while ((line = await reader.ReadLineAsync().ConfigureAwait(false)) != null)
+                while (!ct.IsCancellationRequested)
                 {
-                    if (ct.IsCancellationRequested) break;
+                    var readTask = reader.ReadLineAsync();
+                    var delayTask = Task.Delay(inactivityTimeout, ct);
+                    var completed = await Task.WhenAny(readTask, delayTask).ConfigureAwait(false);
+                    if (completed != readTask)
+                    {
+                        if (!ct.IsCancellationRequested)
+                        {
+                            streamTimedOut = true;
+                            LocalPilotLogger.LogError($"[OpenAI] Stream inactivity timeout after {inactivitySeconds}s with no data.", null, LogCategory.Ollama);
+                            HandleFailure();
+                        }
+                        break;
+                    }
+
+                    string line = await readTask.ConfigureAwait(false);
+                    if (line == null) break;
                     if (string.IsNullOrWhiteSpace(line)) continue;
                     if (!line.StartsWith("data:", StringComparison.OrdinalIgnoreCase)) continue;
 
@@ -356,6 +425,7 @@ namespace LocalPilot.Services
                     var tcArray = delta["tool_calls"] as JArray;
                     if (tcArray != null)
                     {
+                        string activeToolName = null;
                         foreach (var tc in tcArray)
                         {
                             int index = tc["index"]?.Value<int>() ?? 0;
@@ -376,13 +446,27 @@ namespace LocalPilot.Services
                                 accumulatedToolCalls[index] = existing;
                             }
 
+                            activeToolName = existing.name;
                             if (!string.IsNullOrEmpty(fnArgs))
                             {
                                 existing.args.Append(fnArgs);
+                                totalToolArgChars += fnArgs.Length;
                             }
+                        }
+
+                        if (totalToolArgChars - lastReportedToolChars >= 24)
+                        {
+                            lastReportedToolChars = totalToolArgChars;
+                            yield return ChatStreamResult.ToolProgress(activeToolName, totalToolArgChars);
                         }
                     }
                 }
+            }
+
+            if (streamTimedOut)
+            {
+                yield return ChatStreamResult.Text($"\n⚠️ **LocalPilot Error:** Stream timed out after {inactivitySeconds}s of inactivity from the LLM server.");
+                yield break;
             }
 
             // Dispatch parsed tool calls
@@ -436,7 +520,8 @@ namespace LocalPilot.Services
                             response.StatusCode == System.Net.HttpStatusCode.MethodNotAllowed)
                         {
                             _embeddingsNotSupported = true;
-                            LocalPilotLogger.Log($"[OpenAI] Endpoint does not support /v1/embeddings (HTTP {(int)response.StatusCode}). Vector indexing disabled; falling back to keyword search.", LogCategory.Storage, LogSeverity.Info);
+                            MarkEndpointEmbeddingsUnsupported(_baseUrl);
+                            LocalPilotLogger.Log($"[OpenAI] Endpoint does not support /v1/embeddings (HTTP {(int)response.StatusCode}). Cached capability; falling back to keyword search.", LogCategory.Storage, LogSeverity.Info);
                         }
                         else
                         {

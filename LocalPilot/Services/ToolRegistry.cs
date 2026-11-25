@@ -41,6 +41,7 @@ namespace LocalPilot.Services
             RegisterTool(new RunTerminalTool(this));
             RegisterTool(new GrepTool(this));
             RegisterTool(new ReplaceTextTool(this));
+            RegisterTool(new EditLinesTool(this));
             RegisterTool(new ListErrorsTool(this));
             RegisterTool(new DeleteFileTool(this));
             RegisterTool(new RenameSymbolTool(this));
@@ -84,7 +85,7 @@ namespace LocalPilot.Services
 
             var essentialToolNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
-                "read_file", "replace_text", "write_file", "grep_search", "list_files", "list_dir"
+                "read_file", "replace_text", "edit_lines", "write_file", "grep_search", "list_files", "list_dir"
             };
             
             // 🚀 DETERMINISTIC ORDER: Alphabetical sorting guarantees 100% byte-for-byte identical tool payload for KV-cache hits
@@ -102,6 +103,7 @@ namespace LocalPilot.Services
                 {
                     if (tool.Name == "read_file") desc = "Read file contents.";
                     else if (tool.Name == "replace_text") desc = "Replace a block of text in a file with new text.";
+                    else if (tool.Name == "edit_lines") desc = "Replace or insert lines by 1-based line numbers (start_line..end_line). Set end_line = start_line - 1 to insert.";
                     else if (tool.Name == "write_file") desc = "Write content to a file.";
                     else if (tool.Name == "grep_search") desc = "Search pattern across workspace files.";
                 }
@@ -185,6 +187,72 @@ namespace LocalPilot.Services
             {
                 return new ToolResponse { IsError = true, Output = $"Execution failed: {ex.Message}" };
             }
+        }
+
+        /// <summary>
+        /// Reads live file content from the Visual Studio editor buffer if open, otherwise from disk.
+        /// </summary>
+        public async Task<string> ReadLiveFileAsync(string path)
+        {
+            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+            var docView = await VS.Documents.GetDocumentViewAsync(path);
+            if (docView?.TextBuffer != null)
+            {
+                return docView.TextBuffer.CurrentSnapshot.GetText();
+            }
+            return File.Exists(path) ? File.ReadAllText(path) : null;
+        }
+
+        /// <summary>
+        /// Writes updated content through the Visual Studio editor buffer if open, otherwise to disk,
+        /// and synchronizes the Roslyn workspace.
+        /// </summary>
+        public async Task WriteLiveFileAsync(string path, string newContent)
+        {
+            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+            var docView = await VS.Documents.GetDocumentViewAsync(path);
+            if (docView?.TextBuffer != null)
+            {
+                using (var edit = docView.TextBuffer.CreateEdit())
+                {
+                    edit.Replace(0, docView.TextBuffer.CurrentSnapshot.Length, newContent);
+                    edit.Apply();
+                }
+            }
+            else
+            {
+                File.WriteAllText(path, newContent);
+            }
+
+            var roslyn = SymbolIndexService.Instance.GetRoslynProvider();
+            if (roslyn != null) await roslyn.SynchronizeDocumentAsync(path);
+        }
+
+        /// <summary>
+        /// Validates in-memory C# syntax before committing an edit; returns null if no new syntax errors were introduced.
+        /// </summary>
+        public static string ValidateCSharpSyntax(string originalContent, string newContent)
+        {
+            try
+            {
+                var oldErrors = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(originalContent ?? "")
+                    .GetDiagnostics()
+                    .Count(d => d.Severity == Microsoft.CodeAnalysis.DiagnosticSeverity.Error);
+
+                var newErrorDiags = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(newContent ?? "")
+                    .GetDiagnostics()
+                    .Where(d => d.Severity == Microsoft.CodeAnalysis.DiagnosticSeverity.Error)
+                    .ToList();
+
+                if (newErrorDiags.Count > oldErrors)
+                {
+                    var first = newErrorDiags.First();
+                    var line = first.Location.GetLineSpan().StartLinePosition.Line + 1;
+                    return $"Line {line}: {first.GetMessage()}";
+                }
+            }
+            catch { }
+            return null;
         }
 
         public string ResolvePath(string path)
@@ -757,26 +825,93 @@ namespace LocalPilot.Services
                 }
 
                 // Enterprise Sync: If open in editor, write through buffer
-                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                docView = await VS.Documents.GetDocumentViewAsync(path);
-                if (docView?.TextBuffer != null)
-                {
-                    using (var edit = docView.TextBuffer.CreateEdit())
-                    {
-                        edit.Replace(0, docView.TextBuffer.CurrentSnapshot.Length, newContent);
-                        edit.Apply();
-                    }
-                }
-                else
-                {
-                    File.WriteAllText(path, newContent);
-                }
-
-                // 🛡️ WORKSPACE SYNC: Ensure Roslyn sees this non-native edit
-                var roslyn = SymbolIndexService.Instance.GetRoslynProvider();
-                if (roslyn != null) await roslyn.SynchronizeDocumentAsync(path);
+                await _registry.WriteLiveFileAsync(path, newContent);
 
                 return new ToolResponse { Output = $"Successfully updated {path}." };
+            }
+            catch (Exception ex) { return new ToolResponse { IsError = true, Output = ex.Message }; }
+        }
+    }
+
+    /// <summary>
+    /// Line-numbered file editor: replaces or inserts lines by 1-based line numbers,
+    /// cutting output tokens by ~40-50% compared to repeating old_text in JSON.
+    /// </summary>
+    public class EditLinesTool : IAgentTool
+    {
+        private readonly ToolRegistry _registry;
+        public EditLinesTool(ToolRegistry registry) => _registry = registry;
+        public string Name => "edit_lines";
+        public string Description => "Replace or insert code by 1-based line numbers. Set end_line = start_line - 1 to insert before start_line without deleting existing lines.";
+        public string ParameterSchema => "{ \"path\": \"string\", \"start_line\": \"integer\", \"end_line\": \"integer\", \"new_text\": \"string\" }";
+
+        public async Task<ToolResponse> ExecuteAsync(Dictionary<string, object> args, CancellationToken ct)
+        {
+            if (!args.TryGetValue("path", out var pathObj) || pathObj == null)
+            {
+                if (!args.TryGetValue("TargetFile", out pathObj) || pathObj == null)
+                    args.TryGetValue("file", out pathObj);
+            }
+            if (pathObj == null)
+                return new ToolResponse { IsError = true, Output = "Missing 'path' argument." };
+
+            if (!args.TryGetValue("start_line", out var startObj) || !int.TryParse(startObj?.ToString(), out int startLine))
+                return new ToolResponse { IsError = true, Output = "Missing or invalid 'start_line' integer argument." };
+
+            if (!args.TryGetValue("end_line", out var endObj) || !int.TryParse(endObj?.ToString(), out int endLine))
+                return new ToolResponse { IsError = true, Output = "Missing or invalid 'end_line' integer argument." };
+
+            if (!args.TryGetValue("new_text", out var newObj) || newObj == null)
+            {
+                if (!args.TryGetValue("content", out newObj) || newObj == null)
+                    args.TryGetValue("replacement_text", out newObj);
+            }
+            if (newObj == null)
+                return new ToolResponse { IsError = true, Output = "Missing 'new_text' argument." };
+
+            var path = _registry.ResolvePath(pathObj.ToString());
+            var newText = newObj.ToString();
+
+            try
+            {
+                string content = await _registry.ReadLiveFileAsync(path);
+                if (content == null)
+                    return new ToolResponse { IsError = true, Output = $"File not found: {path}" };
+
+                string sep = content.Contains("\r\n") ? "\r\n" : "\n";
+                var lines = content.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None).ToList();
+
+                if (startLine < 1 || startLine > lines.Count + 1)
+                    return new ToolResponse { IsError = true, Output = $"Invalid start_line {startLine} (file has {lines.Count} lines)." };
+
+                if (endLine < startLine - 1 || endLine > lines.Count)
+                    return new ToolResponse { IsError = true, Output = $"Invalid end_line {endLine} for start_line {startLine} (file has {lines.Count} lines)." };
+
+                int removeCount = endLine - startLine + 1;
+                if (removeCount > 0)
+                {
+                    lines.RemoveRange(startLine - 1, removeCount);
+                }
+
+                if (!string.IsNullOrEmpty(newText))
+                {
+                    var insertLines = newText.Replace("\r\n", "\n").Split('\n');
+                    lines.InsertRange(startLine - 1, insertLines);
+                }
+
+                string newContent = string.Join(sep, lines);
+
+                // In-memory Roslyn syntax check for C# files before touching the editor buffer
+                if (path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
+                {
+                    string syntaxError = ToolRegistry.ValidateCSharpSyntax(content, newContent);
+                    if (syntaxError != null)
+                        return new ToolResponse { IsError = true, Output = $"Syntax error in edit (file not modified): {syntaxError}" };
+                }
+
+                await _registry.WriteLiveFileAsync(path, newContent);
+                LocalPilotLogger.Log($"[EditLines] Updated {path} (lines {startLine}..{endLine}).");
+                return new ToolResponse { Output = $"Successfully updated {path} (lines {startLine}..{endLine})." };
             }
             catch (Exception ex) { return new ToolResponse { IsError = true, Output = ex.Message }; }
         }

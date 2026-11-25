@@ -1001,6 +1001,25 @@
                     </StackPanel>
                 </Border>
 
+                <!-- ⚡ Hardware-Aware Performance Warning Banner (Non-blocking) -->
+                <Border x:Name="PerformanceWarningBanner" Visibility="Collapsed" Margin="0,0,0,12" Padding="10,8"
+                        Background="{DynamicResource LpBannerBgBrush}" CornerRadius="8"
+                        BorderBrush="{DynamicResource LpAccentBrush}" BorderThickness="1">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="&#xE7BA;" FontFamily="Segoe MDL2 Assets" FontSize="15"
+                                   Foreground="{DynamicResource LpAccentBrush}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                        <TextBlock x:Name="TxtPerfWarningMsg" Grid.Column="1" Text="This model is offloading to disk (~1 tok/s). Switch to a 3B–7B model for 30x speed."
+                                   Foreground="{DynamicResource LpWindowFgBrush}" FontSize="11" TextWrapping="Wrap" VerticalAlignment="Center"/>
+                        <Button Grid.Column="2" Content="Dismiss" Click="BtnDismissPerfWarning_Click"
+                                Style="{StaticResource LpButtonStyle}" FontSize="10" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                    </Grid>
+                </Border>
+
                 <!-- 🚀 Build Error Auto-Fix Banner -->
                 <Border x:Name="BuildErrorBanner" Visibility="Collapsed" Margin="0,0,0,12" Padding="12" 
                         Background="{DynamicResource LpErrorBgBrush}" CornerRadius="8" 

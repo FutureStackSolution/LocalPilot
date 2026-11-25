@@ -83,9 +83,11 @@ namespace LocalPilot.Services
                     return base.VisitMethodDeclaration(node);
                 }
 
-                // Replace non-target method body with compact single-line throw statement
-                var placeholderStatement = SyntaxFactory.ParseStatement("throw null;\r\n");
-                var block = SyntaxFactory.Block(placeholderStatement);
+                // Replace non-target method body with a clean comment-only block (never 'throw null;', which models may imitate)
+                var omittedTrivia = SyntaxFactory.Comment("/* ... */");
+                var block = SyntaxFactory.Block()
+                    .WithOpenBraceToken(SyntaxFactory.Token(SyntaxKind.OpenBraceToken).WithTrailingTrivia(SyntaxFactory.Space, omittedTrivia, SyntaxFactory.Space))
+                    .WithCloseBraceToken(SyntaxFactory.Token(SyntaxKind.CloseBraceToken));
                 return node.WithBody(block).WithExpressionBody(null).WithSemicolonToken(SyntaxFactory.Token(SyntaxKind.None));
             }
         }

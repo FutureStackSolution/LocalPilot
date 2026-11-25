@@ -663,16 +663,25 @@ namespace LocalPilot.Services
     {
         public bool IsTextToken { get; private set; }
         public bool IsToolCall { get; private set; }
+        public bool IsToolProgress { get; private set; }
         
         public string TextToken { get; private set; }
         
         public string ToolName { get; private set; }
         public Dictionary<string, object> ToolArguments { get; private set; }
+        public int ToolArgChars { get; private set; }
 
         public static ChatStreamResult Text(string token) => new ChatStreamResult 
         { 
             IsTextToken = true, 
             TextToken = token 
+        };
+
+        public static ChatStreamResult ToolProgress(string name, int argChars) => new ChatStreamResult
+        {
+            IsToolProgress = true,
+            ToolName = name,
+            ToolArgChars = argChars
         };
 
         public static ChatStreamResult ToolCall(string name, Dictionary<string, object> args) => new ChatStreamResult 
