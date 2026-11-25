@@ -272,11 +272,18 @@ namespace LocalPilot.Services
                 ["stream"] = true
             };
 
+            bool isModernOpenAi = IsOpenAiModernReasoningOrGpt5(_baseUrl, model);
             if (options != null)
             {
-                requestBody["temperature"] = options.Temperature;
-                if (options.NumPredict > 0) requestBody["max_tokens"] = options.NumPredict;
-                if (options.Stop != null && options.Stop.Count > 0) requestBody["stop"] = options.Stop;
+                if (!isModernOpenAi)
+                {
+                    requestBody["temperature"] = options.Temperature;
+                    if (options.Stop != null && options.Stop.Count > 0) requestBody["stop"] = options.Stop;
+                }
+                if (options.NumPredict > 0)
+                {
+                    requestBody[isModernOpenAi ? "max_completion_tokens" : "max_tokens"] = options.NumPredict;
+                }
             }
 
             if (tools != null && tools.Count > 0)
@@ -304,49 +311,43 @@ namespace LocalPilot.Services
                     }
                 }
 
-                if (!response.IsSuccessStatusCode)
+                // 🛡️ RESILIENCE: Adaptively handle HTTP 400 parameter incompatibilities (tools, max_tokens -> max_completion_tokens, temperature, stop)
+                int adaptAttempts = 0;
+                while (!response.IsSuccessStatusCode &&
+                       response.StatusCode == System.Net.HttpStatusCode.BadRequest &&
+                       adaptAttempts < 2)
                 {
                     string errBody = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-
-                    // 🛡️ RESILIENCE: If server rejects the 'tools' parameter, retry without tools
-                    if (tools != null && tools.Count > 0 && response.StatusCode == System.Net.HttpStatusCode.BadRequest &&
-                        (errBody.IndexOf("tool", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                         errBody.IndexOf("function", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                         errBody.IndexOf("unrecognized", StringComparison.OrdinalIgnoreCase) >= 0))
-                    {
-                        LocalPilotLogger.Log($"[OpenAI] Server rejected tools parameter. Retrying without tools: {errBody}", LogCategory.Ollama, LogSeverity.Warning);
-                        response.Dispose();
-                        requestBody.Remove("tools");
-                        requestBody.Remove("tool_choice");
-                        string retryJson = JsonConvert.SerializeObject(requestBody, _ignoreNullSettings);
-                        var retryContent = new StringContent(retryJson, Encoding.UTF8, "application/json");
-                        using (var retryHeaderCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
-                        {
-                            retryHeaderCts.CancelAfter(inactivityTimeout);
-                            using (var retryReq = CreateRequest(HttpMethod.Post, "chat/completions", retryContent))
-                            {
-                                response = await _httpClient.SendAsync(retryReq, HttpCompletionOption.ResponseHeadersRead, retryHeaderCts.Token).ConfigureAwait(false);
-                            }
-                        }
-
-                        if (!response.IsSuccessStatusCode)
-                        {
-                            errBody = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-                            errorDetails = FormatApiError(response.StatusCode, errBody);
-                            HandleFailure();
-                        }
-                        else
-                        {
-                            HandleSuccess();
-                        }
-                    }
-                    else
+                    if (!TryAdaptRequestForBadRequest(requestBody, errBody, tools))
                     {
                         errorDetails = FormatApiError(response.StatusCode, errBody);
                         HandleFailure();
+                        break;
+                    }
+
+                    adaptAttempts++;
+                    LocalPilotLogger.Log($"[OpenAI] Adapting request parameters (attempt {adaptAttempts}) after HTTP 400: {errBody}", LogCategory.Ollama, LogSeverity.Warning);
+                    response.Dispose();
+
+                    string retryJson = JsonConvert.SerializeObject(requestBody, _ignoreNullSettings);
+                    var retryContent = new StringContent(retryJson, Encoding.UTF8, "application/json");
+                    using (var retryHeaderCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
+                    {
+                        retryHeaderCts.CancelAfter(inactivityTimeout);
+                        using (var retryReq = CreateRequest(HttpMethod.Post, "chat/completions", retryContent))
+                        {
+                            response = await _httpClient.SendAsync(retryReq, HttpCompletionOption.ResponseHeadersRead, retryHeaderCts.Token).ConfigureAwait(false);
+                        }
                     }
                 }
-                else
+
+                if (errorDetails == null && !response.IsSuccessStatusCode)
+                {
+                    string errBody = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                    errorDetails = FormatApiError(response.StatusCode, errBody);
+                    HandleFailure();
+                }
+                else if (errorDetails == null)
                 {
                     HandleSuccess();
                 }
@@ -512,6 +513,61 @@ namespace LocalPilot.Services
 
                 yield return ChatStreamResult.ToolCall(name, argsDict ?? new Dictionary<string, object>());
             }
+        }
+
+        private static bool IsOpenAiModernReasoningOrGpt5(string baseUrl, string model)
+        {
+            if (string.IsNullOrEmpty(baseUrl) || string.IsNullOrEmpty(model)) return false;
+            if (baseUrl.IndexOf("api.openai.com", StringComparison.OrdinalIgnoreCase) < 0) return false;
+
+            string m = model.Trim();
+            return m.StartsWith("o1", StringComparison.OrdinalIgnoreCase) ||
+                   m.StartsWith("o3", StringComparison.OrdinalIgnoreCase) ||
+                   m.StartsWith("o4", StringComparison.OrdinalIgnoreCase) ||
+                   m.StartsWith("gpt-5", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool TryAdaptRequestForBadRequest(
+            Dictionary<string, object> requestBody,
+            string errBody,
+            List<OllamaToolDefinition> tools)
+        {
+            if (string.IsNullOrEmpty(errBody)) return false;
+            bool adapted = false;
+
+            if (requestBody.TryGetValue("max_tokens", out var maxTok) &&
+                errBody.IndexOf("max_tokens", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                requestBody.Remove("max_tokens");
+                requestBody["max_completion_tokens"] = maxTok;
+                adapted = true;
+            }
+
+            if (requestBody.ContainsKey("temperature") &&
+                errBody.IndexOf("temperature", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                requestBody.Remove("temperature");
+                adapted = true;
+            }
+
+            if (requestBody.ContainsKey("stop") &&
+                errBody.IndexOf("stop", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                requestBody.Remove("stop");
+                adapted = true;
+            }
+
+            if (tools != null && tools.Count > 0 && requestBody.ContainsKey("tools") &&
+                (errBody.IndexOf("tool", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                 errBody.IndexOf("function", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                 errBody.IndexOf("unrecognized", StringComparison.OrdinalIgnoreCase) >= 0))
+            {
+                requestBody.Remove("tools");
+                requestBody.Remove("tool_choice");
+                adapted = true;
+            }
+
+            return adapted;
         }
 
         private static string FormatApiError(System.Net.HttpStatusCode statusCode, string errBody)
