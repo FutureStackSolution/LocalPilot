@@ -14,9 +14,9 @@ namespace LocalPilot.Services
     /// </summary>
     public class HistoryCompactor
     {
-        private readonly OllamaService _ollama;
+        private readonly ILlmService _ollama;
 
-        public HistoryCompactor(OllamaService ollama)
+        public HistoryCompactor(ILlmService ollama)
         {
             _ollama = ollama;
         }

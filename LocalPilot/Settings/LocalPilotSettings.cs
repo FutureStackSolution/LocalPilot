@@ -13,13 +13,22 @@ namespace LocalPilot.Settings
         HighAccuracy
     }
 
+    public enum LlmProviderType
+    {
+        Ollama = 0,
+        OpenAiCompatible = 1
+    }
+
     [Serializable]
     public class LocalPilotSettings
     {
         public PerformanceMode Mode { get; set; } = PerformanceMode.Standard;
 
         // ── Connection ─────────────────────────────────────────────────────────
-        public string OllamaBaseUrl    { get; set; } = "http://localhost:11434";
+        public LlmProviderType ProviderType { get; set; } = LlmProviderType.Ollama;
+        public string OllamaBaseUrl         { get; set; } = "http://localhost:11434";
+        public string OpenAiBaseUrl         { get; set; } = "https://api.openai.com/v1";
+        public string OpenAiApiKey          { get; set; } = "";
 
         // ── Models ─────────────────────────────────────────────────────────────
         public string CompletionModel  { get; set; } = "";
@@ -61,6 +70,24 @@ namespace LocalPilot.Settings
         public int    MaxOutputTokens     { get; set; } = 1024;
         /// <summary>Ollama request timeout in seconds. 0 uses automatic dynamic calculation.</summary>
         public int    RequestTimeoutSeconds { get; set; } = 0;
+        public string KeepAliveDuration { get; set; } = "15m";
+
+        /// <summary>
+        /// Returns a safe, validated keep_alive duration string for Ollama.
+        /// Defaults to "15m" if null, empty, or whitespace. Normalizes raw integer seconds.
+        /// </summary>
+        public string GetEffectiveKeepAlive()
+        {
+            if (string.IsNullOrWhiteSpace(KeepAliveDuration)) return "15m";
+            string val = KeepAliveDuration.Trim();
+            if (int.TryParse(val, out int num))
+            {
+                if (num == -1) return "-1";
+                if (num == 0) return "0";
+                if (num > 0) return $"{num}s";
+            }
+            return val;
+        }
 
         // ── Agent ─────────────────────────────────────────────────────────────
         public bool   AutonomousModeEnabled    { get; set; } = true;
@@ -71,6 +98,7 @@ namespace LocalPilot.Settings
         public bool   EnableReview       { get; set; } = true;
         public bool   EnableFix          { get; set; } = true;
         public bool   EnableUnitTest     { get; set; } = true;
+        public bool   EnableAutoFixOnBuildFailure { get; set; } = true;
 
         // ── Workspace Snapshot ────────────────────────────────────────────────
         public bool   EnableProjectMap   { get; set; } = true;

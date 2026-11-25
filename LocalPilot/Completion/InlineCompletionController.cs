@@ -18,6 +18,7 @@ namespace LocalPilot.Completion
     /// Ghost-text is displayed as an adornment (see GhostTextAdornment).
     /// </summary>
     [Export(typeof(IWpfTextViewCreationListener))]
+    [PartCreationPolicy(CreationPolicy.NonShared)]
     [ContentType("code")]
     [TextViewRole(PredefinedTextViewRoles.Editable)]
     internal sealed class InlineCompletionController : IWpfTextViewCreationListener
@@ -25,8 +26,8 @@ namespace LocalPilot.Completion
         [Import] internal ITextDocumentFactoryService TextDocumentFactory { get; set; }
         [Import] internal ICompletionBroker CompletionBroker { get; set; }
 
-        // Shared OllamaService instance across all editor tabs to unify circuit breaker state
-        private static readonly OllamaService _sharedOllama = new OllamaService(LocalPilotSettings.Instance.OllamaBaseUrl);
+        // Shared ILlmService instance across all editor tabs to unify circuit breaker state
+        private static ILlmService SharedLlmService => LlmProviderFactory.GetService();
 
         private IWpfTextView _view;
         private ITextDocument _document;
@@ -55,15 +56,19 @@ namespace LocalPilot.Completion
         {
             if (!LocalPilotSettings.Instance.EnableInlineCompletion) return;
 
-            // Dismiss existing ghost text on any edit
-            _ghostAdornment?.HideGhost();
+            // Dismiss existing ghost text on any edit (marshal to UI thread if needed)
+            _ = Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+            {
+                await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                if (_view != null && !_view.IsClosed) _ghostAdornment?.HideGhost();
+            });
 
             var mode = LocalPilotSettings.Instance.Mode;
             var delay = mode switch
             {
-                PerformanceMode.Fast => 300,
-                PerformanceMode.HighAccuracy => 1000,
-                _ => 600
+                PerformanceMode.Fast => 200,
+                PerformanceMode.HighAccuracy => 800,
+                _ => 450
             };
 
             lock (_lock)
@@ -100,7 +105,7 @@ namespace LocalPilot.Completion
             CancellationToken token;
             lock (_lock)
             {
-                _cts?.Cancel();
+                try { _cts?.Cancel(); _cts?.Dispose(); } catch { }
                 _cts = new CancellationTokenSource();
                 token = _cts.Token;
             }
@@ -137,9 +142,9 @@ namespace LocalPilot.Completion
                 // 2. Offload network request and heavy text processing to background thread
                 var completionText = await Task.Run(async () =>
                 {
-                    // Context window: 64 lines before, 16 after cursor
-                    const int beforeLines = 64;
-                    const int afterLines = 16;
+                    // Context window: leaner in Fast mode for <150ms prefill
+                    int beforeLines = LocalPilotSettings.Instance.Mode == PerformanceMode.Fast ? 32 : 64;
+                    int afterLines = LocalPilotSettings.Instance.Mode == PerformanceMode.Fast ? 8 : 16;
 
                     int startPos = Math.Max(0, caretPos);
                     int linesFound = 0;
@@ -164,24 +169,27 @@ namespace LocalPilot.Completion
                     var perfMode = LocalPilotSettings.Instance.Mode;
                     var maxTokens = perfMode switch
                     {
-                        PerformanceMode.Fast => 128,
-                        PerformanceMode.HighAccuracy => 512,
-                        _ => 256
+                        PerformanceMode.Fast => 64,
+                        PerformanceMode.HighAccuracy => 256,
+                        _ => 128
                     };
 
                     var opts = new OllamaOptions
                     {
-                        Temperature = perfMode == PerformanceMode.Fast ? 0.4 : (perfMode == PerformanceMode.HighAccuracy ? 0.1 : 0.2),
+                        Temperature = perfMode == PerformanceMode.Fast ? 0.1 : (perfMode == PerformanceMode.HighAccuracy ? 0.1 : 0.2),
                         NumPredict = maxTokens,
-                        Stop = new System.Collections.Generic.List<string> { "\n\n\n", "</MID>" }
+                        Stop = new System.Collections.Generic.List<string>
+                        {
+                            "\n\n\n", "</MID>", "<|endoftext|>", "<|file_sep|>", "<|fim_pad|>", "```"
+                        }
                     };
 
-                    _sharedOllama.UpdateBaseUrl(LocalPilotSettings.Instance.OllamaBaseUrl);
+                    var llm = SharedLlmService;
 
                     var sb = new StringBuilder(256);
                     DateTime lastUiUpdate = DateTime.MinValue;
 
-                    await foreach (var chunk in _sharedOllama.StreamCompletionAsync(
+                    await foreach (var chunk in llm.StreamCompletionAsync(
                         LocalPilotSettings.Instance.CompletionModel, prompt, opts, token).ConfigureAwait(false))
                     {
                         if (token.IsCancellationRequested) break;
@@ -194,8 +202,8 @@ namespace LocalPilot.Completion
                             string currentText = sb.ToString();
                             _ = Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
                             {
-                                await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                                if (!token.IsCancellationRequested && LocalPilotSettings.Instance.ShowCompletionGhost)
+                                await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync(token);
+                                if (!token.IsCancellationRequested && _view != null && !_view.IsClosed && LocalPilotSettings.Instance.ShowCompletionGhost)
                                 {
                                     _ghostAdornment?.ShowGhost(currentText);
                                 }
@@ -207,7 +215,12 @@ namespace LocalPilot.Completion
 
                 if (!LocalPilotSettings.Instance.EnableInlineCompletion || token.IsCancellationRequested) return;
 
-                // Ghost text is now handled incrementally during the stream above.
+                // Ensure final accumulated completion text (including fast <50ms completions) is rendered
+                if (!string.IsNullOrEmpty(completionText) && _view != null && !_view.IsClosed && LocalPilotSettings.Instance.ShowCompletionGhost)
+                {
+                    await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync(token);
+                    _ghostAdornment?.ShowGhost(completionText);
+                }
             }
             catch (OperationCanceledException) { /* user typed again — expected */ }
             catch (Exception ex)
@@ -222,9 +235,10 @@ namespace LocalPilot.Completion
             _view.Caret.PositionChanged -= OnCaretPositionChanged;
             _view.Closed -= OnViewClosed;
 
-            _cts?.Cancel();
             lock (_lock)
             {
+                try { _cts?.Cancel(); _cts?.Dispose(); } catch { }
+                _cts = null;
                 _debounceTimer?.Dispose();
                 _debounceTimer = null;
             }

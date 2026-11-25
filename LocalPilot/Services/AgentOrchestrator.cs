@@ -27,7 +27,7 @@ namespace LocalPilot.Services
     /// </summary>
     public class AgentOrchestrator
     {
-        private readonly OllamaService _ollama;
+        private readonly ILlmService _ollama;
         private readonly ToolRegistry _toolRegistry;
         private readonly ProjectContextService _projectContext;
         private readonly ProjectMapService _projectMap;
@@ -38,6 +38,10 @@ namespace LocalPilot.Services
         public event Action<string> OnMessageFragment;
         public event Action<string> OnMessageCompleted;
         public event Action<Dictionary<string, (string original, string improved)>> OnTurnModificationsPending;
+        public event Action<string> OnPerformanceWarning;
+
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, double> _lastModelTokPerSec
+            = new System.Collections.Concurrent.ConcurrentDictionary<string, double>(StringComparer.OrdinalIgnoreCase);
         
         public Func<ToolCallRequest, Task<bool>> RequestPermissionAsync;
 
@@ -49,7 +53,7 @@ namespace LocalPilot.Services
         /// </summary>
         public bool IsActive { get; private set; }
 
-        public AgentOrchestrator(OllamaService ollama, ToolRegistry toolRegistry, ProjectContextService projectContext, ProjectMapService projectMap)
+        public AgentOrchestrator(ILlmService ollama, ToolRegistry toolRegistry, ProjectContextService projectContext, ProjectMapService projectMap)
         {
             _ollama = ollama;
             _toolRegistry = toolRegistry;
@@ -99,6 +103,9 @@ namespace LocalPilot.Services
         /// </summary>
         public async Task RunTaskAsync(string taskDescription, List<ChatMessage> messages, CancellationToken ct, string modelOverride = null, string contextOverride = null)
         {
+            taskDescription = taskDescription ?? string.Empty;
+            if (messages == null) messages = new List<ChatMessage>();
+
             if (_ollama.CircuitBreakerTripped)
             {
                 OnStatusUpdate?.Invoke(AgentStatus.Failed, "Ollama is unreachable (Circuit Breaker tripped). Please check your connection.");
@@ -120,6 +127,11 @@ namespace LocalPilot.Services
                 }
 
                 string solutionPath = "unknown";
+                string activeSelection = "";
+                string activeDocPath = null;
+                string activeDocContent = null;
+                Community.VisualStudio.Toolkit.DocumentView activeDoc = null;
+
                 try
                 {
                     await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
@@ -128,10 +140,44 @@ namespace LocalPilot.Services
                     {
                         solutionPath = Path.GetDirectoryName(sol.FullPath);
                     }
+
+                    if (!isConversational)
+                    {
+                        activeDoc = await VS.Documents.GetActiveDocumentViewAsync();
+                        if (activeDoc?.FilePath != null)
+                        {
+                            activeDocPath = activeDoc.FilePath;
+                            activeDocContent = activeDoc.TextBuffer?.CurrentSnapshot?.GetText();
+
+                            // Get selection if available
+                            if (activeDoc.TextView?.Selection != null && activeDoc.TextView.Selection.SelectedSpans.Count > 0)
+                            {
+                                activeSelection = activeDoc.TextView.Selection.SelectedSpans[0].GetText();
+                            }
+                            if (string.IsNullOrWhiteSpace(activeSelection) && activeDocContent != null)
+                            {
+                                activeSelection = activeDocContent;
+                            }
+                        }
+                    }
                 }
                 catch { }
 
+                // Fallback workspace root if no solution is loaded
+                if (string.IsNullOrEmpty(solutionPath) || solutionPath == "unknown")
+                {
+                    if (!string.IsNullOrEmpty(activeDocPath))
+                    {
+                        try
+                        {
+                            solutionPath = Path.GetDirectoryName(activeDocPath);
+                        }
+                        catch { }
+                    }
+                }
+
                 _toolRegistry.WorkspaceRoot = solutionPath;
+                _toolRegistry.ActiveDocumentPath = activeDocPath;
                 
                 // 🚀 MODEL SELECTION: Use specific model for tasks (Explain, Refactor, etc) if provided
                 string contextModel = modelOverride ?? LocalPilot.Settings.LocalPilotSettings.Instance.ChatModel;
@@ -149,12 +195,66 @@ namespace LocalPilot.Services
                     LocalPilotLogger.Log($"[Orchestrator] Context Compacted: {originalCount} -> {messages.Count} messages.");
                 }
 
-                // 🚀 SISTEM PROMPT DEDUPLICATION: Ensure we don't stack duplicate identity prompts
-                // Clear any existing prompts that look like the LocalPilot Identity to prevent bloat
-                messages.RemoveAll(m => m.Role == "system" && 
-                                        (m.Content.Contains("<identity>") || 
-                                         m.Content.Contains("LocalPilot, an elite") ||
-                                         m.Content.Contains("{solutionPath}")));
+                // 🚀 CONTEXT HYGIENE: Prune transient system prompts and stale metadata from previous turns
+                // This prevents massive multi-turn context accumulation that chokes local and CPU-offloaded models.
+                messages.RemoveAll(m => m.Role == "system" && (
+                    m.Content.Contains("<identity>") || 
+                    m.Content.Contains("LocalPilot, an elite") ||
+                    m.Content.Contains("{solutionPath}") ||
+                    m.Content.StartsWith("## ACTIVE DIAGNOSTICS") ||
+                    m.Content.StartsWith("## GIT STATE") ||
+                    m.Content.StartsWith("## ACTIVE TAB") ||
+                    m.Content.StartsWith("## ENV") ||
+                    m.Content.StartsWith("## GROUNDING CONTEXT") ||
+                    m.Content.StartsWith("## ACTIVE EDITOR SNIPPET") ||
+                    m.Content.StartsWith("## ACTIVE FILE CONTENT") ||
+                    m.Content.StartsWith("## TARGET FILE CONTENT") ||
+                    m.Content.StartsWith("## NEXUS CONTEXT") ||
+                    m.Content.StartsWith("## WORKSPACE SYMBOLS") ||
+                    m.Content.StartsWith("## OODA ORIENTATION") ||
+                    m.Content.StartsWith("[LSP CONTEXT]") ||
+                    m.Content.StartsWith("## SEMANTIC NEIGHBORHOOD") ||
+                    m.Content.StartsWith("INTELLIGENCE: LSP Bridge") ||
+                    m.Content.StartsWith("INTELLIGENCE: Polyglot Heuristics") ||
+                    m.Content.Contains("[TRUNCATED OLD CONTEXT]")
+                ));
+
+                // 🚀 COMPACT PAST TOOL RESULTS: Large tool outputs (e.g. read_file of entire files)
+                // from previous turns must be compacted so they do not cause prefill paralysis.
+                foreach (var m in messages.Where(msg => msg.Role == "tool"))
+                {
+                    if (m.Content != null && m.Content.Length > 800)
+                    {
+                        m.Content = m.Content.Substring(0, 300) + 
+                                    $"\n... [Tool output truncated to save context ({m.Content.Length} chars total)] ...\n" + 
+                                    m.Content.Substring(m.Content.Length - 150);
+                    }
+                }
+
+                var turnFileCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+                // 🚀 FAST MODE 2-ZONE KV-CACHE HISTORY:
+                // Strip stale system prompts, old file dumps, and raw tool outputs from prior turns,
+                // while preserving the last 2 user/assistant exchanges (compact) so follow-ups still work!
+                bool fastMode = LocalPilot.Settings.LocalPilotSettings.Instance.Mode == LocalPilot.Settings.PerformanceMode.Fast;
+                if (fastMode && messages.Count > 0)
+                {
+                    var recentTurns = messages
+                        .Where(m => (m.Role == "user" || m.Role == "assistant") && !string.IsNullOrWhiteSpace(m.Content))
+                        .Reverse()
+                        .Take(4) // Last 2 user+assistant pairs
+                        .Reverse()
+                        .Select(m => new ChatMessage
+                        {
+                            Role = m.Role,
+                            Content = m.Content.Length > 350 ? m.Content.Substring(0, 350) + "..." : m.Content
+                        })
+                        .ToList();
+
+                    messages.Clear();
+                    messages.AddRange(recentTurns);
+                    LocalPilotLogger.Log($"[Orchestrator] FastMode 2-zone history: retained {recentTurns.Count} recent messages, purged stale context.", LogCategory.Agent);
+                }
 
                 // 🚀 SMART SYSTEM PROMPT: Tailor the foundation based on the task intent
                 string systemPrompt;
@@ -168,6 +268,15 @@ namespace LocalPilot.Services
                 if (isConversational)
                 {
                     systemPrompt = "You are LocalPilot, an AI coding assistant. Give a short, direct, friendly, and conversational response.";
+                }
+                else if (fastMode)
+                {
+                    // 🚀 ULTRA-LEAN PROMPT FOR FAST/OFFLOADED LOCAL INFERENCE:
+                    // Massive multi-section prompts blow up prefill on local GPUs (Quadro, 4GB-8GB VRAM)
+                    // and force disk swapping. A focused 3-line prompt saves ~600 tokens of prefill latency.
+                    systemPrompt = "You are LocalPilot, an elite local AI engineer. Execute ONLY the user's requested code change. " +
+                                   "Use 'edit_lines' (preferred, by line numbers) or 'replace_text' directly on Turn 1 with complete code. " +
+                                   "Leave all unrequested methods 100% untouched. Never generate dummy stubs or throw null.";
                 }
                 else
                 {
@@ -197,19 +306,35 @@ namespace LocalPilot.Services
                     catch { }
                 }
 
-                // ═══════════════════════════════════════════════════════════════════
-                // NATIVE TOOL DEFINITIONS
-                // ═══════════════════════════════════════════════════════════════════
-                // 🚀 PERFORMANCE SHIELD: Disable tools for informational Quick Actions and conversational inputs to ensure near-instant responses
-                // and prevent models from hallucinating tool calls for simple questions.
-                var toolDefinitions = (isReadOnlyAction || isConversational) ? new List<OllamaToolDefinition>() : _toolRegistry.GetOllamaToolDefinitions();
-                LocalPilotLogger.Log($"[Agent] Registered {toolDefinitions.Count} native tools for Ollama (ReadOnly: {isReadOnlyAction})", LogCategory.Agent);
-
                 // Determine if this is a specialized Quick Action (Explain, Document, etc)
                 bool isQuickAction = !string.IsNullOrEmpty(modelOverride);
 
-                // 🚀 UNIFIED CONTEXT PIPELINE: Proactively gather implicit context (Errors, Git, Symbols)
-                if (!isConversational && !isQuickAction && !messages.Any(m => m.Content.Contains("ACTIVE DIAGNOSTICS")))
+                // Fetch initial grounding context from the project (Skip for simple Quick Actions/Conversational)
+                bool activeFileMentionedInPrompt = !string.IsNullOrEmpty(activeDocPath) && !string.IsNullOrEmpty(taskDescription) &&
+                    (taskDescription.IndexOf(Path.GetFileName(activeDocPath), StringComparison.OrdinalIgnoreCase) >= 0 ||
+                     taskDescription.IndexOf(Path.GetFileNameWithoutExtension(activeDocPath), StringComparison.OrdinalIgnoreCase) >= 0 ||
+                     taskDescription.Replace(" ", "").IndexOf(Path.GetFileNameWithoutExtension(activeDocPath), StringComparison.OrdinalIgnoreCase) >= 0);
+
+                bool isDirectFileAction = activeDocContent != null || activeFileMentionedInPrompt;
+
+                // ═══════════════════════════════════════════════════════════════════
+                // NATIVE TOOL DEFINITIONS
+                // ═══════════════════════════════════════════════════════════════════
+                // 🚀 ULTRA-LEAN TOOL SHIELD:
+                // When modifying an active file in Fast mode, the file is ALREADY in context.
+                // Register ONLY 'edit_lines' and 'replace_text' (saving ~400 tokens of tool schemas and preventing prefill bloat).
+                bool essentialOnly = LocalPilot.Settings.LocalPilotSettings.Instance.Mode == LocalPilot.Settings.PerformanceMode.Fast;
+                var allowedTools = (isDirectFileAction && fastMode) ? new[] { "edit_lines", "replace_text" } : null;
+                var toolDefinitions = (isReadOnlyAction || isConversational) 
+                    ? new List<OllamaToolDefinition>() 
+                    : _toolRegistry.GetOllamaToolDefinitions(essentialOnly, allowedTools);
+                LocalPilotLogger.Log($"[Agent] Registered {toolDefinitions.Count} native tools for Ollama (ReadOnly: {isReadOnlyAction}, FastMode: {essentialOnly}, DirectFile: {isDirectFileAction})", LogCategory.Agent);
+
+                // 🚀 SURGICAL CONTEXT GATING:
+                // When modifying an active or mentioned file (or in Fast mode), DO NOT inject extraneous
+                // Git status, environment details, or noisy error lists that blow up the prompt to 4,000+ tokens!
+                bool shouldInjectUnifiedContext = !isConversational && !isQuickAction && !isDirectFileAction && !fastMode;
+                if (shouldInjectUnifiedContext && !messages.Any(m => m.Content.Contains("ACTIVE DIAGNOSTICS")))
                 {
                     string unifiedContext = await GetUnifiedContextAsync(solutionPath, ct);
                     if (!string.IsNullOrEmpty(unifiedContext))
@@ -217,104 +342,114 @@ namespace LocalPilot.Services
                         messages.Add(new ChatMessage { Role = "system", Content = unifiedContext });
                     }
                 }
-
-                /* 
-                // 🚀 DISABLED: Auto-injecting a massive project map causes 'Prefill Paralysis' on large projects.
-                // The agent should use tools like 'list_files' or 'search_code' instead.
-                if (LocalPilot.Settings.LocalPilotSettings.Instance.EnableProjectMap)
-                {
-                    // 🚀 SMART CONTEXT BUDGETING: Use a compact map for Quick Actions to avoid context bloat
-                    int mapLimit = isQuickAction ? 20 * 1024 : 600 * 1024;
-
-                    if (!messages.Any(m => m.Content.Contains("PROJECT STRUCTURE")))
-                    {
-                        OnStatusUpdate?.Invoke(AgentStatus.Thinking, "Analyzing project structure...");
-                        string projectMapContent = await _projectMap.GenerateProjectMapAsync(solutionPath, maxTotalBytes: mapLimit);
-                        if (!string.IsNullOrEmpty(projectMapContent))
-                        {
-                            messages.Add(new ChatMessage { Role = "system", Content = $"## PROJECT STRUCTURE\n{projectMapContent}" });
-                        }
-                    }
-                }
-                */
                 
-                // Fetch initial grounding context from the project (Skip for simple Quick Actions/Conversational)
-                if (!isQuickAction && !isConversational)
+                // Fetch initial grounding context from the project (Skip for Direct File Actions / Fast mode)
+                bool shouldSearchVectors = !isQuickAction && !isConversational && !activeFileMentionedInPrompt && !isDirectFileAction && !fastMode;
+                if (shouldSearchVectors)
                 {
                     string groundingContext = contextOverride;
                     if (string.IsNullOrEmpty(groundingContext)) {
-                        groundingContext = await _projectContext.SearchContextAsync(_ollama, taskDescription, topN: 5);
+                        // Limit to top 2 chunks to prevent prefill bloat
+                        groundingContext = await _projectContext.SearchContextAsync(_ollama, taskDescription, topN: 2);
                     }
                     
                     if (!string.IsNullOrEmpty(groundingContext))
                     {
+                        if (groundingContext.Length > 2000)
+                        {
+                            groundingContext = groundingContext.Substring(0, 2000) + "\n... </grounding_context>";
+                        }
                         messages.Add(new ChatMessage { Role = "system", Content = $"## GROUNDING CONTEXT (VECTORS)\n{groundingContext}" });
                     }
                 }
 
                 // Fetch active document info ONCE to avoid redundant UI thread switches
-                string activeSelection = "";
-                string activeDocPath = null;
-                string activeDocContent = null;
-                if (!isConversational)
+                if (!isConversational && activeDoc != null && activeDocPath != null)
                 {
                     try
                     {
-                        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                        var activeDoc = await VS.Documents.GetActiveDocumentViewAsync();
-                        if (activeDoc?.FilePath != null)
+                        // In Fast mode or direct file action, skip neighborhood dump to keep prompt lean (< 800 tokens)
+                        if (!fastMode && !isDirectFileAction)
                         {
-                            activeDocPath = activeDoc.FilePath;
-                            activeDocContent = activeDoc.TextBuffer?.CurrentSnapshot?.GetText();
-
-                            // Get selection if available
-                            if (activeDoc.TextView?.Selection != null && activeDoc.TextView.Selection.SelectedSpans.Count > 0)
-                            {
-                                activeSelection = activeDoc.TextView.Selection.SelectedSpans[0].GetText();
-                            }
-                            if (string.IsNullOrWhiteSpace(activeSelection) && activeDocContent != null)
-                            {
-                                activeSelection = activeDocContent;
-                            }
-
-                            // Inject semantic neighborhood from Roslyn/LSP
                             string neighborhood = await SymbolIndexService.Instance.GetNeighborhoodContextAsync(activeDocPath, ct);
                             if (!string.IsNullOrEmpty(neighborhood))
                             {
+                                if (neighborhood.Length > 1500) neighborhood = neighborhood.Substring(0, 1500) + "\n... [neighborhood truncated]";
                                 messages.Add(new ChatMessage { Role = "system", Content = neighborhood });
                             }
+                        }
 
-                            // Inject active editor snippet (Surgical: 50 lines around cursor)
-                            string snippetContent = activeDocContent;
-                            if (snippetContent != null)
+                        // 🎯 UNIFIED TARGET FILE RESOLVER:
+                        // Prioritize the file explicitly mentioned in the user prompt (e.g. SampleDataProvider.cs).
+                        // If none mentioned, fall back to the active editor document.
+                        // NEVER inject both files at the same time, which was bloating input to 2,100+ tokens!
+                        string targetDocPath = null;
+                        string targetDocContent = null;
+
+                        if (!string.IsNullOrEmpty(solutionPath) && !string.IsNullOrEmpty(taskDescription))
+                        {
+                            try
                             {
-                                try {
-                                    var selection = activeDoc.TextView?.Selection;
-                                    int cursorLine = 0;
-                                    if (selection != null && selection.ActivePoint != null) {
-                                        cursorLine = selection.ActivePoint.Position.GetContainingLine().LineNumber;
-                                    }
-
-                                    var lines = snippetContent.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
-                                    int start = Math.Max(0, cursorLine - 25);
-                                    int end = Math.Min(lines.Length - 1, cursorLine + 25);
-                                    
-                                    var sbSnippet = new StringBuilder();
-                                    if (start > 0) sbSnippet.AppendLine("// ... [Top of file truncated] ...");
-                                    for (int i = start; i <= end; i++) {
-                                        sbSnippet.AppendLine(lines[i]);
-                                    }
-                                    if (end < lines.Length - 1) sbSnippet.AppendLine("// ... [Bottom of file truncated] ...");
-
-                                    snippetContent = sbSnippet.ToString();
-                                } catch {
-                                    // Fallback to start of file if cursor detection fails
-                                    if (snippetContent.Length > 3000) snippetContent = snippetContent.Substring(0, 3000) + "... [truncated]";
+                                var nexus = NexusService.Instance.GetGraph();
+                                if (nexus?.Nodes == null || nexus.Nodes.Count == 0)
+                                {
+                                    await NexusService.Instance.InitializeAsync(solutionPath);
+                                    await NexusService.Instance.RebuildGraphAsync(ct);
+                                    nexus = NexusService.Instance.GetGraph();
                                 }
+                                if (nexus?.Nodes != null)
+                                {
+                                    var targetNode = nexus.Nodes.FirstOrDefault(n => 
+                                        !string.IsNullOrEmpty(n.FilePath) && 
+                                        (taskDescription.IndexOf(Path.GetFileName(n.FilePath), StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                         taskDescription.Replace(" ", "").IndexOf(Path.GetFileNameWithoutExtension(n.FilePath), StringComparison.OrdinalIgnoreCase) >= 0));
+                                    
+                                    if (targetNode != null && File.Exists(targetNode.FilePath))
+                                    {
+                                        targetDocPath = targetNode.FilePath;
+                                        targetDocContent = File.ReadAllText(targetDocPath);
+                                        turnFileCache[targetDocPath] = targetDocContent;
+                                    }
+                                }
+                            }
+                            catch { }
+                        }
 
+                        // If no specific file was mentioned in the prompt, use the active document
+                        if (string.IsNullOrEmpty(targetDocPath) && !string.IsNullOrEmpty(activeDocContent))
+                        {
+                            targetDocPath = activeDocPath;
+                            targetDocContent = activeDocContent;
+                            turnFileCache[targetDocPath] = targetDocContent;
+                        }
+
+                        if (!string.IsNullOrEmpty(targetDocContent) && !string.IsNullOrEmpty(targetDocPath))
+                        {
+                            // 🚀 ROSLYN AST SKELETONIZATION: Compress non-target method bodies for files >1,500 chars
+                            // Keeps the target method (GetNames) 100% intact while dropping thousands of mock data tokens.
+                            string deliveredContent = targetDocContent;
+                            int cursorLine = 0;
+                            if (targetDocPath.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) && deliveredContent.Length > 1500)
+                            {
+                                if (targetDocPath.Equals(activeDocPath, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    try {
+                                        var sel = activeDoc.TextView?.Selection;
+                                        if (sel?.ActivePoint != null) cursorLine = sel.ActivePoint.Position.GetContainingLine().LineNumber;
+                                    } catch { }
+                                }
+                                deliveredContent = CodeSkeletonizer.SkeletonizeWithLineNumbers(deliveredContent, taskDescription, cursorLine);
+                            }
+                            else
+                            {
+                                deliveredContent = AddLineNumbers(deliveredContent);
+                            }
+
+                            if (deliveredContent.Length <= 25000)
+                            {
                                 messages.Add(new ChatMessage { 
                                     Role = "system", 
-                                    Content = $"## ACTIVE EDITOR SNIPPET (Near Cursor)\nPath: {activeDocPath}\nCode:\n```\n{snippetContent}\n```" 
+                                    Content = $"## TARGET FILE CONTENT ({Path.GetFileName(targetDocPath)})\nPath: {targetDocPath}\nCode (with 1-based line numbers):\n```\n{deliveredContent}\n```\nIMPORTANT: The target file is provided above. You ALREADY have the complete context. DO NOT call 'read_file'. Execute 'edit_lines' or 'replace_text' directly on Turn 1!" 
                                 });
                             }
                         }
@@ -322,8 +457,8 @@ namespace LocalPilot.Services
                     catch { }
                 }
 
-                // Nexus intelligence: inject cross-language dependency awareness
-                if (!isConversational)
+                // Nexus intelligence: inject cross-language dependency awareness (Skip for direct file actions / Fast mode)
+                if (!isConversational && !isDirectFileAction && !fastMode)
                 {
                     try
                     {
@@ -392,7 +527,8 @@ namespace LocalPilot.Services
 
             // 🔍 FILE NESTING: Use Roslyn/LSP to find definitions for potential symbols in the task
             // This provides the model with structural awareness of the code it's discussing.
-            if (!isConversational)
+            // In Fast mode, the target file is already in context; skip LSP symbol lookups to keep context ultra-lean.
+            if (!isConversational && !fastMode)
             {
                 var words = processedTask.Split(new[] { ' ', '.', '(', ')', '[', ']', '<', '>', ',', ';', ':', '!', '?' }, StringSplitOptions.RemoveEmptyEntries);
                 
@@ -404,18 +540,22 @@ namespace LocalPilot.Services
 
                 using (var discoveryCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
                 {
-                    discoveryCts.CancelAfter(5000); 
-                    foreach (var name in PascalNames)
+                    discoveryCts.CancelAfter(5000);
+                    try
                     {
-                        if (discoveryCts.Token.IsCancellationRequested) break;
-                        
-                        var locs = await SymbolIndexService.Instance.FindDefinitionsAsync(name, discoveryCts.Token);
-                        if (locs != null && locs.Any())
+                        foreach (var name in PascalNames)
                         {
-                            var loc = locs.First();
-                            messages.Add(new ChatMessage { Role = "system", Content = $"[LSP CONTEXT] Symbol '{name}' ({loc.Kind}) is defined at: {loc.FilePath}:{loc.Line}" });
+                            if (discoveryCts.Token.IsCancellationRequested) break;
+                            
+                            var locs = await SymbolIndexService.Instance.FindDefinitionsAsync(name, discoveryCts.Token);
+                            if (locs != null && locs.Any())
+                            {
+                                var loc = locs.First();
+                                messages.Add(new ChatMessage { Role = "system", Content = $"[LSP CONTEXT] Symbol '{name}' ({loc.Kind}) is defined at: {loc.FilePath}:{loc.Line}" });
+                            }
                         }
                     }
+                    catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
                 }
 
                 // Inject known symbols summary for fuzzy matching
@@ -441,6 +581,27 @@ namespace LocalPilot.Services
             _stagedChanges.Clear();
             string lastToolCallSignature = null;
             int repeatCount = 0;
+
+            // 🚀 HARDWARE-AWARE PRE-FLIGHT CHECK: Warn if model previously spilled to SSD (< 5 tok/s) or VRAM is under pressure
+            if (!string.IsNullOrEmpty(contextModel) && _lastModelTokPerSec.TryGetValue(contextModel, out double prevTps) && prevTps < 5.0)
+            {
+                OnPerformanceWarning?.Invoke($"This model is offloading to disk (~{prevTps:F1} tok/s). Switch to a 3B–7B model for 30x speed.");
+            }
+            else
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        var vram = await _ollama.GetVramStatusAsync(ct).ConfigureAwait(false);
+                        if (vram != null && !vram.IsHealthy)
+                        {
+                            OnPerformanceWarning?.Invoke("GPU VRAM is under pressure — model may offload to disk. Switch to a 3B–7B model for faster responses.");
+                        }
+                    }
+                    catch { }
+                }, ct);
+            }
 
             while (!isDone && step < maxSteps)
             {
@@ -487,6 +648,13 @@ namespace LocalPilot.Services
                         // 🚀 NARRATIVE STREAMING: Pass tokens to UI for a 'live' feel.
                         OnMessageFragment?.Invoke(token);
                     }
+                    else if (result.IsToolProgress)
+                    {
+                        int approxTokens = Math.Max(1, result.ToolArgChars / 4);
+                        double elapsedSec = Math.Max(0.1, turnSw.Elapsed.TotalSeconds);
+                        double tokPerSec = approxTokens / elapsedSec;
+                        OnStatusUpdate?.Invoke(AgentStatus.Thinking, $"Generating {result.ToolName ?? "tool"} ({approxTokens} tokens, {tokPerSec:F1} tok/s)...");
+                    }
                     else if (result.IsToolCall)
                     {
                         // Structured tool call from Ollama — no parsing needed!
@@ -501,8 +669,39 @@ namespace LocalPilot.Services
                 turnSw.Stop();
                 var responseText = responseBuilder.ToString();
                 
+                // 📊 ACCURATE TOKEN TRACKING:
+                // Include tool call arguments (code replacements, file edits) in token calculation
+                // so tool-calling turns never falsely report 0 tokens.
+                int toolCallChars = 0;
+                foreach (var tc in toolCallsThisTurn)
+                {
+                    if (tc.Arguments != null)
+                    {
+                        toolCallChars += Newtonsoft.Json.JsonConvert.SerializeObject(tc.Arguments).Length;
+                    }
+                }
+
+                if (estimatedTokens == 0)
+                {
+                    int totalChars = (responseText?.Length ?? 0) + toolCallChars;
+                    estimatedTokens = totalChars > 0 ? Math.Max(1, (int)(totalChars / 3.5)) : 0;
+                }
+                else if (toolCallChars > 0)
+                {
+                    estimatedTokens += Math.Max(1, (int)(toolCallChars / 3.5));
+                }
+                
                 // Record metrics
                 PerformanceTracer.Instance.RecordTurn(taskDescription, step, turnSw.ElapsedMilliseconds, estimatedTokens, contextModel);
+                if (!string.IsNullOrEmpty(contextModel) && estimatedTokens >= 10 && turnSw.Elapsed.TotalSeconds > 2.0)
+                {
+                    double tokPerSec = estimatedTokens / turnSw.Elapsed.TotalSeconds;
+                    _lastModelTokPerSec[contextModel] = tokPerSec;
+                    if (tokPerSec < 5.0)
+                    {
+                        OnPerformanceWarning?.Invoke($"This model is offloading to disk (~{tokPerSec:F1} tok/s). Switch to a 3B–7B model for 30x speed.");
+                    }
+                }
                 OnStatusUpdate?.Invoke(AgentStatus.Thinking, $"Finished turn {step} in {turnSw.ElapsedMilliseconds}ms ({estimatedTokens} tokens)");
 
                 var cleanText = StripToolCalls(responseText);
@@ -581,6 +780,7 @@ namespace LocalPilot.Services
                     {
                         bool isRisky = tc.Name == "write_file" || 
                                        tc.Name == "replace_text" || 
+                                       tc.Name == "edit_lines" ||
                                        tc.Name == "delete_file" || 
                                        tc.Name == "rename_symbol" || 
                                        tc.Name == "run_terminal" ||
@@ -625,6 +825,7 @@ namespace LocalPilot.Services
                     }
 
                     // 2. Execute Risky Tools Sequentially (Safety first)
+                    bool shouldFastComplete = false;
                     foreach (ToolCallRequest toolCall in riskyTools)
                     {
                         if (ct.IsCancellationRequested) break;
@@ -632,12 +833,14 @@ namespace LocalPilot.Services
                         // 🛡️ USER CHECKPOINT: For mutating actions, wait for permission
                         bool isRisky = toolCall.Name == "write_file" || 
                                        toolCall.Name == "replace_text" || 
+                                       toolCall.Name == "edit_lines" ||
                                        toolCall.Name == "delete_file" || 
                                        toolCall.Name == "rename_symbol" || 
                                        toolCall.Name == "run_terminal" ||
                                        toolCall.Name == "write_to_file" ||
                                        toolCall.Name == "replace_file_content";
-                        if (isRisky && RequestPermissionAsync != null)
+                        bool requiresApproval = Settings.LocalPilotSettings.Instance?.RequireApprovalForWrites ?? true;
+                        if (isRisky && requiresApproval && RequestPermissionAsync != null)
                         {
                             OnStatusUpdate?.Invoke(AgentStatus.ActionPending, $"Waiting for permission to {toolCall.Name}...");
                             bool granted = await RequestPermissionAsync(toolCall);
@@ -646,6 +849,11 @@ namespace LocalPilot.Services
                                 messages.Add(new ChatMessage { Role = "tool", Content = "Error: User denied permission to execute this tool." });
                                 continue;
                             }
+                            if (toolCall.Name == "write_file" || toolCall.Name == "write_to_file")
+                            {
+                                if (toolCall.Arguments == null) toolCall.Arguments = new Dictionary<string, object>();
+                                toolCall.Arguments["overwrite"] = true;
+                            }
                         }
 
                         OnToolCallPending?.Invoke(toolCall);
@@ -653,6 +861,7 @@ namespace LocalPilot.Services
                         // Track changes for staging
                         bool isWrite = toolCall.Name == "write_file" || 
                                        toolCall.Name == "replace_text" || 
+                                       toolCall.Name == "edit_lines" ||
                                        toolCall.Name == "write_to_file" || 
                                        toolCall.Name == "replace_file_content";
                         string target = null;
@@ -660,7 +869,7 @@ namespace LocalPilot.Services
 
                         if (isWrite)
                         {
-                            target = GetSafeToolArg(toolCall, "path") ?? GetSafeToolArg(toolCall, "TargetFile");
+                            target = GetSafeToolArg(toolCall, "path") ?? GetSafeToolArg(toolCall, "TargetFile") ?? GetSafeToolArg(toolCall, "file");
                             
                             string rawCode = GetSafeToolArg(toolCall, "content") ?? 
                                              GetSafeToolArg(toolCall, "new_text") ?? 
@@ -670,17 +879,21 @@ namespace LocalPilot.Services
                             // 🚀 INTELLIGENT STAGING: For replacements, calculate the FULL NEW CONTENT for the diff
                             if (toolCall.Name == "replace_text" || toolCall.Name == "replace_file_content")
                             {
-                                string oldText = GetSafeToolArg(toolCall, "old_text");
+                                string oldText = GetSafeToolArg(toolCall, "old_text") ?? GetSafeToolArg(toolCall, "target_text");
                                 string absPath = _toolRegistry.ResolvePath(target);
                                 string currentContent = "";
                                 
                                 try {
-                                    if (File.Exists(absPath)) currentContent = File.ReadAllText(absPath);
+                                    if (!turnFileCache.TryGetValue(absPath, out currentContent))
+                                    {
+                                        currentContent = File.Exists(absPath) ? File.ReadAllText(absPath) : "";
+                                        turnFileCache[absPath] = currentContent;
+                                    }
                                     
                                     // Capture original for the WHOLE TURN (first touch)
                                     lock (_stagedChanges) {
-                                        if (!_stagedChanges.ContainsKey(target)) {
-                                            _stagedChanges[target] = (currentContent, "");
+                                        if (!_stagedChanges.ContainsKey(absPath)) {
+                                            _stagedChanges[absPath] = (currentContent, "");
                                         }
                                     }
 
@@ -689,7 +902,46 @@ namespace LocalPilot.Services
                                         code = currentContent.Replace(oldText, rawCode ?? "");
                                     else
                                         code = rawCode;
+                                    if (!string.IsNullOrEmpty(code)) turnFileCache[absPath] = code;
                                 } catch { code = rawCode; }
+                            }
+                            else if (toolCall.Name == "edit_lines")
+                            {
+                                string absPath = _toolRegistry.ResolvePath(target);
+                                string currentContent = "";
+                                try
+                                {
+                                    if (!turnFileCache.TryGetValue(absPath, out currentContent))
+                                    {
+                                        currentContent = File.Exists(absPath) ? File.ReadAllText(absPath) : "";
+                                        turnFileCache[absPath] = currentContent;
+                                    }
+                                    lock (_stagedChanges)
+                                    {
+                                        if (!_stagedChanges.ContainsKey(absPath))
+                                            _stagedChanges[absPath] = (currentContent, "");
+                                    }
+
+                                    if (int.TryParse(GetSafeToolArg(toolCall, "start_line"), out int sLine) &&
+                                        int.TryParse(GetSafeToolArg(toolCall, "end_line"), out int eLine) &&
+                                        !string.IsNullOrEmpty(currentContent))
+                                    {
+                                        string sep = currentContent.Contains("\r\n") ? "\r\n" : "\n";
+                                        var lines = currentContent.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None).ToList();
+                                        if (sLine >= 1 && sLine <= lines.Count + 1 && eLine >= sLine - 1 && eLine <= lines.Count)
+                                        {
+                                            int removeCount = eLine - sLine + 1;
+                                            if (removeCount > 0) lines.RemoveRange(sLine - 1, removeCount);
+                                            if (!string.IsNullOrEmpty(rawCode))
+                                                lines.InsertRange(sLine - 1, rawCode.Replace("\r\n", "\n").Split('\n'));
+                                            code = string.Join(sep, lines);
+                                            turnFileCache[absPath] = code;
+                                        }
+                                        else code = rawCode;
+                                    }
+                                    else code = rawCode;
+                                }
+                                catch { code = rawCode; }
                             }
                             else
                             {
@@ -699,19 +951,19 @@ namespace LocalPilot.Services
                             // 🚀 STAGING: Track changes for UI review or post-process validation
                             if (!string.IsNullOrEmpty(target) && !string.IsNullOrEmpty(code))
                             {
+                                string absPath = _toolRegistry.ResolvePath(target);
                                 lock (_stagedChanges) {
-                                    bool hasExisting = _stagedChanges.ContainsKey(target);
-                                    string originalCode = hasExisting ? _stagedChanges[target].original : null;
+                                    bool hasExisting = _stagedChanges.ContainsKey(absPath);
+                                    string originalCode = hasExisting ? _stagedChanges[absPath].original : null;
                                     
                                     if (!hasExisting) {
                                         // If we didn't capture original yet (e.g. write_file vs replace_text)
                                         try {
-                                             string absPath = _toolRegistry.ResolvePath(target);
                                              if (File.Exists(absPath)) originalCode = File.ReadAllText(absPath);
-                                             else originalCode = ""; // New file original is empty
-                                        } catch { originalCode = ""; }
+                                             else originalCode = null; // New file did not exist prior to turn
+                                        } catch { originalCode = null; }
                                     }
-                                    _stagedChanges[target] = (originalCode ?? "", code);
+                                    _stagedChanges[absPath] = (originalCode, code);
                                 }
                             }
                         }
@@ -767,6 +1019,18 @@ namespace LocalPilot.Services
                         // 🛡️ ERROR FEEDBACK: Ensure model doesn't hallucinate success
                         if (result.IsError)
                         {
+                            // Roll back speculative staging if tool execution failed
+                            if (isWrite && !string.IsNullOrEmpty(target))
+                            {
+                                try
+                                {
+                                    string failedAbsPath = _toolRegistry.ResolvePath(target);
+                                    lock (_stagedChanges) { _stagedChanges.Remove(failedAbsPath); }
+                                    turnFileCache.Remove(failedAbsPath);
+                                }
+                                catch { }
+                            }
+
                             lock (messages)
                             {
                                 messages.Add(new ChatMessage 
@@ -778,7 +1042,7 @@ namespace LocalPilot.Services
                         }
                         else 
                         {
-                            if (result.Output != "No matches found." && !result.Output.Contains("not found"))
+                            if (!string.IsNullOrEmpty(result.Output) && result.Output != "No matches found." && !result.Output.Contains("not found"))
                             {
                                 stepHasMeaningfulResult = true;
                             }
@@ -801,14 +1065,32 @@ namespace LocalPilot.Services
                                 
                                 if (hasErrors) 
                                 {
+                                    shouldFastComplete = false;
                                     LocalPilotLogger.Log("[Agent] Build errors detected after write. Triggering Smart Fix protocol feedback.", LogCategory.Build, LogSeverity.Warning);
                                 }
                                 else
                                 {
                                     LocalPilotLogger.Log("[Agent] Write verified. No build errors detected.", LogCategory.Build, LogSeverity.Info);
+
+                                    // 🚀 FAST-PATH COMPLETION: Mark ready to finish once all risky tools in this turn complete
+                                    if (_stagedChanges.Count > 0 && (fastMode || isDirectFileAction || step >= 1))
+                                    {
+                                        shouldFastComplete = true;
+                                    }
                                 }
                             }
                         }
+                    }
+
+                    if (shouldFastComplete && _stagedChanges.Count > 0)
+                    {
+                        isDone = true;
+                        OnTurnModificationsPending?.Invoke(new Dictionary<string, (string original, string improved)>(_stagedChanges));
+                        _stagedChanges.Clear();
+                        string doneMsg = "Done. Code updated and verified with 0 errors.";
+                        OnMessageFragment?.Invoke(doneMsg);
+                        OnMessageCompleted?.Invoke(doneMsg);
+                        OnStatusUpdate?.Invoke(AgentStatus.Completed, "Task completed successfully.");
                     }
 
                     if (!stepHasMeaningfulResult && !ct.IsCancellationRequested)
@@ -823,9 +1105,62 @@ namespace LocalPilot.Services
                 }
                 else
                 {
-                    // No tool calls — the model is done (or gave a text-only response)
+                    // No tool calls — check if the model actually provided a text response or only thought
+                    string textWithoutThoughts = System.Text.RegularExpressions.Regex.Replace(cleanText ?? "", @"(?s)<thought>.*?</thought>", "").Trim();
+
+                    bool isWriteIntent = !isReadOnlyAction && !isConversational && (
+                        taskDescription.IndexOf("create", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        taskDescription.IndexOf("add", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        taskDescription.IndexOf("implement", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        taskDescription.IndexOf("write", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        taskDescription.IndexOf("fix", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        taskDescription.IndexOf("update", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        taskDescription.IndexOf("function", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        taskDescription.IndexOf("method", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                        taskDescription.IndexOf("class", StringComparison.OrdinalIgnoreCase) >= 0
+                    );
+
+                    bool isModelPreambleWithoutAction = isWriteIntent && _stagedChanges.Count == 0 && (
+                        string.IsNullOrWhiteSpace(textWithoutThoughts) ||
+                        textWithoutThoughts.StartsWith("I need to", StringComparison.OrdinalIgnoreCase) ||
+                        textWithoutThoughts.StartsWith("I will", StringComparison.OrdinalIgnoreCase) ||
+                        textWithoutThoughts.StartsWith("I'll", StringComparison.OrdinalIgnoreCase) ||
+                        textWithoutThoughts.StartsWith("Let me", StringComparison.OrdinalIgnoreCase) ||
+                        textWithoutThoughts.Contains("I'll use replace_text") ||
+                        textWithoutThoughts.Contains("I need to add") ||
+                        textWithoutThoughts.Contains("I will add") ||
+                        textWithoutThoughts.Contains("can see the")
+                    );
+
+                    // If the response is purely thinking or conversational preamble with no tool calls, nudge it to execute the tool!
+                    if (isModelPreambleWithoutAction && step < 4)
+                    {
+                        LocalPilotLogger.Log($"[Agent] Model emitted preamble instead of executing write tool in Turn {step}. Nudging to execute tool...");
+                        messages.Add(new ChatMessage 
+                        { 
+                            Role = "system", 
+                            Content = $"Focus strictly on the user's request: \"{taskDescription}\". Do NOT modify unrelated methods, perceived typos, or existing code. Call 'replace_text' now to apply ONLY the requested change!" 
+                        });
+                        continue;
+                    }
+
+                    // Model gave an actual text response to the user (or surfaced a stream/API error)
                     isDone = true;
-                    OnStatusUpdate?.Invoke(AgentStatus.Completed, "Task finished.");
+                    bool isStreamError = !string.IsNullOrWhiteSpace(textWithoutThoughts) &&
+                        (textWithoutThoughts.TrimStart().StartsWith("⚠️") ||
+                         textWithoutThoughts.Contains("**LocalPilot Error:**") ||
+                         textWithoutThoughts.Contains("**OpenAI Error:**") ||
+                         textWithoutThoughts.Contains("**Model Not Found:**") ||
+                         textWithoutThoughts.Contains("**Server Error"));
+
+                    if (isStreamError)
+                    {
+                        OnStatusUpdate?.Invoke(AgentStatus.Failed, "Task stopped due to an error.");
+                    }
+                    else
+                    {
+                        OnStatusUpdate?.Invoke(AgentStatus.Completed, "Task finished.");
+                    }
                 }
             }
 
@@ -993,30 +1328,34 @@ namespace LocalPilot.Services
         {
             var options = new OllamaOptions();
             
-            // 🚀 DYNAMIC CONTEXT SIZER: Automatically calculate required memory
-            // Use char/2 (not char/3): source code is denser than prose — keywords,
-            // indentation, punctuation all inflate the token count per character.
+            // 🚀 DYNAMIC CONTEXT SIZER: Accurately estimate tokens
             long estimatedTokens = 0;
-            foreach (var msg in history) estimatedTokens += (msg.Content?.Length ?? 0) / 2;
+            foreach (var msg in history) estimatedTokens += (long)((msg.Content?.Length ?? 0) / 3.2);
             
-            // Account for the tools-schema JSON that Ollama injects into the prompt
-            // but is NOT part of the messages array. 12 tools × ~400 chars ≈ ~2400 chars ≈ 1200 tokens.
-            const long ToolSchemaOverhead = 1500;
-            estimatedTokens += ToolSchemaOverhead;
+            // In Fast mode with minified schemas, overhead is ~200 tokens; standard mode ~500 tokens
+            long toolSchemaOverhead = (mode == LocalPilot.Settings.PerformanceMode.Fast) ? 200 : 500;
+            estimatedTokens += toolSchemaOverhead;
             
-            // Add a 25% safety buffer for the next generation output
-            long requiredCtx = (long)(estimatedTokens * 1.25);
+            // 🚀 USER-CONFIGURED CONTEXT CAP: Respect ContextWindowSize from Options
+            int configuredCap = LocalPilot.Settings.LocalPilotSettings.Instance.ContextWindowSize;
+            if (configuredCap <= 0) configuredCap = 4096;
+
+            int maxCtx = configuredCap;
+            if (isQuickAction)
+            {
+                maxCtx = Math.Min(2048, maxCtx);
+            }
+
+            // Tiered sizing bounded strictly by maxCtx
+            long requiredCtx = (long)(estimatedTokens * 1.20);
+            if (requiredCtx < 2048) requiredCtx = Math.Min(2048, maxCtx);
+            else if (requiredCtx < 4096) requiredCtx = Math.Min(4096, maxCtx);
+            else requiredCtx = maxCtx;
             
-            // Tiered minimums to avoid frequent context switching.
-            if (requiredCtx < 8192) requiredCtx = 8192;
-            else if (requiredCtx < 16384) requiredCtx = 16384;
-            else if (requiredCtx < 32768) requiredCtx = 32768;
-            
-            // 🚀 STRICT CAP: Ensure context never exceeds hardware/Ollama stability limits.
-            int maxCtx = isQuickAction ? 8192 : 32768;
             options.NumCtx = (int)Math.Min(requiredCtx, (long)maxCtx);
 
             LocalPilotLogger.Log($"[Orchestrator] Dynamic Context Allocation: {options.NumCtx} tokens (QuickAction: {isQuickAction}, EstimatedInput: {estimatedTokens})");
+            LocalPilotLogger.Log($"[Orchestrator] Prompt breakdown ({history.Count} parts): " + string.Join(", ", history.Select(m => $"{m.Role}[{m.Content?.Length ?? 0} chars]")), LogCategory.Agent);
 
             // 🚀 AGGRESSIVE DYNAMIC TIMEOUT: Scale based on prefill complexity
             // Heuristic: Base 120s + 10s per 1k tokens. 
@@ -1192,47 +1531,132 @@ namespace LocalPilot.Services
         }
         private List<ChatMessage> PruneContextToLimit(List<ChatMessage> original, int tokenLimit)
         {
-            // If the estimated tokens are already within limits, return as-is
+            if (original == null || original.Count == 0) return original;
+
+            // Reserve tokens for output generation (at least 512, or up to 1024)
+            int maxPromptTokens = Math.Max(1024, tokenLimit - 512);
+
             long totalChars = 0;
             foreach (var m in original) totalChars += m.Content?.Length ?? 0;
-            long estimatedTokens = totalChars / 2;
-            if (estimatedTokens <= tokenLimit) return original;
+            long estimatedTokens = (long)(totalChars / 3.2);
+            if (estimatedTokens <= maxPromptTokens) return original;
 
-            LocalPilotLogger.Log($"[Orchestrator] PRUNING: Input ({estimatedTokens} tokens) exceeds limit ({tokenLimit}). Truncating older context...", LogCategory.Agent, LogSeverity.Warning);
+            LocalPilotLogger.Log($"[Orchestrator] PRUNING: Input ({estimatedTokens} tokens) exceeds budget ({maxPromptTokens} of {tokenLimit} max). Truncating...", LogCategory.Agent, LogSeverity.Warning);
 
             var pruned = new List<ChatMessage>();
-            // ALWAYS KEEP: The System Instruction (Index 0) and the First User Request (Index 1)
-            if (original.Count > 0) pruned.Add(original[0]);
-            if (original.Count > 1) pruned.Add(original[1]);
-
-            // ALWAYS KEEP: The 2 most recent turns (to maintain short-term memory)
-            int recentCount = 4; // 2 assistant + 2 tool results
-            int recentStart = Math.Max(2, original.Count - recentCount);
-
-            // Add the "Middle" messages but truncate them if they are huge tool outputs
-            for (int i = 2; i < recentStart; i++)
+            foreach (var msg in original)
             {
-                var msg = original[i];
-                if (msg.Role == "tool" && (msg.Content?.Length ?? 0) > 2000)
+                pruned.Add(new ChatMessage { Role = msg.Role, Content = msg.Content });
+            }
+
+            // Find the latest tool result (e.g. read_file in the current turn) - DO NOT truncate this!
+            int latestToolIndex = -1;
+            for (int i = pruned.Count - 1; i >= 0; i--)
+            {
+                if (pruned[i].Role == "tool")
                 {
-                    // Truncate massive tool results (like full project maps) in the history
-                    pruned.Add(new ChatMessage { Role = msg.Role, Content = msg.Content.Substring(0, 500) + "\n... [TRUNCATED OLD CONTEXT] ...\n" + msg.Content.Substring(msg.Content.Length - 500) });
-                }
-                else
-                {
-                    // For very long projects, we skip the middle messages entirely if we are still over limit
-                    // But for now, let's just keep them.
-                    pruned.Add(msg);
+                    latestToolIndex = i;
+                    break;
                 }
             }
 
-            // Add the most recent turns intact
-            for (int i = recentStart; i < original.Count; i++)
+            // 1. Truncate OLDER tool outputs (older than the latest one)
+            for (int i = 0; i < pruned.Count; i++)
             {
-                pruned.Add(original[i]);
+                if (i != latestToolIndex && pruned[i].Role == "tool" && (pruned[i].Content?.Length ?? 0) > 300)
+                {
+                    string c = pruned[i].Content;
+                    pruned[i].Content = c.Substring(0, 200) + "\n... [TRUNCATED OLD TOOL RESULT] ...\n" + c.Substring(c.Length - 100);
+                }
+            }
+
+            // Recalculate
+            totalChars = 0;
+            foreach (var m in pruned) totalChars += m.Content?.Length ?? 0;
+            estimatedTokens = (long)(totalChars / 3.2);
+            if (estimatedTokens <= maxPromptTokens) return pruned;
+
+            // 2. Drop older conversation turns from previous interactions before touching active file content
+            int middleStart = 1;
+            while (estimatedTokens > maxPromptTokens && middleStart < pruned.Count - 1)
+            {
+                if (pruned.Count <= 3) break;
+                if (middleStart == latestToolIndex)
+                {
+                    middleStart++;
+                    continue;
+                }
+                var removed = pruned[middleStart];
+                // Never remove active or target file content
+                if (removed.Content != null && (removed.Content.StartsWith("## ACTIVE FILE CONTENT") || removed.Content.StartsWith("## TARGET FILE CONTENT")))
+                {
+                    middleStart++;
+                    continue;
+                }
+                pruned.RemoveAt(middleStart);
+                if (latestToolIndex > middleStart) latestToolIndex--;
+                estimatedTokens -= (long)((removed.Content?.Length ?? 0) / 3.2);
+            }
+
+            if (estimatedTokens <= maxPromptTokens) return pruned;
+
+            // 3. Truncate other non-critical system snippets (NEVER truncate active/target file content!)
+            bool hasToolResult = latestToolIndex >= 0;
+            for (int i = 1; i < pruned.Count - 1; i++)
+            {
+                if (pruned[i].Role == "system")
+                {
+                    string content = pruned[i].Content ?? "";
+                    if (content.StartsWith("## ACTIVE FILE CONTENT") || 
+                        content.StartsWith("## TARGET FILE CONTENT") || 
+                        content.Contains("PROJECT-SPECIFIC RULES"))
+                    {
+                        // 🛡️ CRITICAL: NEVER truncate active/target file content!
+                        continue;
+                    }
+                    else if (hasToolResult && (content.StartsWith("## ACTIVE EDITOR SNIPPET") || content.StartsWith("## GROUNDING CONTEXT")))
+                    {
+                        pruned[i].Content = "// [Redundant context pruned: actual file content is in tool result]";
+                    }
+                    else if (content.Length > 400)
+                    {
+                        pruned[i].Content = content.Substring(0, 250) + "\n... [truncated for context budget]";
+                    }
+                }
+            }
+
+            // Recalculate
+            totalChars = 0;
+            foreach (var m in pruned) totalChars += m.Content?.Length ?? 0;
+            estimatedTokens = (long)(totalChars / 3.2);
+            if (estimatedTokens <= maxPromptTokens) return pruned;
+
+            // 4. As a last resort, if latest tool result exceeds 4000 chars, cap it
+            if (estimatedTokens > maxPromptTokens && latestToolIndex >= 0 && latestToolIndex < pruned.Count)
+            {
+                var toolMsg = pruned[latestToolIndex];
+                if ((toolMsg.Content?.Length ?? 0) > 4000)
+                {
+                    toolMsg.Content = toolMsg.Content.Substring(0, 2500) + 
+                        $"\n\n... [File truncated to 3,500 chars. Total size: {toolMsg.Content.Length} chars] ...\n\n" + 
+                        toolMsg.Content.Substring(toolMsg.Content.Length - 1000);
+                }
             }
 
             return pruned;
+        }
+
+        private static string AddLineNumbers(string code)
+        {
+            if (string.IsNullOrEmpty(code)) return code;
+            var lines = code.Replace("\r\n", "\n").Split('\n');
+            var sb = new System.Text.StringBuilder(code.Length + lines.Length * 5);
+            for (int i = 0; i < lines.Length; i++)
+            {
+                if (i > 0) sb.Append('\n');
+                sb.Append(i + 1).Append(": ").Append(lines[i]);
+            }
+            return sb.ToString();
         }
     }
 }

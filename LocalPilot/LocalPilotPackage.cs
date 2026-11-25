@@ -120,32 +120,16 @@ namespace LocalPilot
             // 🚀 World-Class: Auto-Fix on Build Failure
             BuildMonitorService.Instance.Initialize();
 
-            // Auto-Index Project Context in background (v1.8)
+            // Auto-Index Project Context lazily in background (Nexus graph deferred until first chat/agent use)
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    // v1.8 Enterprise Intelligence: Wait for VS Solution to fully stabilize
-                    await Task.Delay(10000, cancellationToken).ConfigureAwait(false); 
-                    
-                    var ollama = new OllamaService(settings.OllamaBaseUrl);
-                    
-                    // 🚀 World-Class: Background Warmup (Pre-load the model)
-                    _ = ollama.WarmupAsync(settings.ChatModel, cancellationToken);
-                    
+                    await Task.Delay(12000, cancellationToken).ConfigureAwait(false);
+                    var llm = LlmProviderFactory.GetService();
+                    _ = llm.WarmupAsync(settings.ChatModel, cancellationToken);
                     LocalPilotLogger.Log("Indexing project context in background...", LogCategory.Context);
-                    await ProjectContextService.Instance.IndexSolutionAsync(ollama, cancellationToken);
-
-                    // v1.8 Nexus Intelligence: Build the Full-Stack Dependency Graph
-                    string root = "";
-                    await JoinableTaskFactory.RunAsync(async () => {
-                         var sol = await Community.VisualStudio.Toolkit.VS.Solutions.GetCurrentSolutionAsync();
-                         if (sol != null) root = System.IO.Path.GetDirectoryName(sol.FullPath);
-                    });
-                    if (!string.IsNullOrEmpty(root)) {
-                        await NexusService.Instance.InitializeAsync(root);
-                        await NexusService.Instance.RebuildGraphAsync(cancellationToken);
-                    }
+                    await ProjectContextService.Instance.IndexSolutionAsync(llm, cancellationToken);
                 }
                 catch { /* Quiet skip - background indexing is best-effort */ }
             }, cancellationToken);

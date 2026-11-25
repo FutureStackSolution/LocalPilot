@@ -14,9 +14,16 @@ namespace LocalPilot.Options
 {
     public partial class LocalPilotOptionsControl : UserControl
     {
-        private readonly OllamaService _ollama = new OllamaService();
         private CancellationTokenSource _cts = new CancellationTokenSource();
         private bool _isSaving = false;
+
+        private ILlmService GetActiveService()
+        {
+            var provider = (LlmProviderType)(CmbProviderType?.SelectedIndex == 1 ? 1 : 0);
+            string url = TxtBaseUrl?.Text?.Trim() ?? "";
+            string apiKey = TxtApiKey?.Password?.Trim() ?? "";
+            return LlmProviderFactory.CreateService(provider, url, apiKey);
+        }
 
         public LocalPilotOptionsControl()
         {
@@ -73,12 +80,27 @@ namespace LocalPilot.Options
         // ── Load settings into all controls ───────────────────────────────────
         public void LoadSettings(LocalPilotSettings s)
         {
-            TxtBaseUrl.Text          = s.OllamaBaseUrl;
+            if (CmbProviderType != null)
+            {
+                CmbProviderType.SelectedIndex = (int)s.ProviderType;
+            }
 
+            if (s.ProviderType == LlmProviderType.OpenAiCompatible)
+            {
+                TxtBaseUrl.Text = string.IsNullOrEmpty(s.OpenAiBaseUrl) ? "https://api.openai.com/v1" : s.OpenAiBaseUrl;
+                if (LblBaseUrl != null) LblBaseUrl.Text = "Endpoint Base URL";
+                if (PnlApiKey != null) PnlApiKey.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                TxtBaseUrl.Text = string.IsNullOrEmpty(s.OllamaBaseUrl) ? "http://localhost:11434" : s.OllamaBaseUrl;
+                if (LblBaseUrl != null) LblBaseUrl.Text = "Ollama Base URL";
+                if (PnlApiKey != null) PnlApiKey.Visibility = Visibility.Collapsed;
+            }
+            if (TxtApiKey != null) TxtApiKey.Password = s.OpenAiApiKey ?? "";
             
             // Intelligence Mode
             CmbPerformanceMode.SelectedIndex = (int)s.Mode;
-
 
             // Toggles
             ChkEnableInline.IsChecked = s.EnableInlineCompletion;
@@ -89,6 +111,7 @@ namespace LocalPilot.Options
             ChkReview.IsChecked       = s.EnableReview;
             ChkFix.IsChecked          = s.EnableFix;
             ChkUnitTest.IsChecked     = s.EnableUnitTest;
+            ChkAutoFixOnBuild.IsChecked = s.EnableAutoFixOnBuildFailure;
             ChkStatusBar.IsChecked    = s.ShowStatusBar;
             ChkEnableLogging.IsChecked = s.EnableLogging;
 
@@ -99,6 +122,7 @@ namespace LocalPilot.Options
             TxtNumCtx.Text            = s.ContextWindowSize.ToString();
             TxtNumPredict.Text        = s.MaxOutputTokens.ToString();
             TxtRequestTimeout.Text    = s.RequestTimeoutSeconds.ToString();
+            TxtKeepAlive.Text         = string.IsNullOrWhiteSpace(s.KeepAliveDuration) ? "15m" : s.KeepAliveDuration;
 
             // Populate model combos with current value; 
             // full list populated after async fetch
@@ -116,8 +140,39 @@ namespace LocalPilot.Options
             var token = _cts.Token;
             _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
             {
-                await LoadModelsAsync(s.OllamaBaseUrl, token);
+                await LoadModelsAsync(GetActiveService(), token);
             });
+        }
+
+        private void CmbProviderType_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (CmbProviderType == null || TxtBaseUrl == null) return;
+
+            bool isOpenAi = CmbProviderType.SelectedIndex == 1;
+            if (LblBaseUrl != null)
+            {
+                LblBaseUrl.Text = isOpenAi ? "Endpoint Base URL" : "Ollama Base URL";
+            }
+            if (PnlApiKey != null)
+            {
+                PnlApiKey.Visibility = isOpenAi ? Visibility.Visible : Visibility.Collapsed;
+            }
+
+            var s = LocalPilotSettings.Instance;
+            if (isOpenAi)
+            {
+                if (string.IsNullOrWhiteSpace(TxtBaseUrl.Text) || TxtBaseUrl.Text.Contains("11434"))
+                {
+                    TxtBaseUrl.Text = string.IsNullOrEmpty(s.OpenAiBaseUrl) ? "https://api.openai.com/v1" : s.OpenAiBaseUrl;
+                }
+            }
+            else
+            {
+                if (string.IsNullOrWhiteSpace(TxtBaseUrl.Text) || TxtBaseUrl.Text.Contains("openai.com"))
+                {
+                    TxtBaseUrl.Text = string.IsNullOrEmpty(s.OllamaBaseUrl) ? "http://localhost:11434" : s.OllamaBaseUrl;
+                }
+            }
         }
 
         // ── Save settings from controls ───────────────────────────────────────
@@ -131,10 +186,23 @@ namespace LocalPilot.Options
 
                 var s = LocalPilotSettings.Instance;
 
-                // Only save fields from the active tab to prevent multi-page overwrites
-                if (MainTabControl.SelectedIndex == 0) // General
+                // Save all fields from both tabs (both tabs are populated by LoadSettings)
                 {
-                    if (TxtBaseUrl != null) s.OllamaBaseUrl = TxtBaseUrl.Text.Trim();
+                    if (CmbProviderType != null)
+                    {
+                        s.ProviderType = (LlmProviderType)(CmbProviderType.SelectedIndex == 1 ? 1 : 0);
+                    }
+                    if (TxtBaseUrl != null)
+                    {
+                        if (s.ProviderType == LlmProviderType.OpenAiCompatible)
+                            s.OpenAiBaseUrl = TxtBaseUrl.Text.Trim();
+                        else
+                            s.OllamaBaseUrl = TxtBaseUrl.Text.Trim();
+                    }
+                    if (TxtApiKey != null)
+                    {
+                        s.OpenAiApiKey = TxtApiKey.Password?.Trim() ?? "";
+                    }
                     
                     s.EnableInlineCompletion = ChkEnableInline?.IsChecked == true;
                     s.ShowCompletionGhost    = ChkShowGhost?.IsChecked    == true;
@@ -144,6 +212,7 @@ namespace LocalPilot.Options
                     s.EnableReview           = ChkReview?.IsChecked       == true;
                     s.EnableFix              = ChkFix?.IsChecked          == true;
                     s.EnableUnitTest         = ChkUnitTest?.IsChecked     == true;
+                    s.EnableAutoFixOnBuildFailure = ChkAutoFixOnBuild?.IsChecked == true;
                     s.ShowStatusBar          = ChkStatusBar?.IsChecked    == true;
                     s.EnableLogging          = ChkEnableLogging?.IsChecked == true;
 
@@ -155,9 +224,8 @@ namespace LocalPilot.Options
                     if (CmbDocModel != null)        s.DocModel        = (CmbDocModel.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? CmbDocModel.Text;
                     if (CmbReviewModel != null)     s.ReviewModel     = (CmbReviewModel.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? CmbReviewModel.Text;
                 }
-                else if (MainTabControl.SelectedIndex == 1) // Advanced
                 {
-                    if (CmbPerformanceMode != null) s.Mode = (PerformanceMode)CmbPerformanceMode.SelectedIndex;
+                    if (CmbPerformanceMode != null && CmbPerformanceMode.SelectedIndex >= 0) s.Mode = (PerformanceMode)CmbPerformanceMode.SelectedIndex;
                     if (ChkEnableProjectMap != null) s.EnableProjectMap = ChkEnableProjectMap.IsChecked == true;
                     if (SldConcurrency != null) s.BackgroundIndexingConcurrency = (int)SldConcurrency.Value;
                     
@@ -165,10 +233,52 @@ namespace LocalPilot.Options
                     if (TxtNumCtx != null && int.TryParse(TxtNumCtx.Text, out int nc) && nc >= 512) s.ContextWindowSize = nc;
                     if (TxtNumPredict != null && int.TryParse(TxtNumPredict.Text, out int np) && np >= 128) s.MaxOutputTokens = np;
                     if (TxtRequestTimeout != null && int.TryParse(TxtRequestTimeout.Text, out int rt) && rt >= 0) s.RequestTimeoutSeconds = rt;
+                    if (TxtKeepAlive != null)
+                    {
+                        string val = TxtKeepAlive.Text.Trim();
+                        s.KeepAliveDuration = string.IsNullOrWhiteSpace(val) ? "15m" : val;
+                    }
                 }
 
                 // Persist to disk
                 SettingsPersistence.Save(s);
+            });
+        }
+
+        private void BtnUnloadModels_Click(object sender, RoutedEventArgs e)
+        {
+            _ = ThreadHelper.JoinableTaskFactory.RunAsync(async () =>
+            {
+                try
+                {
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    BtnUnloadModels.IsEnabled = false;
+                    BtnUnloadModels.Content = "Unloading...";
+                    TxtUnloadStatus.Text = "Sending unload signal to Ollama...";
+                    TxtUnloadStatus.Foreground = (Brush)this.Resources["LpMutedFgBrush"];
+                    TxtUnloadStatus.Visibility = Visibility.Visible;
+
+                    var service = GetActiveService();
+                    int count = await service.UnloadAllModelsAsync();
+
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    TxtUnloadStatus.Text = count > 0 
+                        ? $"✓ Unloaded {count} model(s) from VRAM." 
+                        : "✓ No active models were loaded in VRAM.";
+                    TxtUnloadStatus.Foreground = new SolidColorBrush(Color.FromRgb(0x4E, 0xC9, 0xB0));
+                }
+                catch (Exception ex)
+                {
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    TxtUnloadStatus.Text = $"✗ Failed to unload: {ex.Message}";
+                    TxtUnloadStatus.Foreground = Brushes.Red;
+                }
+                finally
+                {
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    BtnUnloadModels.IsEnabled = true;
+                    BtnUnloadModels.Content = "⚡  Unload Models from VRAM";
+                }
             });
         }
 
@@ -193,35 +303,36 @@ namespace LocalPilot.Options
                     // Busy State
                     BtnTestConnection.IsEnabled = false;
                     BtnTestConnection.Content = "Testing...";
-                    TxtConnectionResult.Text = "Checking Ollama status...";
+                    TxtConnectionResult.Text = "Checking connection status...";
                     TxtConnectionResult.Foreground = (Brush)this.Resources["LpMutedFgBrush"];
                     TxtConnectionResult.Visibility = Visibility.Visible;
 
-                    _ollama.UpdateBaseUrl(url);
-                    bool ok = await _ollama.IsAvailableAsync();
+                    var service = GetActiveService();
+                    bool ok = await service.IsAvailableAsync();
 
                     await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                     
+                    string providerName = CmbProviderType?.SelectedIndex == 1 ? "OpenAI-compatible endpoint" : "Ollama";
                     if (ok)
                     {
-                        TxtConnectionResult.Text = "✓  Ollama is running and reachable!";
+                        TxtConnectionResult.Text = $"✓  {providerName} is running and reachable!";
                         TxtConnectionResult.Foreground = new SolidColorBrush(Color.FromRgb(0x4E, 0xC9, 0xB0));
                         SetConnectionStatus(true);
                         
                         // Try to reload models immediately if connected
                         if (_cts == null) _cts = new CancellationTokenSource();
-                        await LoadModelsAsync(url, _cts.Token);
+                        await LoadModelsAsync(service, _cts.Token);
 
-                        MessageBox.Show("Successfully connected to Ollama!", "LocalPilot",
+                        MessageBox.Show($"Successfully connected to {providerName}!", "LocalPilot",
                                         MessageBoxButton.OK, MessageBoxImage.Information);
                     }
                     else
                     {
-                        TxtConnectionResult.Text = "✗  Cannot reach Ollama. Ensure it's running at the specified URL.";
+                        TxtConnectionResult.Text = $"✗  Cannot reach {providerName}. Ensure it's running and credentials are valid.";
                         TxtConnectionResult.Foreground = new SolidColorBrush(Color.FromRgb(0xF4, 0x47, 0x47));
                         SetConnectionStatus(false);
                         
-                        MessageBox.Show("Failed to connect to Ollama. Please verify the service is running.", "Connection Failed",
+                        MessageBox.Show($"Failed to connect to {providerName}. Please verify the URL and credentials.", "Connection Failed",
                                         MessageBoxButton.OK, MessageBoxImage.Warning);
                     }
                 }
@@ -246,7 +357,8 @@ namespace LocalPilot.Options
             {
                 try
                 {
-                    await LoadModelsAsync(TxtBaseUrl.Text.Trim(), _cts.Token);
+                    var service = GetActiveService();
+                    await LoadModelsAsync(service, _cts.Token);
                 }
                 catch (Exception ex)
                 {
@@ -414,23 +526,17 @@ namespace LocalPilot.Options
 
         private void CmbPerformanceMode_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            if (CmbPerformanceMode == null || CmbPerformanceMode.SelectedIndex == -1) return;
-            
-            var selectedMode = (PerformanceMode)CmbPerformanceMode.SelectedIndex;
-            var s = LocalPilotSettings.Instance;
-            s.Mode = selectedMode; 
+            // Mode is applied and persisted when the user confirms via SaveSettings()
         }
 
         // ── Helpers ───────────────────────────────────────────────────────────
-        private async Task LoadModelsAsync(string baseUrl, CancellationToken ct)
+        private async Task LoadModelsAsync(ILlmService service, CancellationToken ct)
         {
             try
             {
-                if (string.IsNullOrWhiteSpace(baseUrl) || !baseUrl.Contains("://"))
-                    return;
+                if (service == null) return;
 
-                _ollama.UpdateBaseUrl(baseUrl);
-                var models = await _ollama.GetAvailableModelsAsync(ct);
+                var models = await service.GetAvailableModelsAsync(ct);
 
                 if (ct.IsCancellationRequested) return;
 
@@ -472,9 +578,15 @@ namespace LocalPilot.Options
                     cmb.SelectedItem = item;
             }
 
-            // Fallback: If the selected model isn't in the list, 
-            // pick the first available one so the user can start immediately.
-            if (cmb.SelectedItem == null && cmb.Items.Count > 0)
+            // Fallback: If the selected model isn't in the list, keep it as custom item
+            // or pick the first available one so the user can start immediately.
+            if (cmb.SelectedItem == null && !string.IsNullOrWhiteSpace(selected))
+            {
+                var customItem = new ComboBoxItem { Content = selected };
+                cmb.Items.Insert(0, customItem);
+                cmb.SelectedItem = customItem;
+            }
+            else if (cmb.SelectedItem == null && cmb.Items.Count > 0)
             {
                 cmb.SelectedIndex = 0;
             }
@@ -490,7 +602,8 @@ namespace LocalPilot.Options
 
         private async Task RefreshConnectionStatusAsync()
         {
-            bool ok = await _ollama.IsAvailableAsync();
+            var service = GetActiveService();
+            bool ok = await service.IsAvailableAsync();
             await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
             SetConnectionStatus(ok);
         }
@@ -500,7 +613,8 @@ namespace LocalPilot.Options
             StatusDot.Fill = connected
                 ? new SolidColorBrush(Color.FromRgb(0x4E, 0xC9, 0xB0))
                 : new SolidColorBrush(Color.FromRgb(0xF4, 0x47, 0x47));
-            StatusText.Text = connected ? "Ollama Connected" : "Ollama Offline";
+            string name = CmbProviderType?.SelectedIndex == 1 ? "OpenAI" : "Ollama";
+            StatusText.Text = connected ? $"{name} Connected" : $"{name} Offline";
         }
     }
 }

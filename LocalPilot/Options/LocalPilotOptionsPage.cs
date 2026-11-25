@@ -38,7 +38,6 @@ namespace LocalPilot.Options
 
         protected override void OnClosed(EventArgs e)
         {
-            _control?.SaveSettings();
             base.OnClosed(e);
         }
 

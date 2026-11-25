@@ -39,20 +39,22 @@ namespace LocalPilot.Options
 
         public static LocalPilotSettings Load()
         {
-            try
+            lock (_saveLock)
             {
-                if (!File.Exists(SettingsFile))
-                    return new LocalPilotSettings();
+                try
+                {
+                    if (!File.Exists(SettingsFile))
+                        return new LocalPilotSettings();
 
-                var json = File.ReadAllText(SettingsFile);
-                return JsonConvert.DeserializeObject<LocalPilotSettings>(json)
-                       ?? new LocalPilotSettings();
-                
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[LocalPilot] Load settings failed: {ex.Message}");
-                return new LocalPilotSettings();
+                    var json = File.ReadAllText(SettingsFile);
+                    return JsonConvert.DeserializeObject<LocalPilotSettings>(json)
+                           ?? new LocalPilotSettings();
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[LocalPilot] Load settings failed: {ex.Message}");
+                    return new LocalPilotSettings();
+                }
             }
         }
     }

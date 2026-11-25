@@ -46,7 +46,7 @@ namespace LocalPilot.Services
 
         private ProjectContextService() { }
 
-        public async Task IndexSolutionAsync(OllamaService ollama, CancellationToken ct = default)
+        public async Task IndexSolutionAsync(ILlmService ollama, CancellationToken ct = default)
         {
             if (_isIndexing) return;
             if (!await _indexLock.WaitAsync(0)) return;
@@ -194,7 +194,7 @@ namespace LocalPilot.Services
             catch { return string.Empty; }
         }
 
-        private async Task ParallelUpdateAsync(List<string> files, OllamaService ollama, CancellationToken ct)
+        private async Task ParallelUpdateAsync(List<string> files, ILlmService ollama, CancellationToken ct)
         {
             int concurrency = Math.Max(1, Math.Min(8, LocalPilotSettings.Instance.BackgroundIndexingConcurrency));
             int batchSize = 50; // Process 50 files per transaction batch
@@ -302,7 +302,8 @@ namespace LocalPilot.Services
                                 {
                                     pChunkP.Value = item.path;
                                     pChunkC.Value = item.chunks[j];
-                                    pChunkV.Value = item.vectors[j] != null ? (object)GetRawBytes(item.vectors[j]) : DBNull.Value;
+                                    float[] vec = (item.vectors != null && j < item.vectors.Count) ? item.vectors[j] : null;
+                                    pChunkV.Value = vec != null ? (object)GetRawBytes(vec) : DBNull.Value;
                                     long chunkId = (long)await insChunkCmd.ExecuteScalarAsync(ct);
 
                                     pSearchC.Value = item.chunks[j];
@@ -390,7 +391,7 @@ namespace LocalPilot.Services
             return chunks.Distinct().ToList();
         }
 
-        public async Task<string> SearchContextAsync(OllamaService ollama, string query, int topN = 5, CancellationToken ct = default)
+        public async Task<string> SearchContextAsync(ILlmService ollama, string query, int topN = 5, CancellationToken ct = default)
         {
             if (string.IsNullOrWhiteSpace(query)) return string.Empty;
 
@@ -565,9 +566,20 @@ namespace LocalPilot.Services
 
         private bool IsRelevantFile(string path)
         {
-            var ext = Path.GetExtension(path).ToLower();
+            if (string.IsNullOrEmpty(path)) return false;
+            var ext = Path.GetExtension(path).ToLowerInvariant();
             string[] allowed = { ".cs", ".vb", ".cshtml", ".c", ".cpp", ".h", ".py", ".js", ".ts", ".tsx", ".html", ".css", ".json", ".md", ".xml", ".xaml" };
-            if (path.Contains("\\obj\\") || path.Contains("\\bin\\") || path.Contains("\\node_modules\\") || path.Contains("\\.git\\")) return false;
+            if (path.IndexOf("\\obj\\", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                path.IndexOf("\\bin\\", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                path.IndexOf("\\.vs\\", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                path.IndexOf("\\.localpilot\\", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                path.IndexOf("\\packages\\", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                path.IndexOf("\\TestResults\\", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                path.IndexOf("\\node_modules\\", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                path.IndexOf("\\.git\\", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return false;
+            }
             return allowed.Contains(ext);
         }
 
@@ -598,37 +610,56 @@ namespace LocalPilot.Services
             catch { }
         }
 
-        private void SetupIncrementalWatcher(OllamaService ollama)
+        private DateTime _lastWatcherEventUtc = DateTime.MinValue;
+
+        private void SetupIncrementalWatcher(ILlmService ollama)
         {
             if (_watcher != null) return;
             try
             {
                 _watcherCts = new CancellationTokenSource();
                 _watcher = new FileSystemWatcher(_solutionRoot) { IncludeSubdirectories = true, Filter = "*.*", EnableRaisingEvents = true };
-                _watcher.Changed += (s, e) => { if (IsRelevantFile(e.FullPath)) _pendingFiles.TryAdd(e.FullPath, 0); };
-                _watcher.Created += (s, e) => { if (IsRelevantFile(e.FullPath)) _pendingFiles.TryAdd(e.FullPath, 0); };
-                _watcher.Deleted += (s, e) => { _pendingFiles.TryAdd(e.FullPath, 0); };
-                _watcher.Renamed += (s, e) => {
-                    _pendingFiles.TryAdd(e.OldFullPath, 0);
-                    _pendingFiles.TryAdd(e.FullPath, 0);
+                Action<string> queueRelevant = fullPath =>
+                {
+                    if (IsRelevantFile(fullPath))
+                    {
+                        _pendingFiles.TryAdd(fullPath, 0);
+                        _lastWatcherEventUtc = DateTime.UtcNow;
+                    }
                 };
+                _watcher.Changed += (s, e) => queueRelevant(e.FullPath);
+                _watcher.Created += (s, e) => queueRelevant(e.FullPath);
+                _watcher.Deleted += (s, e) => queueRelevant(e.FullPath);
+                _watcher.Renamed += (s, e) => { queueRelevant(e.OldFullPath); queueRelevant(e.FullPath); };
 
                 LocalPilotLogger.Log($"FileSystemWatcher active on: {_solutionRoot}", LogCategory.Storage);
                 
-                // Start the background processing loop for the queue
+                // Start the background processing loop with quiet-window debouncing
                 _ = Task.Run(async () => {
-                    while (!_watcherCts.IsCancellationRequested)
+                    try
                     {
-                        await Task.Delay(5000); // Process every 5 seconds
-                        if (_pendingFiles.IsEmpty) continue;
-
-                        while (_pendingFiles.TryRemove(_pendingFiles.Keys.FirstOrDefault() ?? "", out _))
+                        // Brief startup grace window to let VS finish opening files without storming
+                        await Task.Delay(3000, _watcherCts.Token).ConfigureAwait(false);
+                        while (!_watcherCts.IsCancellationRequested)
                         {
-                            // Atomic clear — re-scanning is safer for consistent state after batches
+                            await Task.Delay(3000, _watcherCts.Token).ConfigureAwait(false);
+                            if (_pendingFiles.IsEmpty) continue;
+
+                            // Wait until filesystem activity settles for at least 1.5s
+                            if ((DateTime.UtcNow - _lastWatcherEventUtc).TotalMilliseconds < 1500) continue;
+
+                            while (_pendingFiles.TryRemove(_pendingFiles.Keys.FirstOrDefault() ?? "", out _))
+                            {
+                            }
+                            
+                            LocalPilotLogger.Log("Incremental changes detected. Re-indexing...", LogCategory.Storage);
+                            await IndexSolutionAsync(ollama, _watcherCts.Token);
                         }
-                        
-                        LocalPilotLogger.Log("Incremental changes detected. Re-indexing...", LogCategory.Storage);
-                        await IndexSolutionAsync(ollama, _watcherCts.Token);
+                    }
+                    catch (OperationCanceledException) { }
+                    catch (Exception ex)
+                    {
+                        LocalPilotLogger.LogError("[RAG] Watcher loop error", ex);
                     }
                 });
             }

@@ -77,9 +77,10 @@ namespace LocalPilot.Chat.ViewModels
             return info;
         }
 
-        public Border CreateTerminalBadge(AgentStatusViewState statusState, ResourceDictionary resources, out Button acceptButton)
+        public Border CreateTerminalBadge(AgentStatusViewState statusState, ResourceDictionary resources, out Button acceptButton, out Button revertButton)
         {
             acceptButton = null;
+            revertButton = null;
             var badge = new Border
             {
                 Background = resources["LpMenuBgBrush"] as Brush,
@@ -116,19 +117,7 @@ namespace LocalPilot.Chat.ViewModels
 
             if (statusState.LatencyMs > 0)
             {
-                string timeDisplay;
-                if (statusState.LatencyMs < 1000)
-                {
-                    timeDisplay = $"{statusState.LatencyMs}ms";
-                }
-                else if (statusState.LatencyMs < 60000)
-                {
-                    timeDisplay = $"{(statusState.LatencyMs / 1000.0):F1}s";
-                }
-                else
-                {
-                    timeDisplay = $"{(statusState.LatencyMs / 60000.0):F1}m";
-                }
+                string timeDisplay = FormatDuration(statusState.LatencyMs);
 
                 sp.Children.Add(new TextBlock
                 {
@@ -147,12 +136,23 @@ namespace LocalPilot.Chat.ViewModels
                 {
                     Content = "Accept All",
                     Style = resources["LpPrimaryActionButtonStyle"] as Style,
-                    Margin = new Thickness(16, -4, -4, -4), // Nested alignment
+                    Margin = new Thickness(16, -4, 4, -4), // Nested alignment
                     Padding = new Thickness(10, 4, 10, 4),
                     FontSize = 10,
                     Height = 24
                 };
                 sp.Children.Add(acceptButton);
+
+                revertButton = new Button
+                {
+                    Content = "↺ Revert Turn",
+                    Style = resources["LpButtonStyle"] as Style,
+                    Margin = new Thickness(2, -4, -4, -4),
+                    Padding = new Thickness(8, 4, 8, 4),
+                    FontSize = 10,
+                    Height = 24
+                };
+                sp.Children.Add(revertButton);
             }
 
             badge.Child = sp;
@@ -224,6 +224,26 @@ namespace LocalPilot.Chat.ViewModels
             if (args == null) return null;
             if (!args.TryGetValue(key, out var val) || val == null) return null;
             return val.ToString();
+        }
+
+        /// <summary>
+        /// Formats elapsed duration into human-readable representation:
+        /// 450ms, 45s, 1m 20s, 3m 5s, 1h 2m 5s (matching Antigravity / Gemini UI standard).
+        /// </summary>
+        public static string FormatDuration(long milliseconds)
+        {
+            if (milliseconds < 0) milliseconds = 0;
+            if (milliseconds < 1000) return $"{milliseconds}ms";
+            var ts = TimeSpan.FromMilliseconds(milliseconds);
+            if (ts.TotalMinutes < 1)
+            {
+                return $"{(int)ts.TotalSeconds}s";
+            }
+            if (ts.TotalHours < 1)
+            {
+                return $"{(int)ts.TotalMinutes}m {ts.Seconds}s";
+            }
+            return $"{(int)ts.TotalHours}h {ts.Minutes}m {ts.Seconds}s";
         }
 
         private static string FileNameFromArg(Dictionary<string, object> args, string key)

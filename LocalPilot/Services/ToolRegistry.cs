@@ -30,6 +30,7 @@ namespace LocalPilot.Services
     {
         private readonly Dictionary<string, IAgentTool> _tools = new Dictionary<string, IAgentTool>();
         public string WorkspaceRoot { get; set; } = string.Empty;
+        public string ActiveDocumentPath { get; set; } = string.Empty;
 
         public ToolRegistry()
         {
@@ -40,12 +41,21 @@ namespace LocalPilot.Services
             RegisterTool(new RunTerminalTool(this));
             RegisterTool(new GrepTool(this));
             RegisterTool(new ReplaceTextTool(this));
+            RegisterTool(new EditLinesTool(this));
             RegisterTool(new ListErrorsTool(this));
             RegisterTool(new DeleteFileTool(this));
             RegisterTool(new RenameSymbolTool(this));
             RegisterTool(new RunTestsTool(this));
             RegisterTool(new TraceDependencyTool(this));
             RegisterTool(new AnalyzeImpactTool(this));
+
+            // Tool Aliases
+            var writeTool = _tools["write_file"];
+            _tools["write_to_file"] = writeTool;
+            _tools["create_file"] = writeTool;
+
+            var replaceTool = _tools["replace_text"];
+            _tools["replace_file_content"] = replaceTool;
         }
 
         public void RegisterTool(IAgentTool tool)
@@ -55,26 +65,56 @@ namespace LocalPilot.Services
 
         public IEnumerable<IAgentTool> GetAllTools() => _tools.Values;
 
-        public bool HasTool(string name) => _tools.ContainsKey(name);
+        public bool HasTool(string name) => !string.IsNullOrEmpty(name) && _tools.ContainsKey(name);
 
         /// <summary>
         /// Generates tool definitions in Ollama's native format for the /api/chat tools parameter.
         /// This enables structured tool calling — Ollama returns tool_calls as JSON objects,
         /// not embedded in text, eliminating all parsing/nudging issues.
         /// </summary>
-        public List<OllamaToolDefinition> GetOllamaToolDefinitions()
+        public List<OllamaToolDefinition> GetOllamaToolDefinitions(bool essentialOnly = false, IEnumerable<string> allowedToolNames = null)
         {
             var definitions = new List<OllamaToolDefinition>();
-            
-            foreach (var tool in _tools.Values)
+            var seenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            HashSet<string> filterNames = null;
+            if (allowedToolNames != null)
             {
+                filterNames = new HashSet<string>(allowedToolNames, StringComparer.OrdinalIgnoreCase);
+            }
+
+            var essentialToolNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "read_file", "replace_text", "edit_lines", "write_file", "grep_search", "list_files", "list_dir"
+            };
+            
+            // 🚀 DETERMINISTIC ORDER: Alphabetical sorting guarantees 100% byte-for-byte identical tool payload for KV-cache hits
+            var sortedTools = _tools.Values.OrderBy(t => t.Name, StringComparer.Ordinal).ToList();
+
+            foreach (var tool in sortedTools)
+            {
+                if (filterNames != null && !filterNames.Contains(tool.Name)) continue;
+                if (filterNames == null && essentialOnly && !essentialToolNames.Contains(tool.Name)) continue;
+                if (!seenNames.Add(tool.Name)) continue;
+
+                // 🚀 LEAN SCHEMA IN FAST MODE: Compact descriptions to save 400-600 tokens of prefill
+                string desc = tool.Description;
+                if (essentialOnly)
+                {
+                    if (tool.Name == "read_file") desc = "Read file contents.";
+                    else if (tool.Name == "replace_text") desc = "Replace a block of text in a file with new text.";
+                    else if (tool.Name == "edit_lines") desc = "Replace or insert lines by 1-based line numbers (start_line..end_line). Set end_line = start_line - 1 to insert.";
+                    else if (tool.Name == "write_file") desc = "Write content to a file.";
+                    else if (tool.Name == "grep_search") desc = "Search pattern across workspace files.";
+                }
+
                 var def = new OllamaToolDefinition
                 {
                     Type = "function",
                     Function = new OllamaFunctionDefinition
                     {
                         Name = tool.Name,
-                        Description = tool.Description,
+                        Description = desc,
                         Parameters = ParseParameterSchema(tool.ParameterSchema)
                     }
                 };
@@ -108,9 +148,13 @@ namespace LocalPilot.Services
                     bool isOptional = val.Contains("(optional)");
                     string propType = val.Replace("(optional)", "").Trim();
 
+                    string schemaType = "string";
+                    if (propType == "integer") schemaType = "integer";
+                    else if (propType == "boolean") schemaType = "boolean";
+
                     paramDef.Properties[prop.Name] = new OllamaPropertyDefinition
                     {
-                        Type = propType == "integer" ? "integer" : "string",
+                        Type = schemaType,
                         Description = $"The {prop.Name} parameter"
                     };
                     
@@ -130,9 +174,9 @@ namespace LocalPilot.Services
 
         public async Task<ToolResponse> ExecuteToolAsync(string name, Dictionary<string, object> args, CancellationToken ct)
         {
-            if (!_tools.TryGetValue(name, out var tool))
+            if (string.IsNullOrEmpty(name) || !_tools.TryGetValue(name, out var tool))
             {
-                return new ToolResponse { IsError = true, Output = $"Tool '{name}' not found." };
+                return new ToolResponse { IsError = true, Output = $"Tool '{name ?? "(null)"}' not found." };
             }
 
             try
@@ -143,6 +187,72 @@ namespace LocalPilot.Services
             {
                 return new ToolResponse { IsError = true, Output = $"Execution failed: {ex.Message}" };
             }
+        }
+
+        /// <summary>
+        /// Reads live file content from the Visual Studio editor buffer if open, otherwise from disk.
+        /// </summary>
+        public async Task<string> ReadLiveFileAsync(string path)
+        {
+            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+            var docView = await VS.Documents.GetDocumentViewAsync(path);
+            if (docView?.TextBuffer != null)
+            {
+                return docView.TextBuffer.CurrentSnapshot.GetText();
+            }
+            return File.Exists(path) ? File.ReadAllText(path) : null;
+        }
+
+        /// <summary>
+        /// Writes updated content through the Visual Studio editor buffer if open, otherwise to disk,
+        /// and synchronizes the Roslyn workspace.
+        /// </summary>
+        public async Task WriteLiveFileAsync(string path, string newContent)
+        {
+            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+            var docView = await VS.Documents.GetDocumentViewAsync(path);
+            if (docView?.TextBuffer != null)
+            {
+                using (var edit = docView.TextBuffer.CreateEdit())
+                {
+                    edit.Replace(0, docView.TextBuffer.CurrentSnapshot.Length, newContent);
+                    edit.Apply();
+                }
+            }
+            else
+            {
+                File.WriteAllText(path, newContent);
+            }
+
+            var roslyn = SymbolIndexService.Instance.GetRoslynProvider();
+            if (roslyn != null) await roslyn.SynchronizeDocumentAsync(path);
+        }
+
+        /// <summary>
+        /// Validates in-memory C# syntax before committing an edit; returns null if no new syntax errors were introduced.
+        /// </summary>
+        public static string ValidateCSharpSyntax(string originalContent, string newContent)
+        {
+            try
+            {
+                var oldErrors = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(originalContent ?? "")
+                    .GetDiagnostics()
+                    .Count(d => d.Severity == Microsoft.CodeAnalysis.DiagnosticSeverity.Error);
+
+                var newErrorDiags = Microsoft.CodeAnalysis.CSharp.CSharpSyntaxTree.ParseText(newContent ?? "")
+                    .GetDiagnostics()
+                    .Where(d => d.Severity == Microsoft.CodeAnalysis.DiagnosticSeverity.Error)
+                    .ToList();
+
+                if (newErrorDiags.Count > oldErrors)
+                {
+                    var first = newErrorDiags.First();
+                    var line = first.Location.GetLineSpan().StartLinePosition.Line + 1;
+                    return $"Line {line}: {first.GetMessage()}";
+                }
+            }
+            catch { }
+            return null;
         }
 
         public string ResolvePath(string path)
@@ -163,11 +273,33 @@ namespace LocalPilot.Services
                 // 1. Already absolute and exists: use as-is
                 if (Path.IsPathRooted(path) && File.Exists(path)) return path;
 
-                // 2. Try relative to workspace root
+                // 2. Try matching and resolving relative to active document
+                if (!string.IsNullOrEmpty(ActiveDocumentPath))
+                {
+                    string activeFileName = Path.GetFileName(ActiveDocumentPath);
+                    string targetFileName = Path.GetFileName(path);
+                    
+                    if (string.Equals(activeFileName, targetFileName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return ActiveDocumentPath;
+                    }
+                    
+                    string activeDir = Path.GetDirectoryName(ActiveDocumentPath);
+                    if (!string.IsNullOrEmpty(activeDir))
+                    {
+                        string relativeToActive = Path.Combine(activeDir, path);
+                        if (File.Exists(relativeToActive))
+                        {
+                            return relativeToActive;
+                        }
+                    }
+                }
+
+                // 3. Try relative to workspace root
                 string combined = Path.IsPathRooted(path) ? path : Path.Combine(WorkspaceRoot ?? "", path);
                 if (File.Exists(combined)) return combined;
 
-                // 3. Fuzzy fallback: search workspace for a file with the same name.
+                // 4. Fuzzy fallback: search workspace for a file with the same name.
                 if (!string.IsNullOrEmpty(WorkspaceRoot) && Directory.Exists(WorkspaceRoot))
                 {
                     string fileName = Path.GetFileName(path);
@@ -182,6 +314,24 @@ namespace LocalPilot.Services
                             if (matches.Count == 1)
                             {
                                 LocalPilotLogger.Log($"[ResolvePath] Fuzzy matched '{path}' -> '{matches[0]}'");
+                                return matches[0];
+                            }
+                            else if (matches.Count > 1)
+                            {
+                                // Prioritize file closest to/matching the active document's directory hierarchy
+                                if (!string.IsNullOrEmpty(ActiveDocumentPath))
+                                {
+                                    string activeDir = Path.GetDirectoryName(ActiveDocumentPath);
+                                    var closestMatch = matches.FirstOrDefault(m => m.StartsWith(activeDir, StringComparison.OrdinalIgnoreCase));
+                                    if (closestMatch != null)
+                                    {
+                                        LocalPilotLogger.Log($"[ResolvePath] Multi-match fuzzy matched (closest to active) '{path}' -> '{closestMatch}'");
+                                        return closestMatch;
+                                    }
+                                }
+                                
+                                // Default to the first match instead of falling back to a non-existent root path
+                                LocalPilotLogger.Log($"[ResolvePath] Multi-match fuzzy matched (first match) '{path}' -> '{matches[0]}'");
                                 return matches[0];
                             }
                         }
@@ -251,22 +401,40 @@ namespace LocalPilot.Services
         public WriteFileTool(ToolRegistry registry) => _registry = registry;
 
         public string Name => "write_file";
-        public string Description => "Writes content to a file. By default, fails if file exists unless 'overwrite' is true. Creates directories if needed. Also ensures the file is part of the Visual Studio project.";
-        public string ParameterSchema => "{ \"path\": \"string\", \"content\": \"string\", \"overwrite\": \"boolean\" }";
+        public string Description => "Writes content to a file. Overwrites if file exists. Creates directories if needed. Also ensures the file is part of the Visual Studio project.";
+        public string ParameterSchema => "{ \"path\": \"string\", \"content\": \"string\", \"overwrite (optional)\": \"boolean\" }";
 
         public async Task<ToolResponse> ExecuteAsync(Dictionary<string, object> args, CancellationToken ct)
         {
             if (!args.TryGetValue("path", out var pathObj) || pathObj == null)
-                return new ToolResponse { IsError = true, Output = "Missing 'path' argument." };
+            {
+                if (!args.TryGetValue("TargetFile", out pathObj) || pathObj == null)
+                {
+                    if (!args.TryGetValue("file", out pathObj) || pathObj == null)
+                    {
+                        return new ToolResponse { IsError = true, Output = "Missing 'path' argument." };
+                    }
+                }
+            }
             
             if (!args.TryGetValue("content", out var contentObj) || contentObj == null)
-                return new ToolResponse { IsError = true, Output = "Missing 'content' argument." };
+            {
+                if (!args.TryGetValue("CodeContent", out contentObj) || contentObj == null)
+                {
+                    if (!args.TryGetValue("new_text", out contentObj) || contentObj == null)
+                    {
+                        return new ToolResponse { IsError = true, Output = "Missing 'content' argument." };
+                    }
+                }
+            }
 
-            bool overwrite = false;
+            // 🚀 By default, write_file overwrites. Permission check gates file modification.
+            bool overwrite = true;
             if (args.TryGetValue("overwrite", out var overwriteObj) && overwriteObj != null)
             {
                 if (overwriteObj is bool b) overwrite = b;
                 else if (bool.TryParse(overwriteObj.ToString(), out bool pb)) overwrite = pb;
+                else if (int.TryParse(overwriteObj.ToString(), out int pi)) overwrite = pi != 0;
             }
 
             var path = _registry.ResolvePath(pathObj.ToString());
@@ -277,7 +445,7 @@ namespace LocalPilot.Services
                 bool exists = File.Exists(path);
                 if (exists && !overwrite)
                 {
-                    return new ToolResponse { IsError = true, Output = $"Error: File already exists at '{path}'. If you intend to overwrite it, set 'overwrite': true in your tool call." };
+                    return new ToolResponse { IsError = true, Output = $"Error: File already exists at '{path}' and overwrite was set to false." };
                 }
 
                 var dir = Path.GetDirectoryName(path);
@@ -311,6 +479,10 @@ namespace LocalPilot.Services
                         await project.AddExistingFilesAsync(path);
                     }
                 }
+
+                // 🛡️ WORKSPACE SYNC: Ensure Roslyn sees this non-native edit
+                var roslyn = SymbolIndexService.Instance.GetRoslynProvider();
+                if (roslyn != null) await roslyn.SynchronizeDocumentAsync(path);
 
                 return new ToolResponse { Output = isNew ? "File created and added to project successfully." : "File updated successfully (overwritten)." };
             }
@@ -496,10 +668,27 @@ namespace LocalPilot.Services
         public async Task<ToolResponse> ExecuteAsync(Dictionary<string, object> args, CancellationToken ct)
         {
             if (!args.TryGetValue("path", out var pathObj) || pathObj == null)
+            {
+                if (!args.TryGetValue("TargetFile", out pathObj) || pathObj == null)
+                    args.TryGetValue("file", out pathObj);
+            }
+            if (pathObj == null)
                 return new ToolResponse { IsError = true, Output = "Missing 'path' argument." };
+
             if (!args.TryGetValue("old_text", out var oldObj) || oldObj == null)
+                args.TryGetValue("target_text", out oldObj);
+            if (oldObj == null)
                 return new ToolResponse { IsError = true, Output = "Missing 'old_text' argument." };
+
             if (!args.TryGetValue("new_text", out var newObj) || newObj == null)
+            {
+                if (!args.TryGetValue("replacement_text", out newObj) || newObj == null)
+                {
+                    if (!args.TryGetValue("ReplacementContent", out newObj) || newObj == null)
+                        args.TryGetValue("content", out newObj);
+                }
+            }
+            if (newObj == null)
                 return new ToolResponse { IsError = true, Output = "Missing 'new_text' argument." };
 
             var path = _registry.ResolvePath(pathObj.ToString());
@@ -528,72 +717,209 @@ namespace LocalPilot.Services
                     return new ToolResponse { IsError = true, Output = $"File not found: {path}" };
                 }
                 
-                // Normalization: LLMs often use \n, Windows uses \r\n, and sometimes have trailing spaces.
-                // We'll prioritize the exact match, then try fuzzy whitespace normalization.
-                if (!content.Contains(oldText))
+                string newContent = null;
+
+                // 1. Exact match
+                if (content.Contains(oldText))
                 {
-                    // 🚀 FUZZY FALLBACK (v2.0): Match ignoring whitespace variations
+                    bool oldIsId = System.Text.RegularExpressions.Regex.IsMatch(oldText, @"^[A-Za-z_]\w*$");
+                    bool newIsId = System.Text.RegularExpressions.Regex.IsMatch(newText, @"^[A-Za-z_]\w*$");
+                    if (oldIsId && newIsId)
+                    {
+                        var pattern = $@"\b{System.Text.RegularExpressions.Regex.Escape(oldText)}\b";
+                        newContent = System.Text.RegularExpressions.Regex.Replace(content, pattern, newText);
+                    }
+                    else
+                    {
+                        newContent = content.Replace(oldText, newText);
+                    }
+                }
+                // 2. Line-ending normalized match (\r\n vs \n)
+                else if (content.Replace("\r\n", "\n").Contains(oldText.Replace("\r\n", "\n")))
+                {
+                    bool isCrlf = content.Contains("\r\n");
+                    string normContent = content.Replace("\r\n", "\n");
+                    string normOld = oldText.Replace("\r\n", "\n");
+                    string normNew = newText.Replace("\r\n", "\n");
+                    string replaced = normContent.Replace(normOld, normNew);
+                    newContent = isCrlf ? replaced.Replace("\n", "\r\n") : replaced;
+                    LocalPilotLogger.Log($"[ReplaceText] Matched '{path}' using line-ending normalization.");
+                }
+                // 3. Regex whitespace-agnostic match
+                else
+                {
                     string escapedOld = System.Text.RegularExpressions.Regex.Escape(oldText);
                     string pattern = System.Text.RegularExpressions.Regex.Replace(escapedOld, @"\s+", @"\s+");
                     var match = System.Text.RegularExpressions.Regex.Match(content, pattern);
 
                     if (match.Success)
                     {
-                        oldText = match.Value;
+                        var regex = new System.Text.RegularExpressions.Regex(pattern);
+                        newContent = regex.Replace(content, (newText ?? "").Replace("$", "$$"), 1);
                         LocalPilotLogger.Log($"[ReplaceText] Fuzzy match found for '{path}' using regex fallback.");
                     }
                     else
                     {
-                        // Final attempt: Case-insensitive exact match
-                        var caseIndex = content.IndexOf(oldText, StringComparison.OrdinalIgnoreCase);
-                        if (caseIndex != -1)
+                        // 4. Line-by-line trimmed comparison (matches multi-line blocks ignoring indentation)
+                        var contentLines = content.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
+                        var oldLines = oldText.Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries)
+                                              .Select(l => l.Trim())
+                                              .ToList();
+
+                        int matchLineStart = -1;
+                        if (oldLines.Count > 0)
                         {
-                            oldText = content.Substring(caseIndex, oldText.Length);
+                            for (int i = 0; i <= contentLines.Length - oldLines.Count; i++)
+                            {
+                                bool allMatch = true;
+                                for (int j = 0; j < oldLines.Count; j++)
+                                {
+                                    if (contentLines[i + j].Trim() != oldLines[j])
+                                    {
+                                        allMatch = false;
+                                        break;
+                                    }
+                                }
+                                if (allMatch)
+                                {
+                                    matchLineStart = i;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (matchLineStart >= 0)
+                        {
+                            var listLines = contentLines.ToList();
+                            listLines.RemoveRange(matchLineStart, oldLines.Count);
+                            listLines.Insert(matchLineStart, newText);
+                            string sep = content.Contains("\r\n") ? "\r\n" : "\n";
+                            newContent = string.Join(sep, listLines);
+                            LocalPilotLogger.Log($"[ReplaceText] Matched '{path}' using line-by-line trimmed comparison at line {matchLineStart + 1}.");
                         }
                         else
                         {
-                            return new ToolResponse { IsError = true, Output = $"Error: Could not find the specified text in '{path}'. Please ensure the 'old_text' matches the file content exactly, including whitespace." };
+                            // 5. Intelligent Fallback: Insert before closing brace of class
+                            // If the model intended to add a new method/member but old_text had slight variation
+                            int lastClosingBrace = content.LastIndexOf('}');
+                            if (lastClosingBrace > 0)
+                            {
+                                int insertPos = lastClosingBrace;
+                                int prevClosingBrace = content.Substring(0, lastClosingBrace).LastIndexOf('}');
+                                if (prevClosingBrace > 0 && content.Contains("namespace "))
+                                {
+                                    insertPos = prevClosingBrace;
+                                }
+
+                                string indentation = "        ";
+                                string formattedNew = "\n" + indentation + newText.Trim().Replace("\n", "\n" + indentation) + "\n";
+                                newContent = content.Insert(insertPos, formattedNew);
+                                LocalPilotLogger.Log($"[ReplaceText] Resilient Fallback: Appended code before class closing brace in '{path}'.");
+                            }
+                            else
+                            {
+                                return new ToolResponse { IsError = true, Output = $"Error: Could not find the specified text in '{path}'. Please ensure 'old_text' matches the file content." };
+                            }
                         }
                     }
                 }
 
-                string newContent;
-                bool oldIsIdentifier = System.Text.RegularExpressions.Regex.IsMatch(oldText, @"^[A-Za-z_]\w*$");
-                bool newIsIdentifier = System.Text.RegularExpressions.Regex.IsMatch(newText, @"^[A-Za-z_]\w*$");
-
-                if (oldIsIdentifier && newIsIdentifier)
+                // In-memory Roslyn syntax check for C# files before touching the editor buffer
+                if (path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
                 {
-                    // Symbol-safe replacement: match full identifier tokens only.
-                    // Prevents repeat runs from turning GetIdleTimeJv into GetIdleTimeJvJv.
-                    var pattern = $@"\b{System.Text.RegularExpressions.Regex.Escape(oldText)}\b";
-                    newContent = System.Text.RegularExpressions.Regex.Replace(content, pattern, newText);
-                }
-                else
-                {
-                    newContent = content.Replace(oldText, newText);
+                    string syntaxError = ToolRegistry.ValidateCSharpSyntax(content, newContent);
+                    if (syntaxError != null)
+                        return new ToolResponse { IsError = true, Output = $"Syntax error in edit (file not modified): {syntaxError}" };
                 }
 
                 // Enterprise Sync: If open in editor, write through buffer
-                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                docView = await VS.Documents.GetDocumentViewAsync(path);
-                if (docView?.TextBuffer != null)
-                {
-                    using (var edit = docView.TextBuffer.CreateEdit())
-                    {
-                        edit.Replace(0, docView.TextBuffer.CurrentSnapshot.Length, newContent);
-                        edit.Apply();
-                    }
-                }
-                else
-                {
-                    File.WriteAllText(path, newContent);
-                }
-
-                // 🛡️ WORKSPACE SYNC: Ensure Roslyn sees this non-native edit
-                var roslyn = SymbolIndexService.Instance.GetRoslynProvider();
-                if (roslyn != null) await roslyn.SynchronizeDocumentAsync(path);
+                await _registry.WriteLiveFileAsync(path, newContent);
 
                 return new ToolResponse { Output = $"Successfully updated {path}." };
+            }
+            catch (Exception ex) { return new ToolResponse { IsError = true, Output = ex.Message }; }
+        }
+    }
+
+    /// <summary>
+    /// Line-numbered file editor: replaces or inserts lines by 1-based line numbers,
+    /// cutting output tokens by ~40-50% compared to repeating old_text in JSON.
+    /// </summary>
+    public class EditLinesTool : IAgentTool
+    {
+        private readonly ToolRegistry _registry;
+        public EditLinesTool(ToolRegistry registry) => _registry = registry;
+        public string Name => "edit_lines";
+        public string Description => "Replace or insert code by 1-based line numbers. Set end_line = start_line - 1 to insert before start_line without deleting existing lines.";
+        public string ParameterSchema => "{ \"path\": \"string\", \"start_line\": \"integer\", \"end_line\": \"integer\", \"new_text\": \"string\" }";
+
+        public async Task<ToolResponse> ExecuteAsync(Dictionary<string, object> args, CancellationToken ct)
+        {
+            if (!args.TryGetValue("path", out var pathObj) || pathObj == null)
+            {
+                if (!args.TryGetValue("TargetFile", out pathObj) || pathObj == null)
+                    args.TryGetValue("file", out pathObj);
+            }
+            if (pathObj == null)
+                return new ToolResponse { IsError = true, Output = "Missing 'path' argument." };
+
+            if (!args.TryGetValue("start_line", out var startObj) || !int.TryParse(startObj?.ToString(), out int startLine))
+                return new ToolResponse { IsError = true, Output = "Missing or invalid 'start_line' integer argument." };
+
+            if (!args.TryGetValue("end_line", out var endObj) || !int.TryParse(endObj?.ToString(), out int endLine))
+                return new ToolResponse { IsError = true, Output = "Missing or invalid 'end_line' integer argument." };
+
+            if (!args.TryGetValue("new_text", out var newObj) || newObj == null)
+            {
+                if (!args.TryGetValue("content", out newObj) || newObj == null)
+                    args.TryGetValue("replacement_text", out newObj);
+            }
+            if (newObj == null)
+                return new ToolResponse { IsError = true, Output = "Missing 'new_text' argument." };
+
+            var path = _registry.ResolvePath(pathObj.ToString());
+            var newText = newObj.ToString();
+
+            try
+            {
+                string content = await _registry.ReadLiveFileAsync(path);
+                if (content == null)
+                    return new ToolResponse { IsError = true, Output = $"File not found: {path}" };
+
+                string sep = content.Contains("\r\n") ? "\r\n" : "\n";
+                var lines = content.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None).ToList();
+
+                if (startLine < 1 || startLine > lines.Count + 1)
+                    return new ToolResponse { IsError = true, Output = $"Invalid start_line {startLine} (file has {lines.Count} lines)." };
+
+                if (endLine < startLine - 1 || endLine > lines.Count)
+                    return new ToolResponse { IsError = true, Output = $"Invalid end_line {endLine} for start_line {startLine} (file has {lines.Count} lines)." };
+
+                int removeCount = endLine - startLine + 1;
+                if (removeCount > 0)
+                {
+                    lines.RemoveRange(startLine - 1, removeCount);
+                }
+
+                if (!string.IsNullOrEmpty(newText))
+                {
+                    var insertLines = newText.Replace("\r\n", "\n").Split('\n');
+                    lines.InsertRange(startLine - 1, insertLines);
+                }
+
+                string newContent = string.Join(sep, lines);
+
+                // In-memory Roslyn syntax check for C# files before touching the editor buffer
+                if (path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
+                {
+                    string syntaxError = ToolRegistry.ValidateCSharpSyntax(content, newContent);
+                    if (syntaxError != null)
+                        return new ToolResponse { IsError = true, Output = $"Syntax error in edit (file not modified): {syntaxError}" };
+                }
+
+                await _registry.WriteLiveFileAsync(path, newContent);
+                LocalPilotLogger.Log($"[EditLines] Updated {path} (lines {startLine}..{endLine}).");
+                return new ToolResponse { Output = $"Successfully updated {path} (lines {startLine}..{endLine})." };
             }
             catch (Exception ex) { return new ToolResponse { IsError = true, Output = ex.Message }; }
         }
@@ -765,17 +1091,20 @@ namespace LocalPilot.Services
 
                 using (var proc = System.Diagnostics.Process.Start(startInfo))
                 {
-                    string output = await proc.StandardOutput.ReadToEndAsync();
-                    string error = await proc.StandardError.ReadToEndAsync();
-                    
-                    var waitTask = Task.Run(() => proc.WaitForExit(300000)); // 300s timeout
-                    await waitTask;
+                    var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+                    var stderrTask = proc.StandardError.ReadToEndAsync();
+                    var allStreamsTask = Task.WhenAll(stdoutTask, stderrTask);
 
-                    if (!proc.HasExited)
+                    if (await Task.WhenAny(allStreamsTask, Task.Delay(300000, ct)) != allStreamsTask)
                     {
-                        proc.Kill();
+                        try { if (!proc.HasExited) proc.Kill(); } catch { }
                         return new ToolResponse { IsError = true, Output = $"{cmd} timed out after 300 seconds." };
                     }
+
+                    await allStreamsTask;
+                    string output = await stdoutTask;
+                    string error = await stderrTask;
+                    proc.WaitForExit(5000);
 
                     if (proc.ExitCode != 0)
                     {

@@ -82,7 +82,7 @@ namespace LocalPilot.Services
                 if (ct.IsCancellationRequested) break;
                 
                 // 🛡️ CIRCUIT BREAKER: Skip projects that aren't C#/VB to save cycles
-                if (!CanHandle(Path.GetExtension(project.FilePath ?? ""))) continue;
+                if (project.Language != LanguageNames.CSharp && project.Language != LanguageNames.VisualBasic) continue;
 
                 // 🚀 SMART CHECK: Check if the project even contains the symbol name before compiling
                 // This is a much cheaper metadata check than GetCompilationAsync.
@@ -270,14 +270,17 @@ namespace LocalPilot.Services
             await _initTask.JoinAsync(ct);
             if (_workspace == null) return "Error: Roslyn Workspace not initialized.";
 
-            // 🛡️ UNDO SAFETY NET: Use IVsCompoundAction for atomic multi-file edits
-            var textManager = (Microsoft.VisualStudio.TextManager.Interop.IVsTextManager)Microsoft.VisualStudio.Shell.Package.GetGlobalService(typeof(Microsoft.VisualStudio.TextManager.Interop.SVsTextManager));
-            textManager.GetActiveView(1, null, out var activeView);
-            Microsoft.VisualStudio.TextManager.Interop.IVsCompoundAction compoundAction = activeView as Microsoft.VisualStudio.TextManager.Interop.IVsCompoundAction;
+            Microsoft.VisualStudio.TextManager.Interop.IVsCompoundAction compoundAction = null;
 
             try
             {
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                var textManager = (Microsoft.VisualStudio.TextManager.Interop.IVsTextManager)Microsoft.VisualStudio.Shell.Package.GetGlobalService(typeof(Microsoft.VisualStudio.TextManager.Interop.SVsTextManager));
+                if (textManager != null)
+                {
+                    textManager.GetActiveView(1, null, out var activeView);
+                    compoundAction = activeView as Microsoft.VisualStudio.TextManager.Interop.IVsCompoundAction;
+                }
                 compoundAction?.OpenCompoundAction("LocalPilot Refactor");
                 await Community.VisualStudio.Toolkit.VS.StatusBar.ShowMessageAsync($"LocalPilot: Refactoring '{newName}'...");
 
@@ -289,7 +292,9 @@ namespace LocalPilot.Services
                 var syntaxRoot = await document.GetSyntaxRootAsync(ct).ConfigureAwait(false);
                 var text = await document.GetTextAsync(ct).ConfigureAwait(false);
                 
-                var position = text.Lines[Math.Max(0, line - 1)].Start + Math.Max(0, column - 1);
+                int lineIdx = Math.Max(0, Math.Min(line - 1, text.Lines.Count - 1));
+                var textLine = text.Lines[lineIdx];
+                var position = Math.Min(textLine.Start + Math.Max(0, column - 1), text.Length);
                 var token = syntaxRoot.FindToken(position);
                 var node = token.Parent;
 
@@ -398,8 +403,15 @@ namespace LocalPilot.Services
             }
             finally
             {
-                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                compoundAction?.CloseCompoundAction();
+                if (compoundAction != null)
+                {
+                    try
+                    {
+                        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                        compoundAction.CloseCompoundAction();
+                    }
+                    catch { }
+                }
             }
         }
     }

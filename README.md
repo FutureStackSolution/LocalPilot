@@ -3,7 +3,7 @@
   <h1>LocalPilot</h1>
   <p align="center">
     <strong>The Privacy-First AI Pair Programmer for Visual Studio.</strong><br />
-    Bringing the power of local LLMs directly into your IDE with Ollama.
+    Bringing local &amp; OpenAI-compatible LLMs (Ollama, LM Studio,  vLLM, llama.cpp, OpenAI) directly into your IDE.
   </p>
 
   <p align="center">
@@ -14,10 +14,10 @@
       <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" />
     </a>
     <a href="https://ollama.com">
-      <img src="https://img.shields.io/badge/Ollama-Compatible-orange.svg" alt="Ollama Support" />
+      <img src="https://img.shields.io/badge/Ollama_%26_OpenAI_Compatible-orange.svg" alt="Multi-Provider Support" />
     </a>
     <a href="https://visualstudio.microsoft.com/">
-      <img src="https://img.shields.io/badge/Visual_Studio-2022-purple.svg" alt="Visual Studio" />
+      <img src="https://img.shields.io/badge/Visual_Studio-2022%20%2B-purple.svg" alt="Visual Studio" />
     </a>
   </p>
 </div>
@@ -26,7 +26,7 @@
 
 ## 🌟 Overview
 
-**LocalPilot** is a powerful Visual Studio extension that integrates local Large Language Models (LLMs) via [Ollama](https://ollama.com). It provides a seamless, high-performance coding experience without the need for cloud-based subscriptions or data privacy concerns.
+**LocalPilot** is a high-performance Visual Studio extension that integrates local and OpenAI-compatible Large Language Models — including **[Ollama](https://ollama.com)**, **LM Studio**, **vLLM**, **llama.cpp**, and **OpenAI** (`gpt-4o`, `gpt-5`, `o1`/`o3`/`o4`). It delivers inline ghost-text completions, an agentic AI chat panel, inline editor diffs, and native `Ctrl+.` lightbulb actions with full local privacy.
 
 <p align="center">
   <img src="LocalPilot/Assets/Showcase_Mockup.png" width="800" height="450" alt="LocalPilot Showcase" />
@@ -71,7 +71,7 @@
       <h3>✨ Ghost-Text & Performance</h3>
       <ul style="list-style-type: none; padding-left: 0;">
         <li>🚀 <strong>Real-time Suggestions</strong>: Zero-latency inline code completions.</li>
-        <li>🏠 <strong>100% Local</strong>: Your code never leaves your workstation.</li>
+        <li>🏠 <strong>Local-First, Cloud-Optional</strong>: Run 100% offline locally, or connect your own OpenAI-compatible API.</li>
         <li>⚡ <strong>Optimized</strong>: Designed for minimal impact on IDE performance.</li>
       </ul>
     </td>
@@ -84,19 +84,20 @@
 
 ## 🛡️ Why LocalPilot?
 
-- **🔒 Absolute Privacy**: Your source code stays on your machine. No telemetry, no cloud hooks, no data leakage. Perfect for enterprise and sensitive projects.
-- **⚡ Zero Latency**: No waiting for cloud API responses. Local inference provides near-instantaneous completions.
-- **💰 One-time Setup, Zero Cost**: No recurring subscriptions. Use the power of your own hardware to fuel your development.
-- **🎨 Native Experience**: Designed to feel like a built-in Visual Studio feature, supporting both Light and Dark themes natively.
+- **🔒 Local-First Privacy (No Telemetry)**: LocalPilot itself collects zero telemetry. When paired with local backends (Ollama, LM Studio,  llama.cpp), your source code never leaves your machine—ideal for air-gapped and sensitive projects.
+- **🔌 Flexible Backends (Local or Cloud)**: Use local GPUs for offline speed and zero cost, or optionally plug in your own OpenAI / OpenAI-compatible endpoint and API key whenever you need cloud-scale models.
+- **⚡ Built for Speed**: Native FIM completions, Roslyn AST skeletonization, line-numbered edits, and SQLite indexing keep context lean and responses fast.
+- **🎨 Native Experience**: Designed to feel like a built-in Visual Studio feature—with inline editor diffs, `Ctrl+.` lightbulb actions, and native Light/Dark theme support.
 
 ---
 
 ## 🛠️ Getting Started
 
 ### 1️⃣ Prerequisites
-You must have **Ollama** installed and running on your machine.
-- **Download**: [ollama.com](https://ollama.com)
-- **Launch a Model**: We recommend agentic, code-centric models like `qwen2.5-coder` or `llama3.1`.
+Run any supported local or OpenAI-compatible backend:
+- **Ollama**: [ollama.com](https://ollama.com) (`http://localhost:11434`)
+- **LM Studio /  vLLM / llama.cpp**: Enable the OpenAI-compatible server (e.g., `http://localhost:1234/v1` or `http://127.0.0.1:8000/v1`)
+- **OpenAI API**: `https://api.openai.com/v1` with your API key
   ```bash
   ollama run qwen2.5-coder:7b
   ```
@@ -109,14 +110,14 @@ You must have **Ollama** installed and running on your machine.
 
 ### 3️⃣ Configuration
 Navigate to **Tools > Options > LocalPilot > Settings**.
-1. **Ollama Base URL**: Usually `http://localhost:11434`. Click **"Test Connection"** to verify.
-2. **Model Assignments**: Assign preferred models for **Chat** and **Inline Completions**.
+1. **Provider & Endpoint URL**: Choose **Ollama** (`http://localhost:11434`) or **OpenAI-Compatible** (LM Studio `http://localhost:1234/v1`,  or OpenAI `https://api.openai.com/v1` + optional API key). Click **"Test Connection"** to verify.
+2. **Model Assignments**: Assign preferred models for **Chat**, **Inline Completions**, and specialized actions.
 
 > [!TIP]
-> For the best experience in **v1.9**, we recommend:
-> - **Chat/Logic**: `qwen2.5-coder:7b` or `llama3.1:8b` (Excellent reasoning & tool use).
-> - **Inline Completions**: `starcoder2:3b` or `phi3:mini` (Lowest latency).
-> - **Embedding / RAG**: `nomic-embed-text` or `mxbai-embed-large` **(CRITICAL: You MUST configure an embedding model here to unlock powerful AI-driven semantic codebase search. If left blank, LocalPilot falls back to basic keyword search.)**
+> For the best experience in **v2.0**, we recommend:
+> - **Chat/Logic**: `qwen2.5-coder:7b` or `llama3.1:8b` (Excellent reasoning & tool use, fits comfortably in 4–8GB VRAM).
+> - **Inline Completions**: `qwen2.5-coder:1.5b` or `starcoder2:3b` (Native FIM support & lowest latency).
+> - **Embedding / RAG**: `nomic-embed-text` or `mxbai-embed-large` *(Optional — if unsupported by your endpoint, LocalPilot caches that capability and falls back cleanly to keyword search.)*
 
 ---
 
@@ -169,7 +170,7 @@ We welcome community contributions! Whether it's bugs, features, or documentatio
 
 ## 💻 Hardware Requirements
 
-Since **LocalPilot** runs Large Language Models (LLMs) **entirely on your local machine** via Ollama, your hardware performance directly impacts the speed and responsiveness of AI suggestions.
+Since **LocalPilot** can run Large Language Models (LLMs) **locally on your machine** (via Ollama, LM Studio  or llama.cpp), your hardware directly impacts local inference speed (or you can connect a remote OpenAI / OpenAI-compatible endpoint if your workstation has limited VRAM).
 
 ### 🏁 Minimum Requirements
 *   **CPU**: Recent Multi-core processor (Intel i5/AMD Ryzen 5 or equivalent).
@@ -189,7 +190,20 @@ Since **LocalPilot** runs Large Language Models (LLMs) **entirely on your local 
 
 ## 📜 Release History
 
-### 🚀 v1.9.5 - The Accessibility & Resiliency Update (latest)
+### 🚀 v2.0.0 - The Multi-Provider, Inline Diff & Performance Update (latest)
+**"Full OpenAI-compatible support, inline editor diffs, native Ctrl+. Lightbulb actions, and ultra-lean local inference."**
+
+- **🔌 Multi-Provider & Full OpenAI Model Compatibility**: Seamless support for **Ollama**, **LM Studio**, **vLLM**, **llama.cpp**, and **OpenAI** (`gpt-4o`, `gpt-4.1`, `gpt-5`, `o1`, `o3`, `o4-mini`), including proactive `max_completion_tokens`/`temperature` handling, adaptive HTTP 400 parameter negotiation, and human-readable error formatting.
+- **🎨 Inline Editor Diff Adornments (`✓ Keep` / `✕ Undo`)**: Added `InlineDiffService` and MEF-exported `LocalPilotInlineDiff` editor adornments to highlight added/modified lines directly inside Visual Studio with per-hunk **Keep / Undo** controls.
+- **💡 Native Visual Studio Lightbulb (`Ctrl+.`) Integration**: Added `ISuggestedActionsSourceProvider` (`LocalPilotSuggestedActionsProvider`) surfacing **Fix with LocalPilot**, **Refactor with LocalPilot**, and **Generate Unit Tests with LocalPilot** directly on red squiggles and code blocks—executing headlessly without switching to the chat pane.
+- **↺ One-Click Turn Checkpoint & Revert**: Added `TurnCheckpointService` to snapshot pre-turn file states (including deleting newly created files on revert) with a **`↺ Revert Turn`** button on completed agent turn badges.
+- **⚡ Ultra-Lean Fast Mode & Line-Numbered Edits (`edit_lines`)**: Added `EditLinesTool` with in-memory Roslyn pre-flight syntax validation (`ValidateCSharpSyntax`), `CodeSkeletonizer.SkeletonizeWithLineNumbers` (preserving exact 1-based line numbers), 2-zone sliding history, live tool-call streaming throughput (`tok/s`), per-chunk stream inactivity watchdogs, and a non-blocking SSD-offload warning banner (`< 5 tok/s`).
+- **🎛️ In-Chat Model Switcher ([#46](https://github.com/FutureStackSolution/LocalPilot/issues/46))**: Added a quick model selector dropdown directly inside the Chat toolbar, with placeholder guards so unconfigured `(No models found)` states are never sent to the API.
+- **🔧 Auto-Fix on Build Failure Toggle & Settings Hardening ([#50](https://github.com/FutureStackSolution/LocalPilot/issues/50), [#49](https://github.com/FutureStackSolution/LocalPilot/issues/49))**: Added the `Auto-Fix on Build Failure` option, configurable `KeepAliveDuration` (`15m` default), unload-models/connection resiliency, and fixed Options Cancel-save behavior.
+- **🛡️ Agent Tool Execution, Custom GGUF & UI Layout Fixes ([#51](https://github.com/FutureStackSolution/LocalPilot/issues/51), [#54](https://github.com/FutureStackSolution/LocalPilot/issues/54), [#47](https://github.com/FutureStackSolution/LocalPilot/issues/47))**: Hardened `AgentOrchestrator`/`ToolRegistry` path and edit execution, added `HTTP 500` tool-template fallback for custom GGUF modelfiles, upgraded live markdown & Quick-Action card rendering, and refined chat layout/scroll behavior.
+- **🗄️ SQLite Packaging & Full-Repo Stability Hardening ([#53](https://github.com/FutureStackSolution/LocalPilot/issues/53))**: Hardened SQLite WAL/SHM reset cleanup and packaging, debounced `FileSystemWatcher` startup storms, persisted `/v1/embeddings` capability checks, and resolved Roslyn, Nexus, `InlineCompletionController` per-tab isolation, and UI-thread lifecycle bugs.
+
+### 🚀 v1.9.5 - The Accessibility & Resiliency Update
 **"Dynamic font zoom, self-contained SQLite integration, and robust database parsing."**
 
 - **🔍 Zoom & Font Scaling Support ([#44](https://github.com/FutureStackSolution/LocalPilot/issues/44))**: Resolved accessibility and text sizing issues. The Chat window now integrates seamlessly with Visual Studio environment fonts and supports interactive dynamic zoom via `Ctrl + Mouse Wheel`.
@@ -217,7 +231,7 @@ Since **LocalPilot** runs Large Language Models (LLMs) **entirely on your local 
 **"Seamless SQLite storage, legacy-free architecture, and hardened stability."**
 
 > [!IMPORTANT]
-> **Breaking Architectural Change**: v1.9 completely replaces the legacy JSON-based indexing system with a high-performance **SQLite Persistent Storage Engine**. 
+> **Breaking Architectural Change**: v1.9 completely replaces the legacy JSON-based indexing system with a high-performance **SQLite Persistent Storage Engine**.
 > - **Automatic Migration**: Upon first launch, LocalPilot will automatically migrate your `.localpilot/index.json` and `nexus.json` data into the new SQLite database and delete the old files.
 > - **Zero Latency**: This move eliminates IDE "stutters" during saves and allows LocalPilot to handle massive codebases with near-zero memory overhead.
 
