@@ -676,10 +676,10 @@ namespace LocalPilot.Chat
                 var settings = LocalPilotSettings.Instance;
                 string modelToUse = modelOverride ?? settings.ChatModel;
 
-                if (string.IsNullOrWhiteSpace(modelToUse))
+                if (string.IsNullOrWhiteSpace(modelToUse) || modelToUse.TrimStart().StartsWith("("))
                 {
                     string actionName = modelOverride != null ? "This action" : "Chat";
-                    AppendAIBubble($"⚠️ **No Model Selected.**\n\n{actionName} requires a configured model. Please go to **Tools → Options → LocalPilot** and select a model.");
+                    AppendAIBubble($"⚠️ **No Model Selected.**\n\n{actionName} requires a running model. Ensure your local LLM server is running and pick a valid model from the dropdown (or **Tools → Options → LocalPilot**).");
                     return;
                 }
 
@@ -1033,14 +1033,9 @@ namespace LocalPilot.Chat
             {
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
                 
-                // Final full render to ensure all closing tags/backticks are perfectly handled.
+                // Final full render to ensure all closing tags/backticks/headings are cleanly formatted.
                 if (_currentNarrativeContainer != null)
                 {
-                    // 🛡️ DUPLICATION PROTECTION:
-                    // If the full message is identical to what's already there (rare but possible with loops),
-                    // skip re-rendering to avoid flicker and visual duplication.
-                    if (fullMessage == _lastRenderedMarkdown) return;
-
                     RenderFullMarkdown(_currentNarrativeContainer, fullMessage);
                 }
                 else
@@ -1343,16 +1338,9 @@ namespace LocalPilot.Chat
                 } catch { }
 
                 TxtInput.Clear();
-                
-                // 🚀 ENHANCED FEEDBACK: Show the filename and a small snippet of the selection
-                string preview = (selectedCode ?? "").Trim().Replace("\r", "").Replace("\n", " ");
-                if (preview.Length > 80) preview = preview.Substring(0, 77) + "...";
 
-                string displayMessage = $"/{action}";
-                if (!string.IsNullOrEmpty(fileName)) displayMessage += $" on **{fileName}**";
-                if (!string.IsNullOrEmpty(preview)) displayMessage += $"\n\n> {preview}";
-
-                AppendUserBubble(displayMessage);
+                // 🚀 SLEEK QUICK-ACTION CARD: Clean action pill + filename + monospace snippet (no raw ** or >)
+                AppendQuickActionBubble(action, fileName, selectedCode);
                 
                 // 4. Trigger Agent Task with specialized model
                 string specializedModel = GetActionModel(action);
@@ -1480,6 +1468,105 @@ namespace LocalPilot.Chat
             DebouncedScrollToEnd();
             
             // Enter animation
+            var slide = new System.Windows.Media.Animation.DoubleAnimation(10, 0, new Duration(TimeSpan.FromSeconds(0.4))) { EasingFunction = new System.Windows.Media.Animation.CubicEase { EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut } };
+            row.RenderTransform = new TranslateTransform();
+            row.RenderTransform.BeginAnimation(TranslateTransform.YProperty, slide);
+        }
+
+        private void AppendQuickActionBubble(string action, string fileName, string selectedCode)
+        {
+            if (WelcomePanel != null && WelcomePanel.Visibility == Visibility.Visible)
+                WelcomePanel.Visibility = Visibility.Collapsed;
+
+            var row = new Grid { Margin = new Thickness(0, 8, 4, 16) };
+
+            var bubble = new Border
+            {
+                Background = (Brush)this.Resources["LpUserBubbleBgBrush"],
+                BorderBrush = (Brush)this.Resources["LpMenuBorderBrush"],
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(14, 14, 2, 14),
+                Padding = new Thickness(12, 10, 12, 10),
+                Margin = new Thickness(60, 0, 8, 0),
+                HorizontalAlignment = HorizontalAlignment.Right
+            };
+
+            var stack = new StackPanel();
+            var header = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+
+            // Action badge pill (e.g. /explain)
+            header.Children.Add(new Border
+            {
+                Background = (Brush)this.Resources["LpAccentBrush"],
+                CornerRadius = new CornerRadius(5),
+                Padding = new Thickness(7, 2, 7, 2),
+                Margin = new Thickness(0, 0, 8, 0),
+                Child = new TextBlock
+                {
+                    Text = "/" + action,
+                    Foreground = Brushes.White,
+                    FontSize = 11,
+                    FontWeight = FontWeights.SemiBold
+                }
+            });
+
+            if (!string.IsNullOrEmpty(fileName))
+            {
+                header.Children.Add(new TextBlock
+                {
+                    Text = fileName,
+                    Foreground = ThemeWindowFg,
+                    FontSize = 12,
+                    FontWeight = FontWeights.SemiBold,
+                    VerticalAlignment = VerticalAlignment.Center
+                });
+            }
+
+            stack.Children.Add(header);
+
+            // Clean monospace code snippet preview (up to 3 compact lines)
+            if (!string.IsNullOrWhiteSpace(selectedCode))
+            {
+                var rawLines = selectedCode.Replace("\r\n", "\n").Split('\n')
+                    .Select(l => l.TrimEnd())
+                    .Where(l => !string.IsNullOrWhiteSpace(l))
+                    .Take(3)
+                    .ToList();
+
+                if (rawLines.Count > 0)
+                {
+                    string snippet = string.Join("\n", rawLines.Select(l => l.Length > 72 ? l.Substring(0, 69) + "..." : l));
+                    int totalLines = selectedCode.Replace("\r\n", "\n").Split('\n').Count(l => !string.IsNullOrWhiteSpace(l));
+                    if (totalLines > 3) snippet += $"\n… (+{totalLines - 3} lines)";
+
+                    stack.Children.Add(new Border
+                    {
+                        Background = (Brush)this.Resources["LpCodeContentBgBrush"],
+                        BorderBrush = (Brush)this.Resources["LpAccentBrush"],
+                        BorderThickness = new Thickness(2.5, 0, 0, 0),
+                        CornerRadius = new CornerRadius(4),
+                        Padding = new Thickness(8, 6, 8, 6),
+                        Margin = new Thickness(0, 8, 0, 0),
+                        Child = new TextBlock
+                        {
+                            Text = snippet,
+                            FontFamily = new FontFamily("Consolas"),
+                            FontSize = 11.5,
+                            Foreground = ThemeWindowFg,
+                            Opacity = 0.9,
+                            TextWrapping = TextWrapping.NoWrap,
+                            TextTrimming = TextTrimming.CharacterEllipsis
+                        }
+                    });
+                }
+            }
+
+            bubble.Child = stack;
+            row.Children.Add(bubble);
+
+            MessagesContainer.Items.Add(row);
+            DebouncedScrollToEnd();
+
             var slide = new System.Windows.Media.Animation.DoubleAnimation(10, 0, new Duration(TimeSpan.FromSeconds(0.4))) { EasingFunction = new System.Windows.Media.Animation.CubicEase { EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut } };
             row.RenderTransform = new TranslateTransform();
             row.RenderTransform.BeginAnimation(TranslateTransform.YProperty, slide);
@@ -1857,8 +1944,19 @@ namespace LocalPilot.Chat
             }
             else
             {
-                // 🚀 PURE INCREMENTAL PATH: No structural change, just append text
-                AppendToActiveElement(delta);
+                // 🚀 LIVE FORMATTED STREAMING: For text blocks containing markdown or newlines, render formatted markdown
+                // (throttled by the 32ms/150ms UI cycle) so headings, bold, and inline code never appear as raw ### or **!
+                if (_activeBlockType == "text" &&
+                    (md.Contains("#") || md.Contains("**") || md.Contains("`") || delta.Contains("\n")) &&
+                    (DateTime.Now - _lastUiUpdateTime).TotalMilliseconds > 150)
+                {
+                    _lastUiUpdateTime = DateTime.Now;
+                    RenderFullMarkdown(container, md);
+                }
+                else
+                {
+                    AppendToActiveElement(delta);
+                }
             }
 
             _lastRenderedMarkdown = md;
@@ -2171,27 +2269,27 @@ namespace LocalPilot.Chat
 
                 var paragraph = new Paragraph { Margin = new Thickness(0, 0, 0, 1) };
 
-                // 1. Headings (# ## ###)
+                // 1. Headings (# ## ### ####)
                 if (trimmed.StartsWith("#"))
                 {
                     int level = 0;
                     while (level < trimmed.Length && trimmed[level] == '#') level++;
                     
                     var headerText = trimmed.Substring(level).Trim();
-                    var run = new Run(headerText) 
-                    { 
-                        FontSize = level == 1 ? 20 : (level == 2 ? 18 : 16),
-                        FontWeight = FontWeights.Bold,
-                        Foreground = ThemeWindowFg
-                    };
-                    paragraph.Inlines.Add(run);
-                    paragraph.Margin = new Thickness(0, 4, 0, 2);
+                    paragraph.FontSize = level == 1 ? 18 : (level == 2 ? 16 : (level == 3 ? 14 : 13));
+                    paragraph.FontWeight = FontWeights.SemiBold;
+                    paragraph.Foreground = ThemeWindowFg;
+                    paragraph.Margin = new Thickness(0, 6, 0, 3);
+                    RenderInlineMarkdown(paragraph, headerText);
                 }
                 // 2. Lists (- * 1.)
-                else if (trimmed.StartsWith("-") || trimmed.StartsWith("*") || (trimmed.Length > 2 && char.IsDigit(trimmed[0]) && trimmed[1] == '.'))
+                else if (trimmed.StartsWith("- ") || trimmed.StartsWith("* ") || (trimmed.Length > 2 && char.IsDigit(trimmed[0]) && trimmed[1] == '.'))
                 {
-                    paragraph.Margin = new Thickness(12, 0, 0, 1);
-                    RenderInlineMarkdown(paragraph, trimmed);
+                    paragraph.Margin = new Thickness(12, 1, 0, 2);
+                    string listContent = (trimmed.StartsWith("- ") || trimmed.StartsWith("* "))
+                        ? "•  " + trimmed.Substring(2)
+                        : trimmed;
+                    RenderInlineMarkdown(paragraph, listContent);
                 }
                 // 3. Normal Paragraph
                 else

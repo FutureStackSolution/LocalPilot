@@ -1144,9 +1144,23 @@ namespace LocalPilot.Services
                         continue;
                     }
 
-                    // Model gave an actual text response to the user
+                    // Model gave an actual text response to the user (or surfaced a stream/API error)
                     isDone = true;
-                    OnStatusUpdate?.Invoke(AgentStatus.Completed, "Task finished.");
+                    bool isStreamError = !string.IsNullOrWhiteSpace(textWithoutThoughts) &&
+                        (textWithoutThoughts.TrimStart().StartsWith("⚠️") ||
+                         textWithoutThoughts.Contains("**LocalPilot Error:**") ||
+                         textWithoutThoughts.Contains("**OpenAI Error:**") ||
+                         textWithoutThoughts.Contains("**Model Not Found:**") ||
+                         textWithoutThoughts.Contains("**Server Error"));
+
+                    if (isStreamError)
+                    {
+                        OnStatusUpdate?.Invoke(AgentStatus.Failed, "Task stopped due to an error.");
+                    }
+                    else
+                    {
+                        OnStatusUpdate?.Invoke(AgentStatus.Completed, "Task finished.");
+                    }
                 }
             }
 

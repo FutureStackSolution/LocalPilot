@@ -332,7 +332,7 @@ namespace LocalPilot.Services
                         if (!response.IsSuccessStatusCode)
                         {
                             errBody = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-                            errorDetails = $"HTTP {(int)response.StatusCode}: {errBody}";
+                            errorDetails = FormatApiError(response.StatusCode, errBody);
                             HandleFailure();
                         }
                         else
@@ -342,7 +342,7 @@ namespace LocalPilot.Services
                     }
                     else
                     {
-                        errorDetails = $"HTTP {(int)response.StatusCode}: {errBody}";
+                        errorDetails = FormatApiError(response.StatusCode, errBody);
                         HandleFailure();
                     }
                 }
@@ -368,7 +368,7 @@ namespace LocalPilot.Services
 
             if (errorDetails != null)
             {
-                yield return ChatStreamResult.Text($"\n⚠️ **OpenAI Error:** {errorDetails}");
+                yield return ChatStreamResult.Text($"\n{errorDetails}");
                 yield break;
             }
 
@@ -512,6 +512,33 @@ namespace LocalPilot.Services
 
                 yield return ChatStreamResult.ToolCall(name, argsDict ?? new Dictionary<string, object>());
             }
+        }
+
+        private static string FormatApiError(System.Net.HttpStatusCode statusCode, string errBody)
+        {
+            string cleanMsg = errBody;
+            string errCode = null;
+            if (!string.IsNullOrWhiteSpace(errBody))
+            {
+                try
+                {
+                    var obj = JObject.Parse(errBody);
+                    var errObj = obj["error"];
+                    if (errObj != null)
+                    {
+                        cleanMsg = errObj["message"]?.ToString() ?? errBody;
+                        errCode = errObj["code"]?.ToString();
+                    }
+                }
+                catch { }
+            }
+
+            if (statusCode == System.Net.HttpStatusCode.NotFound || string.Equals(errCode, "model_not_found", StringComparison.OrdinalIgnoreCase))
+            {
+                return $"⚠️ **Model Not Found:** {cleanMsg}\n\nEnsure your local LLM server is running and select a valid model from the dropdown.";
+            }
+
+            return $"⚠️ **Server Error (HTTP {(int)statusCode}):** {cleanMsg}";
         }
 
         public async Task<float[]> GetEmbeddingsAsync(string model, string prompt, CancellationToken ct = default)
